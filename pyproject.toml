@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bestbefore"
+version = "0.1.0"
+description = "Read expiry dates on product packaging, and predict whether a photo's date will be readable."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pillow",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+# Only for fetching ExpDate (scripts/download_expdate.py).
+download = ["gdown"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
