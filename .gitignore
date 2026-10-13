@@ -1,0 +1,38 @@
+# Local paths. Copy .env.example to .env and fill it in.
+.env
+
+# Data: ExpDate downloads, converted labels, the retailer's store photos.
+# The store photos are never committed, wherever they end up.
+data/
+samples*/
+
+# Training output and model weights
+runs/
+checkpoints/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# Results: only the summary tables are committed
+results/*
+!results/*.md
+!results/*.csv
+experiments/*/results/
+
+# HPC job logs
+slurm-*.out
+slurm/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
