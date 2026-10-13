@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "bestbefore"
 version = "0.1.0"
 description = "Read expiry dates on product packaging, and predict whether a photo's date will be readable."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
