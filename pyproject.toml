@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "matplotlib"]   # matplotlib: scripts/readme_figures.py
 # Only for fetching ExpDate (scripts/download_expdate.py).
 download = ["gdown"]
 

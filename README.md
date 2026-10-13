@@ -10,6 +10,11 @@ preview, which warns when the photo about to be taken won't be readable.
 They're trained on public data on a university GPU cluster and tested on
 real photos taken in retail stores.
 
+![Twelve expiry dates cropped from product photos: dot-matrix print, a curved cap, faint ink, an out-of-focus date, an expiry printed above a production date, a month written as a word, a curved jar, a date under a lot code, low contrast, and three clean prints](docs/assets/expdate_dates.jpg)
+
+<sub>Expiry dates from the ExpDate test set, each hard to read in a
+different way. Photos: ExpDate (KIST, CC BY 4.0), cropped.</sub>
+
 ---
 
 ## Where this started
@@ -169,6 +174,18 @@ milestones:
 - **The synthetic photos pair PROD and EXP dates at random,** so they
   teach where dates are, not which one is the expiry.
 
+![Three handheld product photos with the expiry date boxed, each date zoomed in below; the dates cover 0.15%, 0.17% and 0.25% of the photo](docs/assets/expdate_small_dates.jpg)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/date_box_sizes_dark.png">
+  <img alt="Histogram of date box heights at 640 px input. Real photos peak sharply around 14 to 16 px with a median of 16 px; synthetic photos spread much wider with a median of 27 px. Almost no boxes fall under 8 px." src="docs/assets/date_box_sizes_light.png">
+</picture>
+
+<sub>Synthetic dates are bigger, and so easier, than real ones. That is
+why M1 keeps the real photos in training and measures what the
+synthetic ones add. Photos: ExpDate (KIST, CC BY 4.0), boxes drawn and
+cropped.</sub>
+
 Details: [`docs/datasets.md`](docs/datasets.md). The baseline table
 follows at the end of M0.
 
@@ -242,6 +259,7 @@ python scripts/check_expdate.py               # counts and problems per split
 python scripts/contact_sheet.py --set real-test --n 50 --seed 0
 python scripts/box_stats.py real-train real-test synth
 python scripts/expdate_to_yolo.py             # YOLO dataset under $EXPDATE_DIR/yolo
+python scripts/readme_figures.py              # the figures in this README
 pytest
 ```
 
@@ -254,7 +272,7 @@ versions) to `results/runs/`, so any number can be traced and reproduced.
 
 ```
 bestbefore/
-├── docs/            milestone plans, dataset notes, learning guides
+├── docs/            milestone plans, dataset notes, learning guides, figures
 ├── src/bestbefore/  datasets, format conversion, synthesis, models, evaluation
 ├── scripts/         command-line entry points
 ├── slurm/           cluster job scripts (from M1)
