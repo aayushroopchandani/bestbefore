@@ -187,6 +187,46 @@ IoU = area where the two boxes overlap / area covered by either box
 IoU is 1.0 when the boxes are identical and 0.0 when they don't touch.
 The usual rule is: **IoU ≥ 0.5 counts as found.**
 
+**How to calculate it, step by step.** Take two boxes, written as
+`[x1, y1, x2, y2]`:
+
+```
+label box    A = [100, 50, 300, 90]     200 wide × 40 tall
+detector box B = [120, 55, 310, 95]     190 wide × 40 tall
+
+ A ┌──────────────────────┐
+   │   ┌──────────────────┼──┐
+   │   │     overlap      │  │ B
+   └───┼──────────────────┘  │
+       └─────────────────────┘
+```
+
+1. Overlap from left to right: the overlap starts at the **larger** left
+   edge and ends at the **smaller** right edge.
+   `max(100, 120) = 120` to `min(300, 310) = 300`, so **180** wide.
+2. Overlap from top to bottom, the same way:
+   `max(50, 55) = 55` to `min(90, 95) = 90`, so **35** tall.
+3. Overlap area: `180 × 35 = 6,300`.
+4. Area of each box: A is `200 × 40 = 8,000`, B is `190 × 40 = 7,600`.
+5. Union: `8,000 + 7,600 − 6,300 = 9,300`. The overlap is subtracted
+   once because adding both areas counts it twice.
+6. IoU: `6,300 / 9,300 = 0.68`. That's above 0.5, so **found**.
+
+If the boxes don't touch, step 1 or 2 gives a negative width; treat it as
+0, which makes the IoU 0. The same steps in Python:
+
+```python
+def iou(a, b):
+    w = max(0, min(a[2], b[2]) - max(a[0], b[0]))   # overlap width
+    h = max(0, min(a[3], b[3]) - max(a[1], b[1]))   # overlap height
+    overlap = w * h
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return overlap / (area_a + area_b - overlap)
+
+iou([100, 50, 300, 90], [120, 55, 310, 95])   # 0.677...
+```
+
 Now suppose the detector learned ExpDate's rule and draws a box around the
 date only: 100 px wide, 20 px tall. But on the store photo someone
 labelled `Best before: 15/08/2027`, a box 230 px wide.
