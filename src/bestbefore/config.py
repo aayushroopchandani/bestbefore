@@ -36,3 +36,8 @@ def store_photos_dir() -> Path:
 def scanify_dir() -> Path:
     """The Scanify repo, for baseline B."""
     return _path("SCANIFY_DIR")
+
+
+def checkpoint_dir() -> Path:
+    """Where training writes model weights and plots (never into git)."""
+    return _path("CHECKPOINT_DIR")
