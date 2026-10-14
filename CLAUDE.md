@@ -167,19 +167,36 @@ Plan each milestone as a sliced doc in `docs/` before writing its code.
 
 ## HPC
 
-Fill these in once known:
+Checked on 2026-10-14. Login details stay in `~/.ssh/config`, never in
+this repo.
 
-- Cluster and scheduler (probably Slurm):
-- GPU type, and how many per job:
-- Storage: home quota, scratch path, purge policy:
-- Internet on compute nodes: (often none; download data and model weights
-  on the login node first)
-- Python environment (modules / conda / venv):
+- **Cluster and scheduler:** the university cluster (OpenHPC on Red Hat),
+  **Slurm**.
+- **GPUs:** NVIDIA **H100**, 2 per node, on 2 GPU nodes (`cn5`, `cn6`:
+  48 CPUs and about 500 GB RAM each, shared with other users). Partitions
+  with GPUs: `gpu` (3-day limit), `medium` (2 days), `long` (7 days).
+  CPU-only: `short` (6 h), `defaultq` (default, 3 days), `smp` (7 days).
+  QOS `limit_gpu_qos` allows **2 jobs at a time** per user; one H100 per
+  job is plenty for every model here.
+- **Storage:** home is on a shared 114 TB parallel filesystem
+  (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
+  number of files; about 65 GB was already used on 2026-10-14. **There is
+  no scratch filesystem** and `$SCRATCH` is unset; no purge policy was
+  found. Millions of full-size damaged photos (M4) would not fit: make
+  them on the fly, or store small crops (a million 30 KB crops is 30 GB).
+- **Internet:** the login node has it; **compute nodes don't** (`curl`
+  exits with code 7, "couldn't connect"). Download data, pip packages and
+  model weights on the login node before submitting a job.
+- **Python:** modules `Python/3.11.11` (same minor version as the laptop),
+  `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
+  use it.
 
 Conventions:
 
 - Job scripts live in `slurm/`.
-- Data and checkpoints go on scratch, never in home.
+- Data and checkpoints go outside the git checkout, in
+  `~/bestbefore-data/`. (The original rule said "on scratch, never in
+  home", but this cluster has no scratch.)
 - Synthetic generation and OCR labelling run as **job arrays**: every image
   is independent.
 - Every run records its config, git commit and random seed.
