@@ -32,6 +32,12 @@ def label_lines(sample: Sample) -> tuple[list[str], int]:
     return lines, dropped
 
 
+def list_ids(yolo_dir, list_name: str) -> set[str]:
+    """Photo ids in one of the converter's image lists, e.g. 'val'."""
+    lines = (yolo_dir / f"{list_name}.txt").read_text().splitlines()
+    return {line.strip().rsplit("/", 1)[-1] for line in lines if line.strip()}
+
+
 def read_label_file(text: str) -> list[tuple[int, tuple[float, float, float, float]]]:
     """(class, xyxy) per line."""
     out = []

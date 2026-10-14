@@ -56,3 +56,17 @@ def start_run(name: str, config: dict, seed: int | None = None) -> Path:
     }
     (run_dir / "run.json").write_text(json.dumps(record, indent=2, default=str))
     return run_dir
+
+
+def update_run(run_dir: Path, **fields) -> None:
+    """Add fields to a run's run.json (e.g. where its checkpoint went)."""
+    path = run_dir / "run.json"
+    record = json.loads(path.read_text())
+    record.update(fields)
+    path.write_text(json.dumps(record, indent=2, default=str))
+
+
+def latest_run(name: str) -> Path | None:
+    """The newest run directory made by start_run(name), if any."""
+    found = sorted(RUNS_DIR.glob(f"*-{name}"))
+    return found[-1] if found else None
