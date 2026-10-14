@@ -1,7 +1,8 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: **A1, A2 and B1 done, laptop smoke test passed** (2026-10-14).
-Next: the chain on the cluster, run by GPU job 72789.
+Planned 2026-10-14. Status: **A1, A2 and B1 done, laptop smoke test passed; C1 and C2
+experiment folders written** (2026-10-14). Next: GPU job 72789 runs the
+chain (estimated start 2026-10-15, about 21:15).
 The ideas behind this plan, explained simply: [`learnings-m1.md`](learnings-m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
@@ -322,8 +323,16 @@ cluster before job 72789 starts. Slurm's estimate is 2026-10-15 about
 ### Part C: Experiments (validation split only)
 
 Each question gets a folder under `experiments/` with a README (question,
-method, result, decision), the array table, and a `summarise.py` that
-rebuilds the README's table from the runs' `val.json` files.
+why, method, decision rule, result, what it means) and a `summarise.py`
+that rebuilds the README's results table from the runs. It applies the
+same decision rule as the chain (`bestbefore.m1`) and warns if the two
+disagree. To read results on the laptop:
+
+```bash
+scripts/pull_cluster_results.sh          # small result files only, no weights
+python experiments/m1-size-and-input/summarise.py --write
+python experiments/m1-synthetic-data/summarise.py --write
+```
 
 #### C1. Model size and input size
 
@@ -440,7 +449,8 @@ Checkpoints are about 5 to 20 MB each, so storage is no concern.
 ```
 docs/              m1-date-detector.md, learnings-m1.md
 src/bestbefore/    detector.py, detection_eval.py, m1.py (grid and decision rules)
-scripts/           fetch_pretrained.py, train_detector.py, m1_chain.py, eval_detector.py
+scripts/           fetch_pretrained.py, train_detector.py, m1_chain.py,
+                   pull_cluster_results.sh, eval_detector.py
 slurm/             m1_holder.sbatch, m1_chain.sh, train_detector.sbatch
 experiments/       m1-size-and-input/, m1-synthetic-data/
 tests/             test_detector.py, test_detection_eval.py, test_m1_rules.py
