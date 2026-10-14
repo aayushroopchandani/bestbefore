@@ -19,8 +19,10 @@ dev = ["pytest", "matplotlib"]   # matplotlib: scripts/readme_figures.py
 # Only for fetching ExpDate (scripts/download_expdate.py).
 download = ["gdown"]
 # Detector training and inference (M1). Pinned so the laptop and the
-# cluster run the same code.
-train = ["ultralytics==8.4.177"]
+# cluster run the same code. torch 2.11 is the newest build for CUDA 12.8,
+# the newest CUDA the cluster's GPU driver (570) supports; on the cluster,
+# install torch and torchvision from the cu128 index first (docs/m1-date-detector.md, A1).
+train = ["ultralytics==8.4.177", "torch==2.11.0", "torchvision==0.26.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
