@@ -357,6 +357,22 @@ Things that went wrong or surprised us while setting up, and why:
   laptop. On the Mac, PyTorch uses Apple's GPU through **MPS** (Metal
   Performance Shaders) instead of CUDA.
 
+### Slice A2: the same data on two machines
+
+- **The download was checked, not trusted.** The cluster fetched both
+  zips from Google Drive, and the script compared their SHA-256
+  fingerprints with the ones recorded from the laptop. They matched, so
+  the files are byte-for-byte identical.
+- **The splits were checked too.** After conversion, the four image lists
+  (`train_real`, `val`, `train_synth`, `test`) were fingerprinted on both
+  machines, and all four matched. The validation photos are picked "at
+  random", but with seed 0, so both machines picked exactly the same 165.
+  This is what a seed is for.
+- **Light work belongs on the login node.** Downloading (it needs
+  internet) and converting (a few seconds) ran there. Only training will
+  go through the GPU queue. ExpDate plus the YOLO files take 3.6 GB of
+  the 950 GB quota.
+
 ---
 
 ## Glossary

@@ -1,6 +1,6 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: not started.
+Planned 2026-10-14. Status: **A1 and A2 done** (2026-10-14); B1 next, then the A3 smoke tests.
 The ideas behind this plan, explained simply: [`learnings-m1.md`](learnings-m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
