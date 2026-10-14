@@ -311,6 +311,54 @@ comes **to** the laptop, and the store photos are scored here.
 
 ---
 
+## What slice A1 taught us (2026-10-14)
+
+Things that went wrong or surprised us while setting up, and why:
+
+- **The SSH key needed the password exactly once.** `ssh-keygen` made the
+  key pair on the laptop; `ssh-copy-id` logged in with the password one
+  last time to put the public key on the cluster. Since then,
+  `ssh bbhpc` logs straight in, which is also what lets Claude run
+  cluster commands.
+- **The cluster's Python module has `python3`, not `python`.** Typing
+  `python` gave "command not found". Clusters often only provide the
+  `python3` name; inside our venv, both names work.
+- **`module load` is needed every time, not just once.** The venv's
+  Python is a link to the module's Python, which needs a shared library
+  (`libpython3.11.so`) that only appears after `module load
+  Python/3.11.11`. Without it: "error while loading shared libraries".
+  That's why the job script starts with `module load`.
+- **A `module` is how clusters offer software.** Many users need
+  different versions of Python, CUDA and so on, so nothing is installed
+  "globally". `module load X` switches version X on for your current
+  shell only, by changing where the shell looks for programs and
+  libraries.
+- **PyTorch is big.** The install downloads GPU libraries (CUDA, cuDNN)
+  of several GB, so it takes many minutes even on a fast network. It
+  runs on the login node because that's the only node with internet.
+- **The GPU driver decides which PyTorch you can use.** Three layers have
+  to agree:
+
+  ```
+  PyTorch build  ──needs──►  CUDA version  ──needs──►  GPU driver version
+  torch 2.14 (default)        CUDA 13.0                  580 or newer
+  torch 2.11.0+cu128          CUDA 12.8                  570 or newer   ← our cluster: 570.86
+  ```
+
+  `pip install torch` picked the newest build, made for CUDA 13. Our
+  cluster's driver is 570.86, too old for CUDA 13, so PyTorch would have
+  installed fine and then quietly reported "no GPU" inside every job. We
+  caught it before running anything, by finding the driver version on
+  the login node (the file `libcuda.so.570.86.10`), and installed the
+  CUDA 12.8 build instead. Lesson: on a shared cluster you can't upgrade
+  the driver, so you pick the PyTorch that fits the driver.
+- **The laptop gets the same libraries.** It's needed for the laptop
+  smoke test and for scoring the store photos, which never leave the
+  laptop. On the Mac, PyTorch uses Apple's GPU through **MPS** (Metal
+  Performance Shaders) instead of CUDA.
+
+---
+
 ## Glossary
 
 | Word | Meaning |
@@ -328,6 +376,8 @@ comes **to** the laptop, and the store photos are scored here.
 | Login node | the cluster machine you log into; light work only |
 | Loss | one number saying how wrong the model's boxes were |
 | mAP@0.5 | the area under the precision-recall curve, averaged over classes, with IoU ≥ 0.5 counting as correct |
+| Module | a cluster's way of switching a software version on for your shell (`module load Python/3.11.11`) |
+| MPS | Apple's GPU backend for PyTorch on Macs, used instead of CUDA |
 | Overfitting | memorising the training photos instead of learning the general idea |
 | Parameters | the numbers inside a model that training adjusts |
 | Patience | how many epochs without improvement before early stopping |
