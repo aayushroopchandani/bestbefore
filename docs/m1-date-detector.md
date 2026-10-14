@@ -1,6 +1,7 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: **A1 and A2 done** (2026-10-14); B1 next, then the A3 smoke tests.
+Planned 2026-10-14. Status: **A1, A2 and B1 done, laptop smoke test passed** (2026-10-14).
+Next: the chain on the cluster, run by GPU job 72789.
 The ideas behind this plan, explained simply: [`learnings-m1.md`](learnings-m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
@@ -195,18 +196,23 @@ uses seed 0, so it's the same 165 photos.
 **Goal:** find crashes and hidden downloads in minutes, not after a long
 wait in the queue.
 
-1. **On the login node, pre-fetch everything a job would download:** the
-   pretrained weights `yolo11n.pt` and `yolo11s.pt` (into
-   `~/bestbefore-data/weights/`) and the font Ultralytics uses for its
-   plots. Compute nodes have no internet, so any download inside a job
-   fails.
+1. **On the login node, pre-fetch everything a job would download:**
+   `scripts/fetch_pretrained.py` puts `yolo11n.pt`, `yolo11s.pt` and
+   `yolo26n.pt` (only used by Ultralytics' mixed-precision check) into
+   `$CHECKPOINT_DIR/pretrained/`, fetches the plot font (`Arial.ttf`,
+   loaded with every dataset), and points Ultralytics' `weights_dir`
+   setting at that folder. Compute nodes have no internet, so any download
+   inside a job fails; the chain also sets `YOLO_OFFLINE=1` so Ultralytics
+   doesn't even try.
 2. **Laptop smoke test:** train `yolo11n` for 1 epoch on 2% of the data
    (`fraction=0.02`) on CPU. This catches bugs in our own code without
-   using the cluster at all.
-3. **Cluster smoke test:** `slurm/smoke_test.sbatch` asks for 1 GPU for
-   20 minutes and runs the same tiny training. It prints the GPU name,
-   PyTorch's CUDA version and the time per epoch. It must finish with no
-   download attempts in the log.
+   using the cluster at all. **Passed 2026-10-14:** 19 training photos,
+   320 px, 26 seconds end to end; `run.json`, `data.yaml`, `val.json` and
+   `best.pt` all written.
+3. **Cluster smoke test:** the first step of `scripts/m1_chain.py`
+   (inside GPU job 72789): 1 epoch on 2% of the photos at 640 px. The
+   chain stops if it fails. Before it, `slurm/m1_chain.sh` checks that
+   PyTorch sees the GPU.
 4. Write the measured time per epoch into this plan's GPU budget table
    (below), replacing the estimates.
 
@@ -219,6 +225,8 @@ wait in the queue.
 **Goal:** one command trains one detector, records everything, and scores
 it on validation.
 
+- `src/bestbefore/sets.py`: a `real-val` set, the 165 validation photos
+  read from the converter's `val.txt` (the one record of which they are).
 - `src/bestbefore/detector.py`:
   - `dataset_yaml(train_lists, out_path)` writes a YOLO dataset file for
     a chosen mix of training lists. This is how "synthetic + real" vs
@@ -431,11 +439,11 @@ Checkpoints are about 5 to 20 MB each, so storage is no concern.
 
 ```
 docs/              m1-date-detector.md, learnings-m1.md
-src/bestbefore/    detector.py, detection_eval.py
-scripts/           train_detector.py, eval_detector.py
-slurm/             smoke_test.sbatch, train_detector.sbatch
+src/bestbefore/    detector.py, detection_eval.py, m1.py (grid and decision rules)
+scripts/           fetch_pretrained.py, train_detector.py, m1_chain.py, eval_detector.py
+slurm/             m1_holder.sbatch, m1_chain.sh, train_detector.sbatch
 experiments/       m1-size-and-input/, m1-synthetic-data/
-tests/             test_detector.py, test_detection_eval.py
+tests/             test_detector.py, test_detection_eval.py, test_m1_rules.py
 results/           m1_detector.md        (committed; runs/ is not)
 ```
 
