@@ -189,7 +189,12 @@ this repo.
   model weights on the login node before submitting a job.
 - **Python:** modules `Python/3.11.11` (same minor version as the laptop),
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
-  use it.
+  use it. The module provides `python3`, not `python`, and the venv only
+  runs after `module load Python/3.11.11` (it needs the module's
+  `libpython3.11.so`).
+- **GPU driver:** 570.86, so CUDA 12.8 at most. Install PyTorch from the
+  `cu128` index (`torch==2.11.0+cu128`); the default PyPI build needs
+  CUDA 13 and won't see the GPUs.
 
 Conventions:
 

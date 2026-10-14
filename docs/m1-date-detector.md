@@ -140,9 +140,17 @@ and an easy login from the laptop.
    module load Python/3.11.11
    cd ~/bestbefore
    python3 -m venv .venv          # the module has python3, not python
+   .venv/bin/pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 \
+       --index-url https://download.pytorch.org/whl/cu128
    .venv/bin/pip install -e ".[dev,download,train]"
    mkdir -p slurm/logs
    ```
+
+   **PyTorch must be the CUDA 12.8 build.** The GPU driver is version 570,
+   which supports CUDA up to 12.8. Plain `pip install` picks the newest
+   PyTorch, built for CUDA 13, which needs driver 580 or newer and would
+   not see the GPUs. torch 2.11.0 is the newest CUDA 12.8 build, so it's
+   pinned in `pyproject.toml` for the laptop too.
 
    Run on the login node, which has internet. `slurm/logs/` must exist
    before any job is submitted: Slurm doesn't create it, and a job whose
