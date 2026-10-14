@@ -395,6 +395,39 @@ Things that went wrong or surprised us while setting up, and why:
   it idle while finishing the code would be unfair to the others waiting.
   The placeholder exits at once if the chain isn't ready.
 
+### Slice B1: the training code
+
+- **Our own evaluator, and why.** Ultralytics gives mAP, but it can't
+  say "was the *expiry* date found", because the YOLO labels don't record
+  which date is the expiry. So `detection_eval.py` matches predicted
+  boxes to labelled dates with IoU itself, and that same code will score
+  ExpDate and the store photos.
+- **Greedy, one-to-one matching.** Predictions are taken most confident
+  first; each grabs the unmatched labelled date it overlaps most. One big
+  box covering two dates can only count once.
+- **A neat shortcut for the threshold.** A prediction's match only
+  depends on the predictions more confident than it. So we match once,
+  with every box kept, and can then read off recall and precision for
+  *any* threshold by counting. Finding the best F1 is one sorted pass,
+  not hundreds of re-scorings.
+- **Tests before trust.** 37 automatic tests check things like "a box at
+  IoU 0.45 isn't found at 0.5 but is at 0.3", "one box can't count for
+  two dates", and "within 1 point, the cheaper model wins". One test was
+  itself wrong at first (it expected a match at IoU *exactly* 0.5, and
+  rounding put it at 0.4999…). Fixing the test, not the code, was right.
+- **A smoke test checks the plumbing, not the quality.** The laptop run
+  trained for 1 epoch on 19 photos in 26 seconds. Its scores were about
+  0, as expected. What it proved is that every piece connects: data in,
+  model trained, weights saved, scores written.
+- **Fetching ahead for a machine with no internet.** Ultralytics quietly
+  downloads things: the weights, a small model for its "mixed precision"
+  check, even a font for its plots. On a compute node each would fail, so
+  `fetch_pretrained.py` gets them all on the login node, and the chain
+  sets `YOLO_OFFLINE=1` so Ultralytics doesn't even try.
+- **A dry run before the real run.** `m1_chain.py --dry-run` prints every
+  training it would start, in order, without training anything. We ran
+  it on the cluster to check the chain before the GPU job reaches it.
+
 ---
 
 ## Glossary
