@@ -72,6 +72,15 @@ def train(weights: Path, data: Path, imgsz: int, seed: int, project: Path,
     return Path(model.trainer.save_dir) / "weights" / "best.pt"
 
 
+def epochs_run(best: Path) -> int | None:
+    """How many epochs a run trained for (fewer than asked = early stopping),
+    from the results.csv Ultralytics writes one row per epoch to."""
+    csv = best.parent.parent / "results.csv"
+    if not csv.exists():
+        return None
+    return max(0, len(csv.read_text().strip().splitlines()) - 1)
+
+
 def predict(model, images: list, imgsz: int, device=None) -> list[list[Prediction]]:
     """Boxes for a batch of upright PIL images, in 0..1 coordinates.
 

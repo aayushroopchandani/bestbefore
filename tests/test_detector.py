@@ -33,6 +33,13 @@ def test_pretrained_path_never_downloads(monkeypatch, tmp_path):
     assert detector.pretrained_path("yolo11s.pt").name == "yolo11s.pt"
 
 
+def test_epochs_run(tmp_path):
+    best = tmp_path / "weights" / "best.pt"
+    assert detector.epochs_run(best) is None
+    (tmp_path / "results.csv").write_text("epoch,time\n1,4.7\n2,4.6\n3,4.6\n")
+    assert detector.epochs_run(best) == 3
+
+
 class FakeModel:
     """Stands in for an Ultralytics model: one result per image."""
     def __init__(self):

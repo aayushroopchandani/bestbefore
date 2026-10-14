@@ -63,7 +63,7 @@ def main() -> None:
         project, run_dir.name, epochs=args.epochs, patience=args.patience,
         batch=args.batch, fraction=args.fraction, workers=args.workers,
         device=args.device)
-    update_run(run_dir, checkpoint=str(best),
+    update_run(run_dir, checkpoint=str(best), epochs_run=detector.epochs_run(best),
                train_minutes=round((time.time() - started) / 60, 1))
 
     scores = detector.score(best, load_set("real-val"), args.imgsz, data=data,
