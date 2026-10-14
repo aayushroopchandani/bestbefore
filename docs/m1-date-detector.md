@@ -283,9 +283,29 @@ cd ~/bestbefore
 python scripts/train_detector.py "$@"
 ```
 
-Experiments with several runs use a **job array** with `%2` (at most 2
-running at once, the QOS limit). Each array task reads its own flags
-from a small table in the experiment folder.
+**Queue strategy (decided 2026-10-14).** This cluster's queue is first
+come, first served: every job has priority 1 and all priority weights are
+zero (`sprio`). So instead of one job per run, which would mean queueing
+again for each, M1 holds **one GPU for one long job** and runs everything
+back to back:
+
+- `slurm/m1_holder.sbatch` (job 72789, submitted 2026-10-14, 1 GPU for up
+  to 2 days) holds our place in the queue. When it starts, it runs
+  `slurm/m1_chain.sh`, which Slurm reads only at that moment, so it can be
+  written after submitting. If the chain isn't there yet, the job exits
+  at once rather than keep a GPU idle.
+- `slurm/m1_chain.sh` runs, in order: the GPU smoke test (A3), the 4 C1
+  runs, the C1 decision, the C2 run, the C2 decision, and the 2 extra D1
+  seeds. The decisions apply the rules written in C1 and C2 **before** any
+  run, so no one has to choose by hand in the middle of the night.
+- The chain is **resumable**: a run whose `val.json` exists is skipped, so
+  if the 2-day limit cuts it short, a resubmit carries on where it
+  stopped.
+- `slurm/train_detector.sbatch` stays, for one-off runs later.
+
+**Deadline:** the chain and the B1 code must be pushed and pulled on the
+cluster before job 72789 starts. Slurm's estimate is 2026-10-15 about
+21:15, but a running job finishing early could bring it forward.
 
 **Check:** a 1-epoch run submitted with `sbatch` finishes, and its
 `run.json` and `val.json` are where they should be.

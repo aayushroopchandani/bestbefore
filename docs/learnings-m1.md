@@ -373,6 +373,28 @@ Things that went wrong or surprised us while setting up, and why:
   go through the GPU queue. ExpDate plus the YOLO files take 3.6 GB of
   the 950 GB quota.
 
+### Holding our place in the queue
+
+- **This queue is first come, first served.** We checked with `sprio`:
+  every job has priority 1. So whoever submits first goes first, and
+  cancelling a job to resubmit later means going to the back of the line.
+- **A job reads its files when it starts, not when you submit it.** So we
+  submitted a *placeholder* job (72789) right away, with the real
+  resources (1 GPU, up to 2 days). Its only instruction is "run
+  `slurm/m1_chain.sh`". We can write and fix that file until the job
+  starts, and it will run whatever is there by then.
+- **One job, many runs.** Each separate job waits in the queue
+  separately. Running all the trainings back to back inside one job means
+  we queue once and never give the GPU back in between.
+- **Rules written in advance make this possible.** The chain picks the C1
+  winner on its own, because the decision rule ("within 1 point, take the
+  cheaper") was written before any run. Nobody has to wake up at 3 am to
+  choose, and nobody can be tempted to bend the rule after seeing the
+  numbers.
+- **Don't hold a GPU you aren't using.** Grabbing a GPU early and leaving
+  it idle while finishing the code would be unfair to the others waiting.
+  The placeholder exits at once if the chain isn't ready.
+
 ---
 
 ## Glossary
