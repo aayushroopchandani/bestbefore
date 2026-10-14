@@ -139,7 +139,7 @@ and an easy login from the laptop.
    ```
    module load Python/3.11.11
    cd ~/bestbefore
-   python -m venv .venv
+   python3 -m venv .venv          # the module has python3, not python
    .venv/bin/pip install -e ".[dev,download,train]"
    mkdir -p slurm/logs
    ```
