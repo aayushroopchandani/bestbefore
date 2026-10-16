@@ -1,9 +1,9 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: **A, B, C and D1 done** (2026-10-16): GPU job
-72789 ran the whole chain overnight. The M1 detector is **`n640`**
-(`yolo11n`, 640 px, synthetic + real, seed 0), threshold 0.728. Next: D2
-(ExpDate test, once), then D3 once the store photos are labelled.
+Planned 2026-10-14. Status: **A, B, C, D1 and D2 done** (2026-10-16). The
+M1 detector is **`n640`** (`yolo11n`, 640 px, synthetic + real, seed 0),
+threshold 0.728. On the ExpDate test split it finds **637 of 665 expiry
+dates** (mAP@0.5 0.993). Next: D3, once the store photos are labelled.
 The ideas behind this plan, explained simply: [`learnings-m1.md`](learnings-m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
@@ -396,13 +396,45 @@ every run.
 
 #### D2. Score on the ExpDate test split (once)
 
-- `scripts/eval_detector.py --run <id> --set real-test` scores with
-  `detection_eval` (from B1) at the M1 threshold, and writes
-  `results/runs/<id>/real-test.json`. mAP@0.5 on test comes from
-  Ultralytics (`model.val(split="test")`).
+- `scripts/eval_detector.py --set real-test --runs n640 n640-seed1
+  n640-seed2` scores with `detection_eval` (from B1), each run at its own
+  validation threshold, and writes `results/runs/<run>/real-test.json`.
+  mAP@0.5 on test comes from Ultralytics (`model.val(split="test")`). It
+  refuses to re-score a run on the test split unless `--again` is given.
 - **Cross-check:** our `date` recall must match Ultralytics' at the same
   threshold, to within rounding.
 All 3 seeds are scored; nothing is retrained or re-chosen afterwards.
+
+**Done 2026-10-16, on the laptop's CPU** (the store photos must be scored
+there too, so both use the same device).
+
+- **Device check first.** Validation re-scored on the laptop matched the
+  cluster's GPU numbers (mAP@0.5 0.9909 against 0.9908), except one date
+  out of 187: its confidence is 0.7226 on the CPU, 0.005 under the
+  threshold, and the GPU's half-precision arithmetic put it just over.
+- **Results** on the 665 test photos (733 dates, 665 of them expiry dates):
+
+  | Run | Threshold | mAP@0.5 date | Dates found | Expiry found | Precision | False boxes / photo |
+  |---|---:|---:|---:|---:|---:|---:|
+  | **`n640`, seed 0 (the M1 detector)** | 0.728 | 0.993 | 697/733 | **637/665** | 0.987 | 0.01 |
+  | `n640`, seed 1 | 0.667 | 0.993 | 713/733 | 651/665 | 0.983 | 0.02 |
+  | `n640`, seed 2 | 0.664 | 0.992 | 712/733 | 650/665 | 0.974 | 0.03 |
+
+  Mean over the seeds: mAP@0.5 0.993 (0.992 to 0.993), date recall 0.965
+  (0.951 to 0.973), expiry recall 0.971 (0.958 to 0.979). At IoU 0.3 only
+  1 or 2 more dates count as found, so the boxes are in the right place.
+- **Cross-check passed:** our date recall and Ultralytics' agree within
+  0.003 on all three runs.
+- **Finding: the threshold, not the model, limits recall.** The seeds
+  have the same mAP, but seed 0 chose a stricter threshold on validation
+  (0.728 against about 0.665) and finds 14 fewer expiry dates. Seed 0
+  puts a box on **all 665** test expiry dates at some confidence; the 28
+  it misses are found with confidence under 0.728 (21 of them between 0.5
+  and 0.728). F1 weighs a missed date and a false box equally, but for
+  this project a missed date costs more. **The threshold stays 0.728 for
+  M1**, because changing it now would mean choosing it from the test
+  photos. The lesson goes to Later: pick the threshold for recall, on
+  validation, before the next test.
 
 **Commit:** `feat: M1 scored on ExpDate test`
 
@@ -417,6 +449,10 @@ All 3 seeds are scored; nothing is retrained or re-chosen afterwards.
 3. Results by tag: **expiry found** (`k/n`, IoU 0.5 and 0.3), all dates
    found, and false positives per photo. `other-face` photos have no
    expiry in frame, so they're reported only as "false dates found".
+   *(Added after D2, as a diagnostic only:)* how many expiry dates get a
+   box at **any** confidence, which separates "can't see it" from "saw it
+   but wasn't sure". It doesn't change the threshold or the headline
+   numbers.
 4. A gallery of misses, for error analysis, stays in `data/store/`: it
    shows store photos, so it's never committed.
 
@@ -498,6 +534,10 @@ results/           m1_detector.md        (committed; runs/ is not)
 
 ## Later
 
+- **Pick the threshold for recall, not F1** (found in D2). For example:
+  the highest threshold that keeps validation recall at 99% or more.
+  Decide it on validation, before the next test, never from test or
+  store results.
 - **Train `n640` for longer.** It ran all 100 epochs without early
   stopping, so it may still have been improving.
 - **Faster data loading** (caching the photos in memory, more loader
