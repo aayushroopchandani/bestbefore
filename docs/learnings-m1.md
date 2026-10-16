@@ -468,6 +468,43 @@ and [`experiments/m1-synthetic-data`](../experiments/m1-synthetic-data/README.md
 
 ---
 
+## What the test scoring taught us (D2, 2026-10-16)
+
+The M1 detector found **637 of 665 expiry dates** on ExpDate's test
+photos (mAP@0.5 0.993), scored once, on the laptop.
+
+- **Check the measuring tool before you measure.** We re-scored the
+  validation photos on the laptop's CPU and compared with the cluster's
+  GPU. One date out of 187 came out differently: its confidence was
+  0.7226 on the CPU and just over 0.728 on the GPU. A GPU often computes
+  in **half precision** (fewer decimal places, faster), so a box sitting
+  right on the threshold can tip either way. A difference that small is
+  harmless, but we only know that because we checked.
+- **The test set is used once, and the code enforces it.** The scoring
+  script refuses to score a run on the test photos a second time unless
+  you add `--again` on purpose. A rule that relies on remembering is
+  easier to break than one built into the tool.
+- **A model can see a date and still "miss" it.** The detector put a box
+  on *every one* of the 665 test expiry dates. The 28 it missed were all
+  there, but with confidence under the 0.728 threshold. So the threshold
+  cost us more than the model did.
+- **Same model quality, different recall.** The three seeds have the same
+  mAP@0.5 (0.993), but seed 0 chose a stricter threshold (0.728 against
+  about 0.665) and found 14 fewer expiry dates. mAP doesn't depend on the
+  threshold; recall does.
+- **F1 wasn't the right rule for us.** F1 treats a missed date and a
+  false box as equally bad. For an expiry reader, a missed date is worse:
+  it can never be read, while a false box only costs the reader a moment.
+  A better rule is something like "the highest threshold that still finds
+  99% of the validation dates".
+- **Finding a better rule on the test set doesn't let you use it there.**
+  Lowering the threshold now would raise the test score, but only because
+  we looked at the test answers. So M1 keeps 0.728 and reports it
+  honestly, and the better rule goes into the plan for next time, to be
+  set on validation before the next test.
+
+---
+
 ## Glossary
 
 | Word | Meaning |
@@ -484,6 +521,7 @@ and [`experiments/m1-synthetic-data`](../experiments/m1-synthetic-data/README.md
 | F1 | one score combining precision and recall |
 | Fine-tuning | continuing to train a pretrained model on your own data |
 | GPU | a chip that does the maths of training many times faster than a CPU |
+| Half precision | numbers stored with fewer digits (16 bits instead of 32): faster on a GPU, very slightly less exact |
 | Login node | the cluster machine you log into; light work only |
 | Loss | one number saying how wrong the model's boxes were |
 | mAP@0.5 | the area under the precision-recall curve, averaged over classes, with IoU ≥ 0.5 counting as correct |
