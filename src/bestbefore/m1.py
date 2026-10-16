@@ -42,14 +42,22 @@ def keep_synthetic(with_synth: dict, real_only: dict) -> bool:
 START, END = "<!-- results:start -->", "<!-- results:end -->"
 
 
-def load_run(name: str, runs_dir=None) -> tuple[dict, dict] | None:
-    """(run.json, val.json) of the newest finished run with this name."""
+def finished_run(name: str, runs_dir=None) -> Path | None:
+    """The newest run directory with this name that has a val.json."""
     base = Path(runs_dir) if runs_dir else runs.RUNS_DIR
     for run in sorted(base.glob(f"*-m1-{name}"), reverse=True):
         if (run / "val.json").exists():
-            return (json.loads((run / "run.json").read_text()),
-                    json.loads((run / "val.json").read_text()))
+            return run
     return None
+
+
+def load_run(name: str, runs_dir=None) -> tuple[dict, dict] | None:
+    """(run.json, val.json) of the newest finished run with this name."""
+    run = finished_run(name, runs_dir)
+    if run is None:
+        return None
+    return (json.loads((run / "run.json").read_text()),
+            json.loads((run / "val.json").read_text()))
 
 
 def row(name: str, record: dict, scores: dict) -> dict[str, str]:
