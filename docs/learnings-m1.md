@@ -430,13 +430,53 @@ Things that went wrong or surprised us while setting up, and why:
 
 ---
 
+## What the training runs taught us (2026-10-16)
+
+The GPU job ran overnight: 8 trainings in 7 h 42 min on one H100. Full
+tables: [`experiments/m1-size-and-input`](../experiments/m1-size-and-input/README.md)
+and [`experiments/m1-synthetic-data`](../experiments/m1-synthetic-data/README.md).
+
+- **A test that's too easy can't tell models apart.** All four C1
+  settings found 185 to 187 of the 187 validation dates. When every
+  student scores 99% on an exam, the exam can't tell you who studied
+  more. That's called a **ceiling effect**. It means "on these photos,
+  size doesn't matter", not "size never matters".
+- **The rule written in advance did its job.** The best score (0.995) and
+  the cheapest model's (0.991) differed by 0.4 points, under our 1-point
+  noise band, so the chain picked the cheapest, `n640`, at 3 am, with no
+  one choosing by hand and no temptation to pick the "winner".
+- **Bigger settings gave tighter boxes, not more dates.** mAP@0.5:0.95
+  (which rewards boxes that hug the date closely) went from 0.895 to
+  0.922. Different metrics answer different questions: we need "is the
+  date found", so mAP@0.5 decides.
+- **Synthetic data helped a little:** 185 dates found with it, 179
+  without. Small, but every measure moved the same way, which makes a
+  small difference more believable than one number alone.
+- **Three seeds, almost the same result** (0.991, 0.991, 0.994). So our
+  single-seed comparisons in C1 and C2 weren't luck.
+- **Our evaluator agreed with Ultralytics' on every run.** Two
+  independent pieces of code giving the same recall is strong evidence
+  that both are right.
+- **Estimates are guesses until measured.** I estimated about a day; it
+  took under 8 hours. And `s640`, with 3.6× the parameters, trained as fast as
+  `n640`: the GPU was waiting for photos to be loaded from disk, so the
+  GPU wasn't the slow part. Finding the real **bottleneck** (the slowest
+  step, which sets the pace) needs a measurement, not intuition.
+- **No early stopping for `n640`.** It trained all 100 epochs, meaning the
+  validation score was still improving within the last 30. A longer
+  run might do slightly better; it's noted for later.
+
+---
+
 ## Glossary
 
 | Word | Meaning |
 |---|---|
 | Augmentation | training on changed copies of photos (brighter, zoomed, …) |
 | Batch | the group of photos processed together before each adjustment |
+| Bottleneck | the slowest step of a process, which sets the pace for the whole |
 | Checkpoint / weights | the saved model file, e.g. `best.pt` |
+| Ceiling effect | a test so easy that everyone scores near the top, so it can't tell them apart |
 | Compute node | a cluster machine that runs jobs; ours have GPUs and no internet |
 | Confidence | how sure the model is about a box, 0 to 1 |
 | Early stopping | ending training when validation stops improving |
