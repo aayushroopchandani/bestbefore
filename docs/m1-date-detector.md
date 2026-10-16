@@ -1,8 +1,9 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: **A1, A2 and B1 done, laptop smoke test passed; C1 and C2
-experiment folders written** (2026-10-14). Next: GPU job 72789 runs the
-chain (estimated start 2026-10-15, about 21:15).
+Planned 2026-10-14. Status: **A, B, C and D1 done** (2026-10-16): GPU job
+72789 ran the whole chain overnight. The M1 detector is **`n640`**
+(`yolo11n`, 640 px, synthetic + real, seed 0), threshold 0.728. Next: D2
+(ExpDate test, once), then D3 once the store photos are labelled.
 The ideas behind this plan, explained simply: [`learnings-m1.md`](learnings-m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
@@ -372,10 +373,26 @@ worth writing up: M0 showed the synthetic dates are bigger and easier, so
 
 #### D1. Train the final setup with 3 seeds
 
-The setup chosen in C1 and C2, trained with seeds 0, 1 and 2 (an array of
-3, two at a time). Report validation mean and range. Seed 0's model is the
-M1 detector, as declared in decision 6. Its validation F1-best threshold
-becomes **the** M1 threshold.
+The setup chosen in C1 and C2, trained with seeds 0, 1 and 2. Report
+validation mean and range. Seed 0's model is the M1 detector, as declared
+in decision 6. Its validation F1-best threshold becomes **the** M1
+threshold.
+
+**Done 2026-10-16.** C1 chose `n640` (all four within the 1-point noise
+band) and C2 kept the synthetic photos
+([`experiments/m1-size-and-input`](../experiments/m1-size-and-input/README.md),
+[`experiments/m1-synthetic-data`](../experiments/m1-synthetic-data/README.md)).
+On the 165 validation photos (187 dates):
+
+| Seed | mAP@0.5 date | Dates found | Precision | Threshold |
+|---:|---:|---:|---:|---:|
+| 0 (the M1 detector) | 0.991 | 185 | 0.974 | 0.728 |
+| 1 | 0.991 | 183 | 0.989 | 0.667 |
+| 2 | 0.994 | 184 | 0.979 | 0.664 |
+
+Mean mAP@0.5 0.992, range 0.003: the result doesn't depend on the seed.
+Our evaluator's date recall agreed with Ultralytics' own, within 0.02, on
+every run.
 
 #### D2. Score on the ExpDate test split (once)
 
@@ -432,15 +449,20 @@ the store photos (M0 B1) can happen at any time before D3.
 
 ## GPU budget
 
-Rough estimates, to be replaced by A3's measured time per epoch.
+Measured in GPU job 72789 (one H100 NVL, 2026-10-15 21:13 to 2026-10-16
+04:55). The estimates made before the runs were about twice as long.
 
-| Runs | Count | Estimate per run (H100) |
-|---|---:|---|
-| C1 at 640 px | 2 | under an hour |
-| C1 at 1280 px | 2 | a few hours (4× the pixels) |
-| C2 real-only | 1 | short (937 photos) |
-| D1 extra seeds | 2 | as the C1 winner |
-| **Total** | **7** | about a day of GPU time, two runs at a time |
+| Runs | Count | Estimated per run | Measured per run |
+|---|---:|---|---|
+| GPU smoke test | 1 | minutes | 2.6 min |
+| C1 at 640 px (`n640`, `s640`) | 2 | under an hour | 66 and 62 min |
+| C1 at 1280 px (`n1280`, `s1280`) | 2 | a few hours | 97 and 102 min |
+| C2 real-only | 1 | short | 6 min |
+| D1 extra seeds (`n640`) | 2 | as the C1 winner | 61 and 62 min |
+| **Total** | **8** | about a day | **7 h 42 min**, in one job |
+
+`s640` took no longer than `n640`, so loading the photos, not the GPU,
+set the pace.
 
 Checkpoints are about 5 to 20 MB each, so storage is no concern.
 
@@ -476,6 +498,11 @@ results/           m1_detector.md        (committed; runs/ is not)
 
 ## Later
 
+- **Train `n640` for longer.** It ran all 100 epochs without early
+  stopping, so it may still have been improving.
+- **Faster data loading** (caching the photos in memory, more loader
+  workers): `s640` trained no faster than `n640`, so the GPU was waiting
+  on the photos.
 - **Tiled inference** for very small dates: cut a large photo into
   overlapping tiles, detect in each, merge the boxes.
 - **90° rotation augmentation** as a cheap rival to M2's sideways
