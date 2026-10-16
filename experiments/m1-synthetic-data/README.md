@@ -54,11 +54,28 @@ python experiments/m1-synthetic-data/summarise.py --write
 ```
 
 <!-- results:start -->
-_Not run yet: C2 starts once all four C1 runs have finished (GPU job 72789)._
+| run | model | input | training photos | mAP@0.5 date | mAP@0.5:0.95 date | threshold | date recall | precision | false boxes / photo | recall at IoU 0.3 | epochs | minutes | recall cross-check |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| n640 | yolo11n | 640 | synthetic + real | 0.991 | 0.895 | 0.728 | 185/187 | 0.974 | 0.03 | 185/187 | 100 | 65.5 | ok |
+| n640-real | yolo11n | 640 | real only | 0.981 | 0.865 | 0.682 | 179/187 | 0.984 | 0.02 | 180/187 | 100 | 6.3 | ok |
+
+**Decision, by the rule above: keep the synthetic photos.** mAP@0.5 for dates: synthetic + real 0.991 vs real only 0.981 (+0.010).
 <!-- results:end -->
 
 ## What it means
 
-_Written after the runs. Either answer is worth writing up: "the
-synthetic photos don't help" would be believable after what M0 found,
-and it would make M2's generator more important._
+Run on 2026-10-16 (GPU job 72789, one H100).
+
+- **The synthetic photos help a little.** With them, the model finds 185
+  of 187 validation dates; without them, 179. mAP@0.5 for dates rises by
+  1 point (0.991 against 0.981), and the boxes are tighter
+  (mAP@0.5:0.95 0.895 against 0.865, +3 points).
+- **The mAP@0.5 gain alone is about the size of the noise,** but every
+  measure moves the same way, so keeping them is the right call by the
+  rule and by the evidence.
+- **The cost is ten times the training time** (66 minutes against 6),
+  which is cheap on an H100.
+- **For M2:** ExpDate's synthetic set adds about 1 point on ExpDate's own
+  validation photos. M2's generator should be judged by what it adds on
+  the store photos (sideways dates, Indian date formats, small print),
+  which this synthetic set barely covers.

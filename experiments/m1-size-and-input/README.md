@@ -73,10 +73,42 @@ python experiments/m1-size-and-input/summarise.py --write
 ```
 
 <!-- results:start -->
-_Not run yet: the runs are queued in GPU job 72789._
+| run | model | input | training photos | mAP@0.5 date | mAP@0.5:0.95 date | threshold | date recall | precision | false boxes / photo | recall at IoU 0.3 | epochs | minutes | recall cross-check |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| n640 | yolo11n | 640 | synthetic + real | 0.991 | 0.895 | 0.728 | 185/187 | 0.974 | 0.03 | 185/187 | 100 | 65.5 | ok |
+| n1280 | yolo11n | 1280 | synthetic + real | 0.994 | 0.912 | 0.553 | 187/187 | 0.979 | 0.02 | 187/187 | 96 | 96.5 | ok |
+| s640 | yolo11s | 640 | synthetic + real | 0.995 | 0.912 | 0.787 | 186/187 | 0.995 | 0.01 | 186/187 | 100 | 61.6 | ok |
+| s1280 | yolo11s | 1280 | synthetic + real | 0.995 | 0.922 | 0.633 | 186/187 | 1.000 | 0.00 | 186/187 | 87 | 102.3 | ok |
+
+**Decision, by the rule above: `n640`**, within 0.004 of the best (s640, 0.995), which is under 1 point, and cheaper.
 <!-- results:end -->
 
 ## What it means
 
-_Written after the runs: what the numbers say about small dates, and
-whether the extra cost of the larger model or input paid off._
+Run on 2026-10-15/16 (GPU job 72789, one H100).
+
+- **On ExpDate validation, all four settings are as good as each other.**
+  Each finds 185 to 187 of the 187 dates, and mAP@0.5 spans 0.991 to
+  0.995. That 0.4-point spread is under the 1-point noise band, so the
+  rule picks the cheapest run: **`n640`, the smallest model at YOLO's
+  default input size.**
+- **The validation photos are close to their ceiling.** With every model
+  missing at most 2 dates, this set can't tell the settings apart. It
+  doesn't show that model or input size never matters. It shows that
+  ExpDate's dates, at about 16 px tall at 640 px input, are big enough
+  for the smallest setting.
+- **The bigger settings buy tighter boxes, not more dates.** mAP@0.5:0.95,
+  which rewards boxes that hug the date closely, rises from 0.895
+  (`n640`) to 0.912–0.922. Finding a date only needs IoU 0.5, and the
+  M3 reader can crop with a margin, so this doesn't change the decision.
+- **Cost:** the 1280 px runs took about 50% longer (97 and 102 minutes
+  against 62–66). `s640` trained as fast as `n640`, which suggests that
+  loading photos, not the GPU, set the pace.
+- **`n640` trained all 100 epochs without early stopping,** so it may
+  still have been improving. A longer run is noted under Later in the
+  M1 plan.
+- **What this can't answer:** whether the store photos' small print needs
+  1280 px. The store result (M1, D3) will show how `n640` copes, but it
+  can't be used to change this choice, because the store photos are test
+  data. If `n640` misses small print there, that's a finding for later
+  milestones.
