@@ -4,7 +4,7 @@ Planned 2026-10-14. Status: **A, B, C, D1 and D2 done** (2026-10-16). The
 M1 detector is **`n640`** (`yolo11n`, 640 px, synthetic + real, seed 0),
 threshold 0.728. On the ExpDate test split it finds **637 of 665 expiry
 dates** (mAP@0.5 0.993). Next: D3, once the store photos are labelled.
-The ideas behind this plan, explained simply: [`learnings-m1.md`](learnings-m1.md).
+The ideas behind this plan, explained simply: [`learnings/m1.md`](learnings/m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
 photo, trained on Products-Synth plus the Products-Real train split, on
@@ -466,7 +466,7 @@ there too, so both use the same device).
   detection number, it goes alongside, with a note on any difference in
   how it was measured.
 - `README.md`: the M1 row in the roadmap, and the headline numbers.
-- `docs/learnings-m1.md`: the results section filled in.
+- `docs/learnings/m1.md`: the results section filled in.
 
 **Commit:** `docs: M1 results`
 
@@ -505,7 +505,7 @@ Checkpoints are about 5 to 20 MB each, so storage is no concern.
 ## Files at the end of M1
 
 ```
-docs/              m1-date-detector.md, learnings-m1.md
+docs/              m1-date-detector.md, learnings/m1.md
 src/bestbefore/    detector.py, detection_eval.py, m1.py (grid and decision rules)
 scripts/           fetch_pretrained.py, train_detector.py, m1_chain.py,
                    pull_cluster_results.sh, eval_detector.py

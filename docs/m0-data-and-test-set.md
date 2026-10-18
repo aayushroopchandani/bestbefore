@@ -1,7 +1,7 @@
 # M0: Data and test set
 
 Planned 2026-10-13. Status: **Part A done** (2026-10-13); B and C to go.
-The ideas behind each step, explained simply: [`learnings-m0.md`](learnings-m0.md).
+The ideas behind each step, explained simply: [`learnings/m0.md`](learnings/m0.md).
 
 **Goal.** Get the public data into a shape a detector can train on, turn the
 store photos into a labelled test set that never changes again, and measure

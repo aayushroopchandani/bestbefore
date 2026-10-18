@@ -287,11 +287,11 @@ bestbefore/
 - [`docs/m0-data-and-test-set.md`](docs/m0-data-and-test-set.md): the M0
   plan, slice by slice
 - [`docs/datasets.md`](docs/datasets.md): what is actually in ExpDate
-- [`docs/learnings-m0.md`](docs/learnings-m0.md): the ideas behind each
+- [`docs/learnings/m0.md`](docs/learnings/m0.md): the ideas behind each
   step, explained simply
 - [`docs/m1-date-detector.md`](docs/m1-date-detector.md): the M1 plan,
   from cluster setup to the final evaluation
-- [`docs/learnings-m1.md`](docs/learnings-m1.md): the cluster, Slurm,
+- [`docs/learnings/m1.md`](docs/learnings/m1.md): the cluster, Slurm,
   fine-tuning, precision, recall and mAP, explained simply
 
 ---
