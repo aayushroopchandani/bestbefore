@@ -258,15 +258,23 @@ tight box around every date. One pass per photo, in Label Studio, running
 locally. Expect about 3 to 4 hours; split it over two sittings.
 
 **Setup.** Install Label Studio outside the project env, and serve the
-photos from where they already are, so no copies are made:
+photos from where they already are, so no copies are made. *(Changed on
+2026-10-20: the laptop has no pipx, so Label Studio got its own venv in
+`~/.venvs/label-studio`, which does the same job. Its database lives in
+`data/label-studio/` (gitignored), so the labels stay with the other
+store data, and it listens on 127.0.0.1 only, so nothing else on the
+network can reach the photos.)*
 
 ```bash
-pipx install label-studio
+/opt/homebrew/bin/python3.11 -m venv ~/.venvs/label-studio && ~/.venvs/label-studio/bin/pip install label-studio
 ```
 
 ```bash
-LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT="$STORE_PHOTOS_DIR" label-studio start
+set -a && source .env && set +a && LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT="$STORE_PHOTOS_DIR" LABEL_STUDIO_BASE_DATA_DIR="$PWD/data/label-studio" ~/.venvs/label-studio/bin/label-studio start --internal-host 127.0.0.1 --port 8080
 ```
+
+Run the second command from the repo folder. In the Claude app, the same
+command is saved as `label-studio` in `.claude/launch.json`.
 
 Create a project, paste the interface below into *Labeling Interface →
 Code*, then add each `samples*/` folder under *Cloud Storage → Add Source

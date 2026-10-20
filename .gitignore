@@ -36,3 +36,6 @@ venv/
 
 # OS
 .DS_Store
+
+# Local tool config (machine-specific paths)
+.claude/launch.json
