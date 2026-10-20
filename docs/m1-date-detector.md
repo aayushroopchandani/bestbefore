@@ -534,6 +534,11 @@ results/           m1_detector.md        (committed; runs/ is not)
 
 ## Later
 
+- **Leave the 14 synthetic copies of validation photo `img_00277.jpg`
+  out of training** the next time the detector is trained (M2), so
+  validation is fully clean. Found in
+  [`experiments/expdate-near-duplicates`](../experiments/expdate-near-duplicates/README.md);
+  it changes none of M1's results.
 - **Pick the threshold for recall, not F1** (found in D2). For example:
   the highest threshold that keeps validation recall at 99% or more.
   Decide it on validation, before the next test, never from test or

@@ -151,3 +151,23 @@ Full table: [`results/m0_expdate_stats.md`](../results/m0_expdate_stats.md).
   synth adds rather than assume it helps.
 - Real photos usually hold one date (87 to 90%); synthetic ones hold two
   dates 41% of the time.
+
+### Duplicates across the splits
+
+Checked on 2026-10-20 in
+[`experiments/expdate-near-duplicates`](../experiments/expdate-near-duplicates/README.md).
+
+- **Test is clean:** no test photo is a copy of a train, validation or
+  synthetic photo, so M1's test result stands.
+- **One validation photo is reused in Products-Synth:** `img_00277.jpg`
+  (a tin) is the background of 14 synthetic training photos, with its
+  real date erased and fake dates printed on. That makes validation
+  optimistic by at most one photo of 165, which changes none of M1's
+  choices. Leave those 14 out of training from M2 on.
+- **Products-Synth is built partly on real photos:** at least 8
+  Products-Real *train* photos are also synthetic backgrounds. That's
+  harmless (both are training data), but synthetic and real aren't fully
+  separate.
+- **Same product, separate photo:** 2 clear validation / train pairs
+  (and 1 possible) show different packs of the same product. That's
+  normal for photos taken in shops, and they're left in.
