@@ -21,7 +21,7 @@ from datetime import date
 
 from bestbefore import store
 from bestbefore.config import REPO_ROOT
-from bestbefore.m1 import markdown_table
+from bestbefore.tables import markdown_table
 
 SUMMARY = REPO_ROOT / "results" / "store_test_set.md"
 HISTORY = "## History\n\n"
@@ -38,7 +38,7 @@ def summary(test_set: dict, digest: str, history: list[str]) -> str:
         f"- **Photos:** {len(test_set['photos'])}\n"
         f"- **SHA-256 of `data/store/test_set.json`:** `{digest}`\n\n"
         "## Counts\n\n"
-        + markdown_table(store.tag_counts(test_set["photos"]))
+        + markdown_table(store.tag_counts(test_set["photos"]), left=("tag",))
         + "\n\nEach photo has the first tag that applies, in the order above.\n"
         "`small-print` vs `clean` comes from the expiry box: under 1.5% of the\n"
         "photo's long side is small print.\n\n"

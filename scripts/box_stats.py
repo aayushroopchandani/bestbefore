@@ -17,7 +17,7 @@ import numpy as np
 
 from bestbefore import store
 from bestbefore.images import orientation
-from bestbefore.m1 import markdown_table
+from bestbefore.tables import markdown_table
 from bestbefore.samples import DATE_LABELS, Sample
 from bestbefore.sets import NAMES, load_set
 
@@ -81,8 +81,9 @@ def store_tables() -> str:
     format_rows = [{"expiry format, as printed": f"`{f}`", "photos": f"{n}"}
                    for f, n in formats.most_common()]
     return ("## Store photos by failure tag\n\n"
-            + markdown_table(store.tag_counts(labels))
-            + "\n\n## Store expiry formats\n\n" + markdown_table(format_rows))
+            + markdown_table(store.tag_counts(labels), left=("tag",))
+            + "\n\n## Store expiry formats\n\n"
+            + markdown_table(format_rows, left=("expiry format, as printed",)))
 
 
 def main() -> None:

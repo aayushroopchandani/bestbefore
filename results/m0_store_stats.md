@@ -29,7 +29,7 @@ Made by `python scripts/box_stats.py store real-test --out results/m0_store_stat
 ## Store photos by failure tag
 
 | tag | photos | with an expiry | to the day | to the month | derived | unreadable |
-|---:|---:|---:|---:|---:|---:|---:|
+|---|---:|---:|---:|---:|---:|---:|
 | other-face | 12 | 0 | 0 | 0 | 0 | 0 |
 | sideways | 16 | 16 | 6 | 10 | 1 | 0 |
 | curved | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -41,7 +41,7 @@ Made by `python scripts/box_stats.py store real-test --out results/m0_store_stat
 ## Store expiry formats
 
 | expiry format, as printed | photos |
-|---:|---:|
+|---|---:|
 | `DD/MM/YYYY` | 27 |
 | `Month YYYY` | 19 |
 | `MON YYYY` | 11 |

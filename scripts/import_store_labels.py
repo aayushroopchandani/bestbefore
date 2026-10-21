@@ -19,9 +19,7 @@ from bestbefore import store
 from bestbefore import store_import as imp
 from bestbefore.config import scanify_dir, store_photos_dir
 from bestbefore.images import upright_size
-from bestbefore.m1 import markdown_table
-
-SCANIFY_TRUTH = Path("backend/tests/ground_truth.py")   # inside $SCANIFY_DIR
+from bestbefore.tables import markdown_table
 
 
 def report(name: str, problems: list[str]) -> None:
@@ -42,7 +40,7 @@ def main() -> None:
     on_disk = store.photos_on_disk(root)
     labels = imp.from_export(tasks)
     upright = {p: upright_size(root / p) for p in labels.keys() & set(on_disk)}
-    truth = imp.read_scanify_truth(scanify_dir() / SCANIFY_TRUTH)
+    truth = imp.read_scanify_truth(scanify_dir() / imp.SCANIFY_TRUTH)
 
     checks = {
         "export well formed: known tags and labels, upright non-empty boxes":
@@ -70,7 +68,7 @@ def main() -> None:
           f"long side): {', '.join(f'{k}: {n}' for k, n in moved.items()) or 'no tag changed'}")
     args.out.write_text(json.dumps(labels, indent=1, sort_keys=True) + "\n")
     print(f"\nwrote {len(labels)} photos to {args.out}\n")
-    print(markdown_table(store.tag_counts(labels)))
+    print(markdown_table(store.tag_counts(labels), left=("tag",)))
 
 
 if __name__ == "__main__":

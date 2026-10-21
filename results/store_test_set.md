@@ -12,7 +12,7 @@ shows: `store.read_test_set()` refuses a file or photo that differs.
 ## Counts
 
 | tag | photos | with an expiry | to the day | to the month | derived | unreadable |
-|---:|---:|---:|---:|---:|---:|---:|
+|---|---:|---:|---:|---:|---:|---:|
 | other-face | 12 | 0 | 0 | 0 | 0 | 0 |
 | sideways | 16 | 16 | 6 | 10 | 1 | 0 |
 | curved | 0 | 0 | 0 | 0 | 0 | 0 |

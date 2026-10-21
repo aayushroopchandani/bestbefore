@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import runs
+from . import runs, tables
 
 # C1: run name -> (weights, input size). Listed cheapest first, which is
 # the order the tie-break uses: smaller model first, then smaller input.
@@ -84,12 +84,7 @@ def row(name: str, record: dict, scores: dict) -> dict[str, str]:
 
 
 def markdown_table(rows: list[dict[str, str]]) -> str:
-    cols = list(rows[0])
-    lines = ["| " + " | ".join(cols) + " |",
-             "|" + "|".join("---" if c in ("run", "model", "training photos") else "---:"
-                            for c in cols) + "|"]
-    lines += ["| " + " | ".join(r[c] for c in cols) + " |" for r in rows]
-    return "\n".join(lines)
+    return tables.markdown_table(rows, left=("run", "model", "training photos"))
 
 
 def replace_results(readme: str, block: str) -> str:

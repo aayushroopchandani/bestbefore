@@ -21,6 +21,7 @@ from .samples import Expiry, parse_year
 from .store import BOX_LABELS, TAGS, parse_date
 
 DERIVED = "derived from mfg + shelf life"   # the choice's text in the interface
+SCANIFY_TRUTH = Path("backend/tests/ground_truth.py")   # inside $SCANIFY_DIR
 EXPIRY_YEARS = range(2024, 2036)
 # A date shorter than this, as a fraction of the photo's long side, is small
 # print (the B1 tagging rule, applied from the boxes since 2026-10-21).
