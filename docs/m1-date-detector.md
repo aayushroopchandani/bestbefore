@@ -1,9 +1,11 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: **A, B, C, D1 and D2 done** (2026-10-16). The
-M1 detector is **`n640`** (`yolo11n`, 640 px, synthetic + real, seed 0),
-threshold 0.728. On the ExpDate test split it finds **637 of 665 expiry
-dates** (mAP@0.5 0.993). Next: D3, once the store photos are labelled.
+Planned 2026-10-14. Status: **A, B, C, D1 and D2 done** (2026-10-16),
+**D3 done** (2026-10-21). The M1 detector is **`n640`** (`yolo11n`,
+640 px, synthetic + real, seed 0), threshold 0.728. On the ExpDate test
+split it finds **637 of 665 expiry dates** (mAP@0.5 0.993); on the store
+photos, **18 of 81** (mean of 3 seeds 27%, range 22% to 31%). Next: D4,
+the report.
 The ideas behind this plan, explained simply: [`learnings/m1.md`](learnings/m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
@@ -459,6 +461,45 @@ there too, so both use the same device).
 4. A gallery of misses, for error analysis, stays in `data/store/`: it
    shows store photos, so it's never committed.
 
+**Done 2026-10-21, on the laptop's CPU**, all three seeds, each at its
+own validation threshold.
+
+- **Padding fixed first, though not first time round.** The guide
+  (§3.4) had found that Ultralytics pads a batch of same-shaped photos
+  less than a mixed batch, which shifts confidences, and said to pass
+  `rect=False` before D3. That step never made it into this plan, and
+  the first D3 run went ahead without it: 3 of the 7 store batches had a
+  single shape. The fix was then applied (it was decided on 2026-10-20,
+  before any store result), validation re-scored identically (184 dates
+  found, mAP 0.9909, as before: its batches were always mixed), and D3
+  re-scored with `--again`. Expiry results came out identical (18, 22
+  and 25 of 81); one other date moved. The numbers below are from the
+  fixed run.
+- **Results** on 99 photos (199 dates, 81 of them printed expiry dates):
+
+  | Tag | Expiry dates | `n640` | seed 1 | seed 2 | Mean expiry recall | Boxed at any confidence |
+  |---|---:|---:|---:|---:|---:|---:|
+  | sideways | 15 | 0 | 0 | 0 | 0.000 | 0.000 |
+  | dot-matrix | 20 | 12 | 15 | 17 | 0.733 (0.600 to 0.850) | 0.933 |
+  | small-print | 15 | 0 | 0 | 0 | 0.000 | 0.356 |
+  | clean | 31 | 6 | 7 | 8 | 0.226 (0.194 to 0.258) | 0.677 |
+  | **all** | **81** | **18** | **22** | **25** | **0.267 (0.222 to 0.309)** | 0.556 |
+
+  Precision stays high (0.93 to 0.95) with 0.02 to 0.04 false boxes per
+  photo. At IoU 0.3 only one more expiry date counts as found per seed,
+  so the boxes that are found sit in the right place.
+- **Why the misses** ([`experiments/m1-store-misses`](../experiments/m1-store-misses/README.md)):
+  besides sideways dates (none in ExpDate), **dates with the month as a
+  word are almost never found** (3% of 26; ExpDate's dates are about 94%
+  numbers), and **numeric dates are found by size**: 87% at 2.5% of the
+  photo's long side or more, 12% under 1.5%. Dot-matrix does best
+  because ExpDate is full of numeric dot-matrix dates.
+- **Seed 0 is again the lowest.** As in D2, its stricter threshold (0.728
+  against about 0.665) costs it recall; the seeds' spread (18 to 25 of
+  81) is wide on 81 dates.
+- `scripts/detector_misses.py --run n640` drew the 63 missed expiry dates
+  into `data/store/runs/` for a look by eye; never committed.
+
 **Commit:** `feat: M1 scored on the store photos`
 
 #### D4. Report
@@ -511,9 +552,9 @@ Checkpoints are about 5 to 20 MB each, so storage is no concern.
 docs/              m1-date-detector.md, learnings/m1.md
 src/bestbefore/    detector.py, detection_eval.py, m1.py (grid and decision rules)
 scripts/           fetch_pretrained.py, train_detector.py, m1_chain.py,
-                   pull_cluster_results.sh, eval_detector.py
+                   pull_cluster_results.sh, eval_detector.py, detector_misses.py
 slurm/             m1_holder.sbatch, m1_chain.sh, train_detector.sbatch
-experiments/       m1-size-and-input/, m1-synthetic-data/
+experiments/       m1-size-and-input/, m1-synthetic-data/, m1-store-misses/
 tests/             test_detector.py, test_detection_eval.py, test_m1_rules.py
 results/           m1_detector.md        (committed; runs/ is not)
 ```
@@ -524,7 +565,8 @@ results/           m1_detector.md        (committed; runs/ is not)
   large phone photos, and a date at 640 or 1280 px may be only a few
   pixels tall. If the store result is poor for `small-print`, that is a
   finding, and tiled inference is the fix to try in a later milestone. It
-  is not something to tune on the store photos now.
+  is not something to tune on the store photos now. *(Measured in D3:
+  0 of 15 `small-print` expiry dates found by any seed.)*
 - **The validation split is small** (165 photos). That's why there are
   1-point decision rules, written before the runs, and 3 seeds.
 - **Hidden downloads in jobs.** A3 exists to find them.
@@ -563,6 +605,18 @@ results/           m1_detector.md        (committed; runs/ is not)
   on the photos.
 - **Tiled inference** for very small dates: cut a large photo into
   overlapping tiles, detect in each, merge the boxes.
+- **n1280 on the store photos: an M2 question** (decided 2026-10-21,
+  before any n1280 store result). D3 found size decides for numeric
+  dates (87% found at 2.5% of the long side or more, 12% under 1.5%),
+  and only 0.5% of store date boxes are under 8 px at 1280, against
+  17.6% at 640. M2's ablation adds a 1280 px arm (or tiled inference),
+  scored on the store photos by tag. M1 itself stays `n640`: it was
+  chosen on validation, and the store photos only judge it.
+- **Month-name dates for M2's generator** (found in D3): 26 of the 66
+  non-sideways store expiries write the month as a word, and the
+  detector finds 3% of them. ExpDate's real-train dates are 94% numbers.
+  The generator needs `Month YYYY`, `MON YYYY` and `DD Month YYYY`,
+  ordinals (`19th`) included.
 - **90° rotation augmentation** as a cheap rival to M2's sideways
   synthetic dates: does simple augmentation get most of the gain?
   **Moved to M2** (decided 2026-10-21): an arm of M2's ablation (none /
