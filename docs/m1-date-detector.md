@@ -543,15 +543,29 @@ results/           m1_detector.md        (committed; runs/ is not)
   the highest threshold that keeps validation recall at 99% or more.
   Decide it on validation, before the next test, never from test or
   store results.
+- **Set `optimizer` and `lr0` explicitly** in `detector.SETTINGS`.
+  `optimizer=auto` picks by the number of training steps, so C2's two
+  runs got different optimisers (MuSGD for synthetic + real, AdamW for
+  real only), which makes C2 a two-variable comparison. Found
+  2026-10-20; the C2 decision stands
+  ([`experiments/m1-synthetic-data`](../experiments/m1-synthetic-data/README.md)).
 - **Train `n640` for longer.** It ran all 100 epochs without early
   stopping, so it may still have been improving.
 - **Faster data loading** (caching the photos in memory, more loader
-  workers): `s640` trained no faster than `n640`, so the GPU was waiting
+  workers): **planned for M2's setup** (decided 2026-10-21): test
+  `cache="ram"` (not `"disk"`, whose `.npy` files would sit on the same
+  network filesystem) and more `workers` on a 2-epoch `n640` run, then
+  use the faster setting in every M2 arm.
+  `s640` trained no faster than `n640`, so the GPU was waiting
   on the photos.
 - **Tiled inference** for very small dates: cut a large photo into
   overlapping tiles, detect in each, merge the boxes.
 - **90° rotation augmentation** as a cheap rival to M2's sideways
   synthetic dates: does simple augmentation get most of the gain?
+  **Moved to M2** (decided 2026-10-21): an arm of M2's ablation (none /
+  90° rotation / synthetic / both), scored on the store photos by tag.
+  Exactly 90°, not YOLO's small-angle `degrees`, which loosens the
+  upright boxes around long, thin dates.
 - **Compare a newer family** (YOLO26) or a detector under a permissive
   licence (RT-DETR).
 - **A detection baseline with no training:** RapidOCR's own text boxes,

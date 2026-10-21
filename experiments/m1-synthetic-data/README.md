@@ -75,6 +75,14 @@ Run on 2026-10-16 (GPU job 72789, one H100).
   rule and by the evidence.
 - **The cost is ten times the training time** (66 minutes against 6),
   which is cheap on an H100.
+- **Caveat (found 2026-10-20 in the job log): the optimiser differed
+  too.** Ultralytics' `optimizer=auto` chooses by the number of training
+  steps, so the 12,795-photo run got MuSGD (learning rate 0.01) and the
+  937-photo run got AdamW (0.00125). The "everything else is identical"
+  above holds for our settings, not for this hidden default. Part of the
+  1-point gain could come from the optimiser. The decision stands either
+  way: real-only did not win by more than 1 point. M2's ablation should
+  set `optimizer` and `lr0` explicitly.
 - **For M2:** ExpDate's synthetic set adds about 1 point on ExpDate's own
   validation photos. M2's generator should be judged by what it adds on
   the store photos (sideways dates, Indian date formats, small print),
