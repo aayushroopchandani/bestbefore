@@ -1,6 +1,8 @@
 """Load any dataset by name, so every script can take `--set <name>`."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from . import expdate, store, yolo
 from .config import expdate_dir
 from .samples import Sample
@@ -20,3 +22,9 @@ def load_set(name: str) -> list[Sample]:
     if name == "store":
         return store.load_samples()
     raise ValueError(f"unknown set {name!r}; one of {', '.join(NAMES)}")
+
+
+def runs_root(name: str) -> Path | None:
+    """Where a run on this set keeps its files: data/store/runs/ for the
+    store photos, which never go into results/; the default otherwise."""
+    return store.RUNS_DIR if name == "store" else None

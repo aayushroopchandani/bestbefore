@@ -68,7 +68,7 @@ def photos_on_disk(root: Path | None = None) -> list[str]:
                   if p.suffix.lower() in (".jpg", ".jpeg"))
 
 
-def sha256(path: Path) -> str:
+def sha256(path: str | Path) -> str:
     with open(path, "rb") as f:
         return hashlib.file_digest(f, "sha256").hexdigest()
 

@@ -16,6 +16,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "matplotlib"]   # matplotlib: scripts/readme_figures.py
+# Baseline A (M0, C1): the same RapidOCR as Scanify, so A and B differ only
+# in what Scanify adds.
+baselines = ["rapidocr-onnxruntime==1.2.3"]
 # Only for fetching ExpDate (scripts/download_expdate.py).
 download = ["gdown"]
 # Detector training and inference (M1). Pinned so the laptop and the

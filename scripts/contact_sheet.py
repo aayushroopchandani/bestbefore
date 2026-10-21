@@ -17,11 +17,10 @@ import random
 
 from PIL import Image, ImageDraw, ImageFont
 
-from bestbefore import store
 from bestbefore.images import load_upright
 from bestbefore.runs import start_run
 from bestbefore.samples import DATE_LABELS, Sample
-from bestbefore.sets import NAMES, load_set
+from bestbefore.sets import NAMES, load_set, runs_root
 
 COLOURS = {
     "date": (230, 30, 30), "exp": (255, 140, 0), "due": (30, 90, 230),
@@ -123,8 +122,8 @@ def main() -> None:
     samples = load_set(args.set)
     picked = (samples if args.n >= len(samples)
               else random.Random(args.seed).sample(samples, args.n))
-    root = store.RUNS_DIR if args.set == "store" else None
-    run_dir = start_run(f"contact-{args.set}", vars(args), seed=args.seed, root=root)
+    run_dir = start_run(f"contact-{args.set}", vars(args), seed=args.seed,
+                        root=runs_root(args.set))
 
     photos, dates = [], []
     for s in picked:
