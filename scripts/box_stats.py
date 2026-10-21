@@ -1,9 +1,12 @@
 """Summary stats on a dataset's photos and date boxes, as a markdown table.
 
     python scripts/box_stats.py real-train real-test synth --out results/m0_expdate_stats.md
+    python scripts/box_stats.py store real-test --out results/m0_store_stats.md
 
 One column per set. The date-box sizes decide M1's input size: a date
 whose box is only a few pixels tall after resizing can't be detected.
+With the store set, two more tables follow: photos per failure tag, and
+the expiry formats as printed. All counts, no photo names.
 """
 from __future__ import annotations
 
@@ -12,7 +15,9 @@ from collections import Counter
 
 import numpy as np
 
+from bestbefore import store
 from bestbefore.images import orientation
+from bestbefore.m1 import markdown_table
 from bestbefore.samples import DATE_LABELS, Sample
 from bestbefore.sets import NAMES, load_set
 
@@ -70,6 +75,16 @@ def table(sets: dict[str, dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def store_tables() -> str:
+    labels = store.labels()
+    formats = Counter(lab["format"] for lab in labels.values() if lab["expiry"])
+    format_rows = [{"expiry format, as printed": f"`{f}`", "photos": f"{n}"}
+                   for f, n in formats.most_common()]
+    return ("## Store photos by failure tag\n\n"
+            + markdown_table(store.tag_counts(labels))
+            + "\n\n## Store expiry formats\n\n" + markdown_table(format_rows))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("sets", nargs="+", choices=NAMES)
@@ -79,6 +94,8 @@ def main() -> None:
     loaded = {name: load_set(name) for name in args.sets}
     labels = sorted({b.label for ss in loaded.values() for s in ss for b in s.boxes})
     md = table({name: stats(ss, labels) for name, ss in loaded.items()})
+    if "store" in loaded:
+        md += "\n\n" + store_tables()
     print(md)
     if args.out:
         header = (f"# Box stats: {', '.join(args.sets)}\n\n"

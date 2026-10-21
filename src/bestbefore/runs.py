@@ -38,10 +38,12 @@ def _versions() -> dict[str, str]:
     return found
 
 
-def start_run(name: str, config: dict, seed: int | None = None) -> Path:
-    """Make `results/runs/<timestamp>-<name>/` holding run.json."""
+def start_run(name: str, config: dict, seed: int | None = None,
+              root: Path | None = None) -> Path:
+    """Make `<root>/<timestamp>-<name>/` holding run.json. The root is
+    results/runs/ unless given, e.g. data/store/runs/ for store photos."""
     now = datetime.now()
-    run_dir = RUNS_DIR / f"{now:%Y%m%d-%H%M%S}-{name}"
+    run_dir = (root or RUNS_DIR) / f"{now:%Y%m%d-%H%M%S}-{name}"
     run_dir.mkdir(parents=True)
     record = {
         "name": name,

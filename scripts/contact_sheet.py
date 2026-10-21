@@ -1,8 +1,10 @@
 """Draw a dataset's boxes, to check the labels by eye before trusting them.
 
     python scripts/contact_sheet.py --set real-train --n 50 --seed 0
+    python scripts/contact_sheet.py --set store --n 99     # every store photo
 
-Writes two sheets into a new folder under results/runs/:
+Writes two sheets into a new folder under results/runs/ (data/store/runs/
+for the store photos, which never go into results/):
   photos.jpg  the sampled photos, whole, with every box drawn
   dates.jpg   each date box zoomed in, with its neighbours (EXP / MFG marks)
               drawn too and the transcription underneath. This is the one
@@ -15,6 +17,7 @@ import random
 
 from PIL import Image, ImageDraw, ImageFont
 
+from bestbefore import store
 from bestbefore.images import load_upright
 from bestbefore.runs import start_run
 from bestbefore.samples import DATE_LABELS, Sample
@@ -47,7 +50,8 @@ def photo_tile(s: Sample, im: Image.Image) -> Image.Image:
                 lambda b: (b[0] * w, b[1] * h, b[2] * w, b[3] * h))
     out = Image.new("RGB", (THUMB, THUMB + 18), "white")
     out.paste(tile, ((THUMB - w) // 2, 0))
-    ImageDraw.Draw(out).text((4, THUMB + 2), s.id, fill="black", font=FONT)
+    caption = "  ".join(str(x) for x in (s.id, s.tag, s.expiry) if x)
+    ImageDraw.Draw(out).text((4, THUMB + 2), caption, fill="black", font=FONT)
     return out
 
 
@@ -72,7 +76,9 @@ def date_tiles(s: Sample, im: Image.Image) -> list[Image.Image]:
             (bb[2] * W - cx1) * sx, (bb[3] * H - cy1) * sy), width=1)
         tile = Image.new("RGB", (crop.width, CROP_H + 18), "white")
         tile.paste(crop, (0, 0))
-        caption = f"{b.label}: {b.text or ''}   {s.id}"
+        # Store boxes carry no transcription: show the typed expiry instead.
+        text = b.text or (s.expiry if b.label == "expiry" else None)
+        caption = f"{b.label}: {text or ''}   {s.id}"
         ImageDraw.Draw(tile).text((2, CROP_H + 2), caption, fill="black", font=FONT)
         tiles.append(tile)
     return tiles
@@ -115,8 +121,10 @@ def main() -> None:
     args = parser.parse_args()
 
     samples = load_set(args.set)
-    picked = random.Random(args.seed).sample(samples, min(args.n, len(samples)))
-    run_dir = start_run(f"contact-{args.set}", vars(args), seed=args.seed)
+    picked = (samples if args.n >= len(samples)
+              else random.Random(args.seed).sample(samples, args.n))
+    root = store.RUNS_DIR if args.set == "store" else None
+    run_dir = start_run(f"contact-{args.set}", vars(args), seed=args.seed, root=root)
 
     photos, dates = [], []
     for s in picked:
