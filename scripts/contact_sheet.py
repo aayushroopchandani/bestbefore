@@ -15,12 +15,13 @@ from __future__ import annotations
 import argparse
 import random
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from bestbefore.images import load_upright
 from bestbefore.runs import start_run
 from bestbefore.samples import DATE_LABELS, Sample
 from bestbefore.sets import NAMES, load_set, runs_root
+from bestbefore.sheets import FONT, grid, rows_of
 
 COLOURS = {
     "date": (230, 30, 30), "exp": (255, 140, 0), "due": (30, 90, 230),
@@ -30,7 +31,6 @@ COLOURS = {
 THUMB = 360            # longest side of a photo on the sheet
 CROP_H = 110           # height of a zoomed date on the sheet
 COLS = 10
-FONT = ImageFont.load_default(size=13)
 
 
 def _draw_boxes(draw: ImageDraw.ImageDraw, boxes, to_px, width: int = 2) -> None:
@@ -81,35 +81,6 @@ def date_tiles(s: Sample, im: Image.Image) -> list[Image.Image]:
         ImageDraw.Draw(tile).text((2, CROP_H + 2), caption, fill="black", font=FONT)
         tiles.append(tile)
     return tiles
-
-
-def grid(tiles: list[Image.Image], cols: int) -> Image.Image:
-    w, h = tiles[0].size
-    rows = -(-len(tiles) // cols)
-    sheet = Image.new("RGB", (cols * w, rows * h), "white")
-    for i, t in enumerate(tiles):
-        sheet.paste(t, ((i % cols) * w, (i // cols) * h))
-    return sheet
-
-
-def rows_of(tiles: list[Image.Image], width: int = 1800) -> Image.Image:
-    """Pack tiles of different widths left to right into rows."""
-    rows, row, x = [], [], 0
-    for t in tiles:
-        if x + t.width > width and row:
-            rows.append(row)
-            row, x = [], 0
-        row.append(t)
-        x += t.width + 4
-    rows.append(row)
-    h = tiles[0].height + 4
-    sheet = Image.new("RGB", (width, len(rows) * h), "white")
-    for r, row in enumerate(rows):
-        x = 0
-        for t in row:
-            sheet.paste(t, (x, r * h))
-            x += t.width + 4
-    return sheet
 
 
 def main() -> None:
