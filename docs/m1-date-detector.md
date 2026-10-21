@@ -1,11 +1,12 @@
 # M1: Date detector
 
-Planned 2026-10-14. Status: **A, B, C, D1 and D2 done** (2026-10-16),
-**D3 done** (2026-10-21). The M1 detector is **`n640`** (`yolo11n`,
-640 px, synthetic + real, seed 0), threshold 0.728. On the ExpDate test
-split it finds **637 of 665 expiry dates** (mAP@0.5 0.993); on the store
-photos, **18 of 81** (mean of 3 seeds 27%, range 22% to 31%). Next: D4,
-the report.
+Planned 2026-10-14. Status: **M1 done** (2026-10-21; A to D2 on
+2026-10-16, D3 and D4 on 2026-10-21). The M1 detector is **`n640`**
+(`yolo11n`, 640 px, synthetic + real, seed 0), threshold 0.728. On the
+ExpDate test split it finds **637 of 665 expiry dates** (mAP@0.5 0.993);
+on the store photos, **18 of 81** (mean of 3 seeds 27%, range 22% to
+31%). Report: [`results/m1_detector.md`](../results/m1_detector.md).
+Next: M2.
 The ideas behind this plan, explained simply: [`learnings/m1.md`](learnings/m1.md).
 
 **Goal.** Fine-tune a small YOLO model that finds every printed date in a
@@ -512,6 +513,26 @@ own validation threshold.
 - `README.md`: the M1 row in the roadmap, and the headline numbers.
 - `docs/learnings/m1.md`: the results section filled in.
 
+**Done 2026-10-21.**
+
+- `results/m1_detector.md` is written by a new script,
+  `scripts/m1_report.py`, from the run records alone (`val.json`,
+  `real-test.json`, `store.json`), so it can be regenerated and can't
+  drift from the runs. The D2 and D3 table code moved from
+  `eval_detector.py` into `m1.py`, so both scripts share it.
+- **The ExpDate paper has no comparable number.** Its abstract reports
+  about 97.74% for *recognising* expiry dates, which is end-to-end
+  reading and belongs beside M3. No public source gives its detection
+  recall or mAP, and the full text wasn't reachable. The report says so
+  rather than set the two side by side.
+- **Run records now say whether the code was committed.**
+  `eval_detector.py` records `git_dirty`. The first D3 record named
+  commit `e0f7c31`, which didn't contain the padding fix it ran with, so
+  D3 was re-scored once more (identical numbers) to make its record
+  truthful.
+- README: M1 marked done, its headline result and what it shows, and how
+  to reproduce the scores.
+
 **Commit:** `docs: M1 results`
 
 ---
@@ -552,7 +573,8 @@ Checkpoints are about 5 to 20 MB each, so storage is no concern.
 docs/              m1-date-detector.md, learnings/m1.md
 src/bestbefore/    detector.py, detection_eval.py, m1.py (grid and decision rules)
 scripts/           fetch_pretrained.py, train_detector.py, m1_chain.py,
-                   pull_cluster_results.sh, eval_detector.py, detector_misses.py
+                   pull_cluster_results.sh, eval_detector.py, detector_misses.py,
+                   m1_report.py
 slurm/             m1_holder.sbatch, m1_chain.sh, train_detector.sbatch
 experiments/       m1-size-and-input/, m1-synthetic-data/, m1-store-misses/
 tests/             test_detector.py, test_detection_eval.py, test_m1_rules.py

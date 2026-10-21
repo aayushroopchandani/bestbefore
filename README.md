@@ -141,8 +141,8 @@ Every model has to beat both of these on the same photos:
 
 ```mermaid
 flowchart LR
-    M0["M0<br/>Data and test set"] --> M1["M1<br/>Date detector"]:::now
-    M1 --> M2["M2<br/>Synthetic generator"]
+    M0["M0<br/>Data and test set"] --> M1["M1<br/>Date detector"]
+    M1 --> M2["M2<br/>Synthetic generator"]:::now
     M2 --> M3["M3<br/>Date reader"]
     M3 --> M4["M4<br/>Readability checker"]
     M4 --> M5["M5<br/>On the phone"]
@@ -152,8 +152,8 @@ flowchart LR
 | | Milestone | Done when | Status |
 |---|---|---|---|
 | M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | **done** |
-| M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | in progress |
-| M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | planned |
+| M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | **done** |
+| M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | next |
 | M3 | Date reader | end-to-end date accuracy vs baselines A and B, by tag | planned |
 | M4 | Readability checker | AUROC on held-out copies; SmartDoc-QA and SPAQ agreement; store photos | planned |
 | M5 | On the phone | size, latency per frame, accuracy kept after quantising | planned |
@@ -227,6 +227,38 @@ What it shows:
   problem, which is what M3's trained reader is for.
 - **The bar for M3:** beat B's 60 of 87 on the store photos without
   more wrong reads, and beat A on ExpDate.
+
+### M1 result: a detector that finds ExpDate's dates, not yet the stores'
+
+A small YOLO (`yolo11n`, 640 px), fine-tuned on ExpDate on the university
+cluster's H100s. The model size, input size, training data and confidence
+threshold were all chosen on validation photos; each test set was scored
+once, with three training seeds.
+
+| Expiry dates found | ExpDate test | Store photos |
+|---|---:|---:|
+| the M1 detector (seed 0) | 637 of 665 | 18 of 81 |
+| mean of 3 seeds | 97.1% | 26.7% |
+
+By store failure tag (mean of 3 seeds): dot-matrix 73%, clean 23%,
+sideways 0 of 15, small print 0 of 15. The boxes it does keep are
+nearly all real dates: precision 0.97 to 0.99 on ExpDate, 0.93 to 0.95 in
+the stores.
+
+The gap is the finding. ExpDate's dates are numeric, upright and fairly
+large, and the detector learned exactly that:
+
+- **Sideways dates:** none in ExpDate, none found.
+- **Month written as a word** (`December 2026`): 6% of ExpDate's dates,
+  26 of the 66 upright store expiries, and the detector finds 3% of them.
+- **Print size:** numeric store dates are found 87% of the time when
+  printed at ExpDate's size, 12% when under 1.5% of the photo.
+
+That sets M2's job: synthetic dates that are sideways, month-named and
+small, and a larger input (or tiles) for small print, judged on the store
+photos by tag. Full report:
+[`results/m1_detector.md`](results/m1_detector.md); the analysis of the
+misses: [`experiments/m1-store-misses`](experiments/m1-store-misses/README.md).
 
 ---
 
@@ -316,6 +348,18 @@ python scripts/run_baseline.py --reader b --set store
 python scripts/baseline_table.py              # writes results/m0_baselines.md
 ```
 
+Train and score the M1 detector. Training runs on a GPU cluster
+(Slurm job scripts in `slurm/`; setup and steps in
+[`docs/m1-date-detector.md`](docs/m1-date-detector.md)). Scoring runs on
+the laptop's CPU, from the trained weights:
+
+```bash
+pip install -e ".[train]"
+python scripts/eval_detector.py --set real-test --runs n640 n640-seed1 n640-seed2
+python scripts/eval_detector.py --set store --runs n640 n640-seed1 n640-seed2
+python scripts/m1_report.py                   # writes results/m1_detector.md
+```
+
 Every script run writes a record (settings, git commit, seed, library
 versions, and for the baselines a hash of the reader's code) to
 `results/runs/`, so any number can be traced and reproduced. Runs on the
@@ -344,6 +388,8 @@ bestbefore/
 - [`docs/datasets.md`](docs/datasets.md): what is actually in ExpDate
 - [`results/m0_baselines.md`](results/m0_baselines.md): the baseline
   table, with the runs it came from
+- [`results/m1_detector.md`](results/m1_detector.md): the M1 detector's
+  results, from validation to the store photos
 - [`docs/learnings/m0.md`](docs/learnings/m0.md): the ideas behind each
   step, explained simply
 - [`docs/m1-date-detector.md`](docs/m1-date-detector.md): the M1 plan,
