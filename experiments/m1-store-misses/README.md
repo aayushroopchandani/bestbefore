@@ -49,6 +49,10 @@ Run on 2026-10-21. Percentages are means over the three seeds.
   real-train date transcriptions contain a month name. So the detector
   learned what *numeric* dates look like. 26 of the 66 store expiries
   are written this way.
+- **This is why dot-matrix beats clean.** Of the store photos with a
+  printed expiry, 19 of the 20 dot-matrix ones are numbers only, while
+  16 of the 31 clean ones write the month as a word. The failure tag
+  describes the print; the misses follow the format.
 - **For numeric dates, size decides.** 87% are found when the print is
   2.5% of the long side or more, about ExpDate's own size, close to
   ExpDate's 97%. Under 1.5% it's 12%.

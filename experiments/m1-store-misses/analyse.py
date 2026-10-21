@@ -49,6 +49,7 @@ def main() -> None:
     seeds = [load_seed(name) for name in SEEDS]
     root = store_photos_dir()
     counts = defaultdict(lambda: {"n": 0, "found": 0, "boxed": 0})
+    formats = defaultdict(lambda: {"month as a word": 0, "numbers only": 0})
     for photo, label in store.labels().items():
         if label["tag"] in ("other-face", "sideways"):
             continue
@@ -57,6 +58,7 @@ def main() -> None:
         if not expiry:
             continue        # a derived expiry: nothing printed to find
         keys = groups_of(label, upright_size(root / photo))
+        formats[label["tag"]][keys[0].removeprefix("format: ")] += 1
         for threshold, boxes in seeds:
             preds = [Prediction("date", tuple(b[:4]), b[4]) for b in boxes.get(photo, [])]
             xyxy = [b["xyxy"] for b in truths]
@@ -72,6 +74,9 @@ def main() -> None:
              "boxed at any confidence": f"{100 * c['boxed'] / c['n']:.0f}%"}
             for key, c in sorted(counts.items())]
     print(markdown_table(rows, left=("expiry dates",)))
+    print("\nPhotos with a printed expiry, by failure tag and format:\n")
+    print(markdown_table([{"tag": t, **{k: str(v) for k, v in formats[t].items()}}
+                          for t in store.TAGS if t in formats], left=("tag",)))
 
 
 if __name__ == "__main__":
