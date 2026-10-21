@@ -1,7 +1,8 @@
 # M0: Data and test set
 
 Planned 2026-10-13. Status: **Part A done** (2026-10-13), **Part B done**
-(2026-10-21: store test set v1 frozen); C to go.
+(2026-10-21: store test set v1 frozen), **C1 done** (2026-10-21: baseline
+A reads 49/87 store expiries right, 12 wrong); C2 and C3 to go.
 The ideas behind each step, explained simply: [`learnings/m0.md`](learnings/m0.md).
 
 **Goal.** Get the public data into a shape a detector can train on, turn the
@@ -506,6 +507,63 @@ baseline.
 - `tests/test_dates.py` and `tests/test_scoring.py`: every format, leap
   years, month-only truth against a last-day prediction, wrong vs none.
 
+**Done 2026-10-21.** What the written plan didn't settle, decided from
+real-train only, before any test photo was read:
+
+- **Three 2-digit parts joined by dots are year first** (`21.08.15` is
+  2021-08-15). 137 of the 147 such dates in real-train start with 19 to
+  22 (Korean `YY.MM.DD`). With other separators, the rule stays day
+  first.
+- **Years must fall in 2015 to 2039**, so `21.08.03` can't become 2003.
+- **Two-part dates with no 4-digit year (`08.27`) are skipped:** as
+  likely a price or a weight.
+- **A date-shaped match that isn't a real date blocks the shorter
+  matches inside it**, so `29/02/2027` gives nothing, not "February 2027".
+- The plan's `--set expdate-test` is `--set real-test`, the name used
+  everywhere else. Store runs write to `data/store/runs/`, and every run
+  records a SHA-256 of `dates.py` and the reader's module.
+- `DDMMYYYY` and ordinals (`15th`) are left out on purpose: they're known
+  only from the store photos.
+
+The rules read 1,211 of the 1,244 real-train date transcriptions (97%)
+whole; 31 of the 33 misses are two-part dates.
+
+| Baseline A | n | right | wrong | none |
+|---|---:|---:|---:|---:|
+| ExpDate Products-Real test | 655 | 502 | 28 | 125 |
+| Store, sideways | 16 | 6 | 5 | 5 |
+| Store, dot-matrix | 21 | 7 | 0 | 14 |
+| Store, small-print | 17 | 14 | 2 | 1 |
+| Store, clean | 33 | 22 | 5 | 6 |
+| **Store, all with an expiry** | **87** | **49** | **12** | **26** |
+
+- 10 ExpDate test photos have no marked expiry and aren't scored. Of the
+  12 store photos tagged `other-face`, A read a date from 4: necessarily
+  not the expiry.
+- **On the store photos, every error is a reading error.** All 26
+  `none` photos had no date found at all. All 12 `wrong` reads are
+  earlier than the truth, and in none of them was the true expiry among
+  the dates found: OCR missed it, so the latest-date rule fell back to
+  the mfg date. 5 of the 12 are packs that print only mfg + shelf life,
+  which this rule can't get right. This matches Scanify's finding: the
+  limit is reading the print, not parsing the text.
+- On ExpDate, **16 of the 28 wrong reads are a month-only stub of a
+  dated pack.** In 14 of them, OCR glued the day to the next printed
+  token, usually a time or lot code (`2021.06.0717:57…`). The full date
+  then failed the "no digit may touch a date" boundary, and the
+  month-only pattern matched the stub (`2021.06`): a "none" became a
+  "wrong". Of the 12 others, most are the year-first vs day-first
+  ambiguity going the other way (`16.02.21` was 16 Feb 2021) or OCR
+  digit errors (`2020.12.2` for `2020.12.21`). The true expiry was never
+  among the dates found. The rules stay frozen: changing them now would
+  be tuning on the test split. The lesson goes to Later.
+- Dot-matrix is the hardest tag (7/21, with 14 `none`). Small print is
+  not a problem for whole-photo OCR here (14/17).
+- Both runs used code that wasn't committed yet, and the ExpDate run's
+  `dates.py` hash predates a comment-only fix. **To do:** rerun A on
+  ExpDate test once on the laptop from the committed code, so its record
+  matches. The numbers can't change.
+
 **Commit:** `feat: date scoring and baseline A (RapidOCR + regex)`
 
 #### C2. Baseline B
@@ -606,3 +664,9 @@ data/        expdate/, store/           (never committed)
   `due mark` / `production mark` classes.
 - Download Date-Synth, Date-Real and the Components sets (M3), and
   SmartDoc-QA and SPAQ (M4).
+- **A date OCR glued to its neighbour should give "none", not a coarser
+  date** (found in C1). 14 of baseline A's 28 wrong reads on ExpDate are
+  a day glued to a time or lot code (`2021.06.0717:57`), which the regex
+  then read as month only. Any rule-based reader has this trap. M3's
+  recogniser reads a crop of the date alone, so it should avoid it;
+  check that it does.
