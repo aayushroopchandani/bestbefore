@@ -9,14 +9,17 @@ what Scanify adds (decision 9).
 """
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable, Iterator
 from functools import cache
 from pathlib import Path
 
 import numpy as np
 
+from .. import dates
 from ..dates import find_dates, latest
 from ..images import load_upright
+from ..runs import code_sha256
 
 
 @cache
@@ -30,6 +33,11 @@ def ocr_lines(path: Path) -> list[str]:
     """Every text line RapidOCR reads in the photo, in its order."""
     result, _ = _engine()(np.asarray(load_upright(path)))
     return [text for _box, text, _conf in result or []]
+
+
+def provenance() -> dict:
+    """What decides this reader's answers, for the run record."""
+    return {"code_sha256": code_sha256(sys.modules[__name__], dates)}
 
 
 def read(paths: Iterable[Path]) -> Iterator[dict]:

@@ -3,6 +3,7 @@ which seed, so any number in `results/` can be traced back and rerun.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import subprocess
@@ -68,7 +69,17 @@ def update_run(run_dir: Path, **fields) -> None:
     path.write_text(json.dumps(record, indent=2, default=str))
 
 
-def latest_run(name: str) -> Path | None:
+def latest_run(name: str, root: Path | None = None) -> Path | None:
     """The newest run directory made by start_run(name), if any."""
-    found = sorted(RUNS_DIR.glob(f"*-{name}"))
+    found = sorted((root or RUNS_DIR).glob(f"*-{name}"))
     return found[-1] if found else None
+
+
+def code_sha256(*modules) -> dict[str, str]:
+    """SHA-256 of each module's source file, so a run's numbers can be tied
+    to the exact code that made them, committed or not."""
+    hashes = {}
+    for module in modules:
+        with open(module.__file__, "rb") as f:
+            hashes[module.__name__] = hashlib.file_digest(f, "sha256").hexdigest()
+    return hashes
