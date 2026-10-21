@@ -27,13 +27,10 @@ import json
 import subprocess
 from datetime import datetime
 
-import numpy as np
-
-from bestbefore import detector, m1, store
+from bestbefore import detector, m1
 from bestbefore.config import REPO_ROOT, checkpoint_dir, expdate_dir
 from bestbefore.runs import start_run
 from bestbefore.sets import NAMES, load_set, runs_root
-from bestbefore.tables import markdown_table
 
 SPLITS = {"real-test": "test", "real-val": "val"}   # sets with YOLO labels
 SCORED_ONCE = ("real-test", "store")
@@ -66,9 +63,12 @@ def score_run(name: str, set_name: str, samples, device: str, again: bool) -> di
                             data=data, split=SPLITS.get(set_name),
                             project=checkpoint_dir() / "m1" / run_dir.name / "eval",
                             device=device, predictions=preds)
-    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
-                            capture_output=True, text=True).stdout.strip()
-    scores["scored"] = {"set": set_name, "device": device, "git_commit": commit,
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=REPO_ROOT,
+                              capture_output=True, text=True).stdout.strip()
+
+    scores["scored"] = {"set": set_name, "device": device, "git_commit": git("rev-parse", "HEAD"),
+                        "git_dirty": bool(git("status", "--porcelain")),
                         "date": datetime.now().isoformat(timespec="seconds")}
     out.write_text(json.dumps(scores, indent=2))
     return scores
@@ -83,68 +83,6 @@ def keep_private(name: str, run_dir, threshold: float, preds: dict) -> None:
     (private / "predictions.json").write_text(json.dumps(boxes))
 
 
-def spread(values: list[float]) -> str:
-    v = np.array(values, float)
-    return f"{v.mean():.3f} (range {v.min():.3f} to {v.max():.3f})"
-
-
-def tag_table(results: dict[str, dict]) -> str:
-    """Store photos by failure tag: expiry found at IoU 0.5 per run, then
-    means over the runs. The last row is every photo, other-face included."""
-    first = next(iter(results.values()))
-    groups = [(t, [r["by_tag"].get(t) for r in results.values()]) for t in store.TAGS]
-    groups.append((f"**all {first['iou0.5']['photos']} photos**", list(results.values())))
-    rows = []
-    for name, per_run in groups:
-        if per_run[0] is None:          # no photo has this tag (curved)
-            continue
-        at5 = [r["iou0.5"] for r in per_run]
-        has_expiry = "expiry_dates" in at5[0]
-
-        def mean(key: str, field: str = "expiry_recall") -> str:
-            return spread([r[key][field] for r in per_run])
-
-        row = {"tag": name, "photos": str(at5[0]["photos"]),
-               "expiry dates": str(at5[0].get("expiry_dates", 0))}
-        for run, s in zip(results, at5):
-            row[run] = f"{s['expiry_found']}/{s['expiry_dates']}" if has_expiry else "-"
-        row["expiry recall, mean"] = mean("iou0.5") if has_expiry else "-"
-        row["at IoU 0.3"] = mean("iou0.3") if has_expiry else "-"
-        row["boxed at any confidence"] = mean("any_conf") if has_expiry else "-"
-        row["all dates found"] = mean("iou0.5", "date_recall") if at5[0]["dates"] else "-"
-        row["false boxes / photo"] = spread([s["false_boxes_per_photo"] for s in at5])
-        rows.append(row)
-    return markdown_table(rows, left=("tag",))
-
-
-def table(results: dict[str, dict]) -> str:
-    rows = []
-    for name, s in results.items():
-        a5, a3 = s["iou0.5"], s["iou0.3"]
-        row = {"run": name, "threshold": f"{s['threshold']:.3f}",
-               "mAP@0.5 date": f"{s['map50']['date']:.3f}" if "map50" in s else "-",
-               "dates found": f"{a5['dates_found']}/{a5['dates']}",
-               "precision": f"{a5['precision']:.3f}",
-               "false boxes / photo": f"{a5['false_boxes_per_photo']:.2f}",
-               "dates found, IoU 0.3": f"{a3['dates_found']}/{a3['dates']}"}
-        if "expiry_dates" in a5:
-            row["expiry found"] = f"{a5['expiry_found']}/{a5['expiry_dates']}"
-            row["expiry found, IoU 0.3"] = f"{a3['expiry_found']}/{a3['expiry_dates']}"
-        rows.append(row)
-    text = m1.markdown_table(rows)
-    if len(results) > 1:
-        def spread(values):
-            v = np.array(values, float)
-            return f"{v.mean():.3f} (range {v.min():.3f} to {v.max():.3f})"
-        lines = [f"- date recall: {spread([s['iou0.5']['date_recall'] for s in results.values()])}"]
-        if all("expiry_recall" in s["iou0.5"] for s in results.values()):
-            lines.append(f"- expiry recall: {spread([s['iou0.5']['expiry_recall'] for s in results.values()])}")
-        if all("map50" in s for s in results.values()):
-            lines.insert(0, f"- mAP@0.5 date: {spread([s['map50']['date'] for s in results.values()])}")
-        text += f"\n\nMean over {len(results)} runs:\n" + "\n".join(lines)
-    return text
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--set", required=True, choices=NAMES)
@@ -157,10 +95,10 @@ def main() -> None:
     samples = load_set(args.set)
     results = {name: score_run(name, args.set, samples, args.device, args.again)
                for name in args.runs}
-    print(table(results))
+    print(m1.scores_table(results))
     if args.set == "store":
         print("\nBy failure tag (expiry found at IoU 0.5; means over the runs):\n")
-        print(tag_table(results))
+        print(m1.tag_table(results))
 
 
 if __name__ == "__main__":

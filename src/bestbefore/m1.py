@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import runs, tables
+import numpy as np
+
+from . import runs, store, tables
 
 # C1: run name -> (weights, input size). Listed cheapest first, which is
 # the order the tie-break uses: smaller model first, then smaller input.
@@ -92,3 +94,66 @@ def replace_results(readme: str, block: str) -> str:
     head, rest = readme.split(START, 1)
     _, tail = rest.split(END, 1)
     return f"{head}{START}\n{block.strip()}\n{END}{tail}"
+
+
+# --- Scores on a test set (scripts/eval_detector.py, scripts/m1_report.py) ---
+
+def spread(values: list[float]) -> str:
+    """'0.267 (range 0.222 to 0.309)': the mean and range over runs."""
+    v = np.array(values, float)
+    return f"{v.mean():.3f} (range {v.min():.3f} to {v.max():.3f})"
+
+
+def tag_table(results: dict[str, dict]) -> str:
+    """Store photos by failure tag: expiry found at IoU 0.5 per run, then
+    means over the runs. The last row is every photo, other-face included."""
+    first = next(iter(results.values()))
+    groups = [(t, [r["by_tag"].get(t) for r in results.values()]) for t in store.TAGS]
+    groups.append((f"**all {first['iou0.5']['photos']} photos**", list(results.values())))
+    rows = []
+    for name, per_run in groups:
+        if per_run[0] is None:          # no photo has this tag (curved)
+            continue
+        at5 = [r["iou0.5"] for r in per_run]
+        has_expiry = "expiry_dates" in at5[0]
+
+        def mean(key: str, field: str = "expiry_recall") -> str:
+            return spread([r[key][field] for r in per_run])
+
+        row = {"tag": name, "photos": str(at5[0]["photos"]),
+               "expiry dates": str(at5[0].get("expiry_dates", 0))}
+        for run, s in zip(results, at5):
+            row[run] = f"{s['expiry_found']}/{s['expiry_dates']}" if has_expiry else "-"
+        row["expiry recall, mean"] = mean("iou0.5") if has_expiry else "-"
+        row["at IoU 0.3"] = mean("iou0.3") if has_expiry else "-"
+        row["boxed at any confidence"] = mean("any_conf") if has_expiry else "-"
+        row["all dates found"] = mean("iou0.5", "date_recall") if at5[0]["dates"] else "-"
+        row["false boxes / photo"] = spread([s["false_boxes_per_photo"] for s in at5])
+        rows.append(row)
+    return tables.markdown_table(rows, left=("tag",))
+
+
+def scores_table(results: dict[str, dict]) -> str:
+    """One row per run scored on a set, then means over the runs."""
+    rows = []
+    for name, s in results.items():
+        a5, a3 = s["iou0.5"], s["iou0.3"]
+        row = {"run": name, "threshold": f"{s['threshold']:.3f}",
+               "mAP@0.5 date": f"{s['map50']['date']:.3f}" if "map50" in s else "-",
+               "dates found": f"{a5['dates_found']}/{a5['dates']}",
+               "precision": f"{a5['precision']:.3f}",
+               "false boxes / photo": f"{a5['false_boxes_per_photo']:.2f}",
+               "dates found, IoU 0.3": f"{a3['dates_found']}/{a3['dates']}"}
+        if "expiry_dates" in a5:
+            row["expiry found"] = f"{a5['expiry_found']}/{a5['expiry_dates']}"
+            row["expiry found, IoU 0.3"] = f"{a3['expiry_found']}/{a3['expiry_dates']}"
+        rows.append(row)
+    text = markdown_table(rows)
+    if len(results) > 1:
+        lines = [f"- date recall: {spread([s['iou0.5']['date_recall'] for s in results.values()])}"]
+        if all("expiry_recall" in s["iou0.5"] for s in results.values()):
+            lines.append(f"- expiry recall: {spread([s['iou0.5']['expiry_recall'] for s in results.values()])}")
+        if all("map50" in s for s in results.values()):
+            lines.insert(0, f"- mAP@0.5 date: {spread([s['map50']['date'] for s in results.values()])}")
+        text += f"\n\nMean over {len(results)} runs:\n" + "\n".join(lines)
+    return text
