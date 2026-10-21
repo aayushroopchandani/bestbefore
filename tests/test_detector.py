@@ -43,10 +43,10 @@ def test_epochs_run(tmp_path):
 class FakeModel:
     """Stands in for an Ultralytics model: one result per image."""
     def __init__(self):
-        self.seen = []
+        self.seen, self.rect = [], None
 
-    def predict(self, source, imgsz, conf, device, verbose):
-        self.seen = source
+    def predict(self, source, imgsz, conf, device, rect, verbose):
+        self.seen, self.rect = source, rect
         boxes = SimpleNamespace(xyxyn=np.array([[0.1, 0.4, 0.3, 0.45]]),
                                 cls=np.array([0.0]), conf=np.array([0.87]))
         return [SimpleNamespace(boxes=boxes, names={0: "date", 1: "due"})
@@ -60,3 +60,4 @@ def test_predict_returns_named_normalised_boxes():
     assert len(out) == 2
     assert out[0] == [Prediction("date", (0.1, 0.4, 0.3, 0.45), 0.87)]
     assert model.seen is images        # PIL images go in, never file paths
+    assert model.rect is False          # padding never depends on the batch

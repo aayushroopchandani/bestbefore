@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import checkpoint_dir
-from .detection_eval import Prediction, best_threshold, evaluate, summary
+from .detection_eval import Matches, Prediction, best_threshold, evaluate, summary
 from .images import load_upright
 from .samples import Sample
 from .yolo import CLASSES
@@ -86,9 +86,15 @@ def predict(model, images: list, imgsz: int, device=None) -> list[list[Predictio
 
     Always given images from load_upright, never file paths: a phone photo
     with an EXIF rotation flag must be seen the same way as its labels.
+
+    `rect=False` pads every photo to the same imgsz square. Ultralytics'
+    default pads a batch of same-shaped photos less, which changes the
+    confidences (by up to 0.15 on one validation date), so a threshold
+    chosen on mixed-shape validation batches would mean something else on
+    the store photos, which share a few shapes (docs/learnings/m1.md, §3.4).
     """
     results = model.predict(source=images, imgsz=imgsz, conf=PREDICT_CONF,
-                            device=device, verbose=False)
+                            device=device, rect=False, verbose=False)
     out = []
     for r in results:
         b = r.boxes
@@ -109,20 +115,32 @@ def predict_samples(model, samples: list[Sample], imgsz: int, device=None,
     return out
 
 
+def predict_checkpoint(checkpoint: Path, samples: list[Sample], imgsz: int,
+                       device=None) -> dict[str, list[Prediction]]:
+    """predict_samples for a checkpoint on disk."""
+    from ultralytics import YOLO
+    return predict_samples(YOLO(str(checkpoint)), samples, imgsz, device)
+
+
 def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | None = None,
           data: Path | None = None, split: str | None = None,
-          project: Path | None = None, device=None) -> dict:
+          project: Path | None = None, device=None,
+          predictions: dict[str, list[Prediction]] | None = None) -> dict:
     """Score a trained detector on labelled photos.
 
     With `conf` None (validation), the threshold is the one that maximises
     F1 for dates; otherwise (test, store photos) the given one is used
     unchanged. With a YOLO dataset file and split, Ultralytics' mAP is
     added, plus its own date recall at the same threshold as a cross-check.
+    Photos with failure tags (the store set) are also scored per tag.
+
+    `predictions`, when given, are this checkpoint's for these samples
+    (predict_samples), for a caller that keeps them: they aren't made twice.
     """
     from ultralytics import YOLO
 
     model = YOLO(str(checkpoint))
-    preds = predict_samples(model, samples, imgsz, device)
+    preds = predictions if predictions is not None else predict_samples(model, samples, imgsz, device)
     at_05, at_03 = evaluate(samples, preds, 0.5), evaluate(samples, preds, 0.3)
     if conf is None:
         conf, f1 = best_threshold(at_05)
@@ -130,7 +148,10 @@ def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | Non
         f1 = None
     out = {"checkpoint": str(checkpoint), "imgsz": imgsz,
            "threshold": round(conf, 4), "f1_at_threshold": f1,
-           "iou0.5": summary(at_05, conf), "iou0.3": summary(at_03, conf)}
+           **_summaries(at_05, at_03, conf)}
+    tags = [t for t in dict.fromkeys(s.tag for s in samples) if t]
+    if tags:
+        out["by_tag"] = {t: _summaries(at_05, at_03, conf, {t}) for t in tags}
     if data is not None:
         metrics = model.val(data=str(data), split=split, imgsz=imgsz, batch=16,
                             device=device, plots=False, verbose=False,
@@ -141,6 +162,14 @@ def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | Non
         out["map50_95"] = {CLASSES[c]: round(float(v), 4) for c, v in zip(classes, box.ap)}
         out["ultralytics_date_recall_at_threshold"] = ultralytics_recall_at(metrics, conf)
     return out
+
+
+def _summaries(at_05: Matches, at_03: Matches, conf: float, tags: set | None = None) -> dict:
+    """Found at IoU 0.5 and 0.3 at the threshold, and at IoU 0.5 at any
+    confidence: the last separates "never boxed" from "boxed, not sure
+    enough" (added after D2; it changes no headline number)."""
+    return {"iou0.5": summary(at_05, conf, tags), "iou0.3": summary(at_03, conf, tags),
+            "any_conf": summary(at_05, 0.0, tags)}
 
 
 def ultralytics_recall_at(metrics, conf: float, class_id: int = 0) -> float | None:
