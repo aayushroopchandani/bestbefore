@@ -1,6 +1,7 @@
 # M0: Data and test set
 
-Planned 2026-10-13. Status: **Part A done** (2026-10-13); B and C to go.
+Planned 2026-10-13. Status: **Part A done** (2026-10-13), **Part B done**
+(2026-10-21: store test set v1 frozen); C to go.
 The ideas behind each step, explained simply: [`learnings/m0.md`](learnings/m0.md).
 
 **Goal.** Get the public data into a shape a detector can train on, turn the
@@ -82,7 +83,9 @@ pin down something in `CLAUDE.md`, so check them before slice B1.
    applies out of `other-face` → `sideways` → `curved` → `dot-matrix` →
    `small-print` → `clean`. Geometry comes before print style because a
    sideways or curved line breaks text *detection* before the font matters.
-   A fixed order makes the tagging repeatable.
+   A fixed order makes the tagging repeatable. *(Changed on 2026-10-21:
+   `small-print` vs `clean` is now computed from the expiry box by the
+   import, not taken from the hand tag. See B2, check 6.)*
 6. **Expiry labels record what the pack prints:** `2026-11-20` if it prints
    a day, `2031-04` if it prints only a month. This is what lets the
    scoring follow the rule "exact day / month / year, or month and year
@@ -343,6 +346,11 @@ hosted Label Studio, because the photos must stay on this machine.
 
 When done, export as **JSON-MIN** to `data/store/label_studio_export.json`.
 
+**Done 2026-10-21.** All 99 photos, 199 date boxes (81 `expiry`, 91 `mfg`,
+27 `other_date`). The pre-filled text fields came with no boxes, so every
+box was drawn by hand. No photo was tagged `curved`: no date on a cap or
+jar visibly bends its line.
+
 #### B2. Import and check the labels
 
 **Goal:** turn the export into `data/store/labels.json` and catch labelling
@@ -382,7 +390,14 @@ mistakes before freezing.
      size from `load_upright`. If width and height are swapped, Label
      Studio drew on the raw frame and the boxes have to be rotated.
   6. `clean` photos whose expiry box is under the `small-print` threshold
-     get flagged for a second look.
+     get flagged for a second look. *(Changed on 2026-10-21: the check
+     found 20 of the 37 hand-tagged `small-print` photos above the
+     threshold (1.52% to 2.76%), and no `clean` one below it. So the
+     rule is now applied, not flagged: a `clean` or `small-print` photo
+     is `small-print` exactly when its expiry box, or the mfg box for a
+     derived expiry, is under 1.5% of the photo's long side. That makes
+     the tag repeatable from the boxes. The owner chose this over keeping
+     the hand tags.)*
 - Draw the store boxes with `contact_sheet.py --set store` and check every
   photo by eye. The sheet stays in `data/store/`, never in git.
 - `box_stats.py --set store` writes `results/m0_store_stats.md`
@@ -392,6 +407,19 @@ mistakes before freezing.
   the training data.
 - `tests/test_store_import.py` uses a small fake export with made-up file
   names, so no store data goes into the tests.
+
+**Done 2026-10-21.** The conversion and the checks went into their own
+module, `store_import.py`, so `store.py` holds only what later
+milestones load. Checks 1 to 5 all pass on the first export:
+
+- Check 4 compares all **49** entries in Scanify's ground truth (the 44
+  known expiries and the 5 marked "none from this photo"). All 49 agree.
+- Check 5 matters: **46 of the 99 photos** carry an EXIF rotation flag,
+  and Label Studio drew every box on the upright frame.
+- Check 6 moved 20 photos from `small-print` to `clean`.
+
+The contact sheet is written to `data/store/runs/`, not `results/runs/`,
+so no store photo ends up anywhere a results folder gets copied.
 
 **Commit:** `feat: store label import with consistency checks; store stats`
 
@@ -411,7 +439,41 @@ mistakes before freezing.
   line in `results/store_test_set.md` saying what changed and why, and
   every baseline is rerun.
 
+**Done 2026-10-21.** v1 is frozen, with hash `7b9a4043…`. The script
+refuses to overwrite a frozen version, and a new one needs `--why`.
+Loading the set checks the file and all 99 photo hashes in about 0.2 s.
+
 **Commit:** `feat: freeze store test set v1`
+
+#### What Part B found
+
+Full tables: [`results/m0_store_stats.md`](../results/m0_store_stats.md)
+and [`results/store_test_set.md`](../results/store_test_set.md).
+
+| Tag | Photos | With an expiry |
+|---|---:|---:|
+| other-face | 12 | 0 |
+| sideways | 16 | 16 |
+| curved | 0 | 0 |
+| dot-matrix | 21 | 21 |
+| small-print | 17 | 17 |
+| clean | 33 | 33 |
+| **all** | **99** | **87** |
+
+- **87 photos count towards reading accuracy**, more than the 60 to 70
+  first expected. 51 expiries are printed to the day and 36 to the month
+  only; 6 are derived from mfg + shelf life.
+- **Store dates are smaller than ExpDate's.** At 640 px input, the
+  median date box is 11.0 px tall against 15.5 px on ExpDate test. 17.6%
+  of store date boxes are under 8 px, against none in ExpDate. At
+  1280 px only 0.5% are. This is the risk M1 named ("Store dates may be
+  much smaller"). M1 D3 will show what it costs the 640 px detector.
+- **17.6% of store date boxes are tall** (sideways), against 0% in
+  ExpDate. M1 isn't expected to find these; that's M2's job.
+- **Most store photos show two dates** (64% vs 9% in ExpDate), usually
+  mfg and expiry. Telling them apart matters for the reader (M3).
+- **15 expiry formats**, led by `DD/MM/YYYY` (27), `Month YYYY` (19) and
+  `MON YYYY` (11). The M2 generator has to cover these.
 
 ### Part C: Baselines
 
@@ -510,7 +572,7 @@ A1 ─ A2 ─ A3 ─┬─ A4
 docs/        m0-data-and-test-set.md, datasets.md
 src/bestbefore/
              config.py, images.py, runs.py, samples.py, sets.py, expdate.py,
-             yolo.py, store.py, dates.py, scoring.py,
+             yolo.py, store.py, store_import.py, dates.py, scoring.py,
              baselines/{rapidocr_regex,scanify}.py
 scripts/     download_expdate.py, check_expdate.py, contact_sheet.py,
              box_stats.py, expdate_to_yolo.py, import_store_labels.py,
@@ -525,9 +587,10 @@ data/        expdate/, store/           (never committed)
 ## Risks
 
 - **Label Studio might draw on the raw, unrotated frame.** Check 5 in B2
-  catches it.
-- **The store test set is small.** Around 60 to 70 readable photos spread
-  over five tags. Per-tag results show direction, not precise rates.
+  catches it. *(Checked 2026-10-21: it didn't.)*
+- **The store test set is small.** 87 photos with an expiry, spread over
+  four tags (17 to 33 each, none `curved`). Per-tag results show
+  direction, not precise rates.
 - **Scanify keeps changing.** Its git commit is recorded in every B run;
   rerun B if it moves.
 
