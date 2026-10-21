@@ -50,6 +50,9 @@ real) and `test.txt` (665 real), and `expdate.yaml` with 4 classes:
 
 **Not yet done:** the store test set (M0 Parts B and C). Only the last
 evaluation slice (D3) needs it; everything else can go ahead now.
+*(Done 2026-10-21: the store test set is frozen as v1, so D3 can run.
+Store dates are smaller than ExpDate's: at 640 px the median date box is
+11.0 px tall against 15.5 px, and 17.6% are under 8 px.)*
 
 ---
 

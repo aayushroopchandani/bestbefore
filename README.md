@@ -141,7 +141,7 @@ Every model has to beat both of these on the same photos:
 
 ```mermaid
 flowchart LR
-    M0["M0<br/>Data and test set"]:::now --> M1["M1<br/>Date detector"]
+    M0["M0<br/>Data and test set"] --> M1["M1<br/>Date detector"]:::now
     M1 --> M2["M2<br/>Synthetic generator"]
     M2 --> M3["M3<br/>Date reader"]
     M3 --> M4["M4<br/>Readability checker"]
@@ -151,8 +151,8 @@ flowchart LR
 
 | | Milestone | Done when | Status |
 |---|---|---|---|
-| M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | in progress |
-| M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | planned |
+| M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | **done** |
+| M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | in progress |
 | M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | planned |
 | M3 | Date reader | end-to-end date accuracy vs baselines A and B, by tag | planned |
 | M4 | Readability checker | AUROC on held-out copies; SmartDoc-QA and SPAQ agreement; store photos | planned |
@@ -186,8 +186,47 @@ why M1 keeps the real photos in training and measures what the
 synthetic ones add. Photos: ExpDate (KIST, CC BY 4.0), boxes drawn and
 cropped.</sub>
 
-Details: [`docs/datasets.md`](docs/datasets.md). The baseline table
-follows at the end of M0.
+Details: [`docs/datasets.md`](docs/datasets.md).
+
+### M0 result: the baselines to beat
+
+Both readers were scored on the frozen store test set (87 photos with an
+expiry in frame) and on ExpDate's test split, with one rule: **right** is
+the exact date (month and year when the pack prints no day), **wrong** is
+any other date, **none** is no date.
+
+| Store photos | n | A right | A wrong | A none | B right | B wrong | B none |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| sideways | 16 | 6 | 5 | 5 | 9 | 0 | 7 |
+| dot-matrix | 21 | 7 | 0 | 14 | 7 | 0 | 14 |
+| small-print | 17 | 14 | 2 | 1 | 16 | 0 | 1 |
+| clean | 33 | 22 | 5 | 6 | 28 | 2 | 3 |
+| **all** | **87** | **49** | **12** | **26** | **60** | **2** | **25** |
+| **ExpDate test** | **655** | **502** | **28** | **125** | **57** | **6** | **592** |
+
+A is RapidOCR plus a date regex, taking the latest date found. B is
+Scanify's reader; this harness reproduces Scanify's own measurement on
+its 44 photos exactly (32 right, 0 wrong, 12 none). Full table and run
+records: [`results/m0_baselines.md`](results/m0_baselines.md).
+
+What it shows:
+
+- **On the store photos, Scanify's rules pay off.** B reads 60 of 87
+  and gets only 2 wrong (both a `19th December 2026`: its rules skip the
+  ordinal and answer the month's last day). A reads 49 and gets 12
+  wrong, every one an earlier date taken for the expiry: OCR missed the
+  real one, or the pack prints only a mfg date and a shelf life.
+- **On ExpDate, the order flips: A reads 502 of 655, B only 57.** B's
+  OCR does see the dates: of the 448 photos A read right and B returned
+  nothing for, 412 have the true date in B's own OCR text. But B's rules were written for Indian
+  packs and expect an "EXP" label or an Indian format, so an unlabelled
+  Korean `2021.08.03` gets "none". Hand-written rules fit the photos they
+  were written for.
+- **Dot-matrix is the wall for both:** 7 of 21, and the 14 others give
+  no date at all, because the OCR finds no date text. That is a reading
+  problem, which is what M3's trained reader is for.
+- **The bar for M3:** beat B's 60 of 87 on the store photos without
+  more wrong reads, and beat A on ExpDate.
 
 ---
 
@@ -226,8 +265,9 @@ hashes.
 
 ### Store photos (testing only)
 
-About 99 photos taken in the retailer's stores, labelled with the expiry,
-a tight box around every date, and a failure tag. **They are never
+99 photos taken in the retailer's stores (87 with the expiry in frame),
+labelled with the expiry, a tight box around every date, and a failure
+tag. **They are never
 committed, never trained on and never published.** Only aggregate numbers
 appear in this repository, and the test set is frozen by its hash so it
 can't change between experiments.
@@ -263,8 +303,23 @@ python scripts/readme_figures.py              # the figures in this README
 pytest
 ```
 
+Reproduce the M0 baselines. Baseline A on ExpDate needs only the steps
+above; baseline B needs a checkout of Scanify, and the store runs need the
+store photos, both private:
+
+```bash
+pip install -e ".[baselines]"                 # RapidOCR 1.2.3, as Scanify uses
+python scripts/run_baseline.py --reader a --set real-test
+python scripts/run_baseline.py --reader b --set real-test
+python scripts/run_baseline.py --reader a --set store
+python scripts/run_baseline.py --reader b --set store
+python scripts/baseline_table.py              # writes results/m0_baselines.md
+```
+
 Every script run writes a record (settings, git commit, seed, library
-versions) to `results/runs/`, so any number can be traced and reproduced.
+versions, and for the baselines a hash of the reader's code) to
+`results/runs/`, so any number can be traced and reproduced. Runs on the
+store photos write theirs to `data/store/runs/`, which never enters git.
 
 ---
 
@@ -287,6 +342,8 @@ bestbefore/
 - [`docs/m0-data-and-test-set.md`](docs/m0-data-and-test-set.md): the M0
   plan, slice by slice
 - [`docs/datasets.md`](docs/datasets.md): what is actually in ExpDate
+- [`results/m0_baselines.md`](results/m0_baselines.md): the baseline
+  table, with the runs it came from
 - [`docs/learnings/m0.md`](docs/learnings/m0.md): the ideas behind each
   step, explained simply
 - [`docs/m1-date-detector.md`](docs/m1-date-detector.md): the M1 plan,

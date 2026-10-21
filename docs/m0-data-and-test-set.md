@@ -1,8 +1,10 @@
 # M0: Data and test set
 
-Planned 2026-10-13. Status: **Part A done** (2026-10-13), **Part B done**
-(2026-10-21: store test set v1 frozen), **C1 done** (2026-10-21: baseline
-A reads 49/87 store expiries right, 12 wrong); C2 and C3 to go.
+Planned 2026-10-13. Status: **M0 done** (2026-10-21). Part A on
+2026-10-13; Part B (store test set v1 frozen) and Part C (baselines) on
+2026-10-21. The table: [`results/m0_baselines.md`](../results/m0_baselines.md).
+On the store photos, baseline B reads 60 of 87 expiries right (2 wrong)
+and A 49 (12 wrong); on ExpDate test, A reads 502 of 655 and B 57.
 The ideas behind each step, explained simply: [`learnings/m0.md`](learnings/m0.md).
 
 **Goal.** Get the public data into a shape a detector can train on, turn the
@@ -583,6 +585,34 @@ whole; 31 of the 33 misses are two-part dates.
 **Check:** on Scanify's 44, B must reproduce **32 right, 12 none,
 0 wrong**. If it doesn't, assume the bug is in this harness until shown
 otherwise.
+
+**Done 2026-10-21.** The check passes exactly: 32 right, 0 wrong, 12
+none, scored Scanify's way (the ISO date from `scan()` equals its ground
+truth). It runs automatically at the end of every B run on the store
+photos and is saved in run.json. The runner sends its JSON lines to
+stdout rather than a file, so results stream back as they come. Scanify
+was at commit `9e05c00`, clean.
+
+| Baseline B | n | right | wrong | none |
+|---|---:|---:|---:|---:|
+| ExpDate Products-Real test | 655 | 57 | 6 | 592 |
+| Store, all with an expiry | 87 | 60 | 2 | 25 |
+
+- **On ExpDate, B's rules don't fire.** Of the 448 photos A read right
+  and B returned nothing for, 412 have the true date in B's own OCR text
+  (`2021.08.03`). Scanify's rules were written for Indian packs and want
+  an "EXP" label or an Indian format, so an unlabelled Korean date is
+  "none". B is cautious, with only 6 wrong reads, but reads 9%. This is
+  the reason a trained reader is needed: hand-written rules fit the
+  photos they were written for.
+- **B's 2 wrong store reads are a parsing failure, not a reading one.**
+  Both packs print `19th December 2026`, and OCR read it perfectly; the
+  rules skip the ordinal, read "December 2026" and answer the 31st. A
+  got the same two wrong (it has no ordinal rule either, by design: see
+  C1).
+- On `other-face` photos B returned no date at all (0 of 12); A returned
+  one for 4.
+
 **Commit:** `feat: baseline B (Scanify's reader, run in its own venv)`
 
 #### C3. The baseline table and README
@@ -606,6 +636,19 @@ otherwise.
 - `README.md`: the problem, the baseline table, how to reproduce it, and
   the ExpDate credit (cite the paper and credit KIST, as CC BY 4.0
   requires).
+
+**Done 2026-10-21.** `results/m0_baselines.md` is written from the
+latest run of each baseline on each set, and lists those runs with their
+commits. The README already had the problem and the ExpDate credit; it
+gained the result, what it shows, and how to reproduce it. The markdown
+table helper moved from `m1.py` to its own `tables.py`, so the M0 scripts
+no longer import from M1, and text columns can be left-aligned.
+
+All four runs were made before their code was committed, and the run list
+says so. Each run also records a SHA-256 of the reader's code, so it
+stays traceable. **Optional:** once this is committed, rerun all four
+from the clean commit (about 15 minutes on the laptop) and rebuild the
+table. The numbers can't change.
 
 **Commit:** `docs: M0 baseline table and README`
 
@@ -631,7 +674,7 @@ docs/        m0-data-and-test-set.md, datasets.md
 src/bestbefore/
              config.py, images.py, runs.py, samples.py, sets.py, expdate.py,
              yolo.py, store.py, store_import.py, dates.py, scoring.py,
-             baselines/{rapidocr_regex,scanify}.py
+             tables.py, baselines/{rapidocr_regex,scanify}.py
 scripts/     download_expdate.py, check_expdate.py, contact_sheet.py,
              box_stats.py, expdate_to_yolo.py, import_store_labels.py,
              freeze_store_test_set.py, run_baseline.py, scanify_runner.py,
