@@ -726,6 +726,12 @@ scoring: needs a finished run and all four suite sets
 - **Nothing to do:** the job exits, freeing the GPU, except while the
   other job is running the pilot, which unlocks most of stage 2 within
   minutes: then it waits up to 30 minutes, checking every 5.
+- **Watchdog** (added 2026-10-23, with the 3-day limit): the chain stops
+  a training run when its `results.csv` gains no epoch for 2 hours (the
+  longest epoch, `base` at 1280 px, is a few minutes), marks it failed in
+  its `run.json`, and moves on. A hung loader or a stuck read on the
+  shared filesystem doesn't crash, so without this it would hold the GPU
+  until the time limit.
 - **Decisions** are written to `results/runs/m2-decisions.json` as soon as
   their inputs are complete. `--dry-run` prints every task with its state
   (done, claimed by job N, ready, waiting for X).
@@ -776,7 +782,7 @@ release keeps the submit time (both measured in step 3).
    #SBATCH --gres=gpu:1
    #SBATCH --cpus-per-task=24
    #SBATCH --mem=96G
-   #SBATCH --time=2-00:00:00
+   #SBATCH --time=3-00:00:00
    #SBATCH --output=slurm/logs/%x-%j.out
 
    echo "started $(date '+%F %T') on $(hostname)"
@@ -843,6 +849,16 @@ cluster has the same SHA-256 as the committed one. `sbatch --test-only`
 gave an unheld copy a start of 2026-10-27 on `cn5`. That estimate leaves
 out the jobs ahead that are waiting only on their owners' caps, so the
 real start is likely later.
+
+**Changed 2026-10-23: 3 days, not 2.** A GPU is hard to get here, and a
+job cut off by its limit means queueing again. 3 days is the `gpu`
+partition's maximum, so the partition stays the same; stage 2 alone
+(about 29 GPU-hours at M1's speed) then fits even if the generated photos
+load 2.5 times slower. The two held jobs are raised with `scontrol
+update JobId=72914 TimeLimit=3-00:00:00` (and the same for 72915; S1's
+check showed a waiting job's limit can be raised), and the script now
+says 3 days for any replacement. `long` would allow 7 days,
+but nothing in M2 needs more than 3.
 
 ### S2. Derived sets · laptop, then a CPU job · *submits 1 CPU job*
 
@@ -1186,8 +1202,8 @@ S4 ─► S5 ─► S6 ─► [CPU array: generate] ─► [check] ─► releas
 
 If job A finishes stage 1 before the generated data exists, it exits
 with stage 2 untouched; submit a replacement at once, held (the chain's
-rule). Job B alone can finish stage 2 within its 2 days, even at M1's
-speed (about 28 GPU-hours).
+rule). Job B alone can finish stage 2 within its 3 days, even at M1's
+speed (about 29 GPU-hours).
 
 ## Compute budget
 
