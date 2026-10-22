@@ -326,7 +326,7 @@ def test_score_suite_pools_the_real_sets_and_marks_missing_ones(monkeypatch, tmp
         return {"map50": {"date": 0.9}}
 
     monkeypatch.setattr(m2, "suite_missing",
-                        lambda name: "synth_val not made yet (S6)" if name == "synth-val" else None)
+                        lambda name: "not made yet (S6)" if name == "synth-val" else None)
     monkeypatch.setattr(sets, "load_set", lambda name: samples[name])
     monkeypatch.setattr(detector, "predict_samples", lambda model, ss, imgsz, device: {
         s.id: [Prediction("date", date, found_at[s.id]), Prediction("date", wrong, 0.5)]
@@ -338,8 +338,8 @@ def test_score_suite_pools_the_real_sets_and_marks_missing_ones(monkeypatch, tmp
     # date counts: keeping down to 0.2 gives P = 1/2, R = 1, F2 = 0.833.
     assert suite["threshold"] == pytest.approx(0.2)
     assert suite["f2_at_threshold"] == pytest.approx(0.8333, abs=1e-4)
-    assert suite["synth-val"] == {"missing": "synth_val not made yet (S6)"}
-    assert suite["missing"] == {"synth-val": "synth_val not made yet (S6)"}
+    assert suite["synth-val"] == {"missing": "not made yet (S6)"}
+    assert suite["missing"] == {"synth-val": "not made yet (S6)"}
     for name in found_at:
         at5 = suite[name]["iou0.5"]
         assert (at5["dates_found"], at5["false_boxes_per_photo"]) == (1, 1.0)
@@ -350,6 +350,6 @@ def test_score_suite_pools_the_real_sets_and_marks_missing_ones(monkeypatch, tmp
 
     # Without all three real sets there is no threshold.
     monkeypatch.setattr(m2, "suite_missing",
-                        lambda name: None if name == "real-val" else f"{name} not made yet")
-    with pytest.raises(FileNotFoundError, match="real-val-rot"):
+                        lambda name: None if name == "real-val" else "not made yet")
+    with pytest.raises(FileNotFoundError, match="real-val-rot, real-val-small not made yet"):
         detector.score_suite(tmp_path / "last.pt", 640, tmp_path)

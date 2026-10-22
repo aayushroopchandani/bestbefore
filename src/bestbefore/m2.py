@@ -79,15 +79,24 @@ def list_missing(name: str) -> str | None:
     and, for M2's lists, the manifest that made it must vouch for it: S2's
     names its sets, S6's says "complete" once every photo is checked."""
     manifest = MANIFEST_OF.get(name)
-    made_by = f" ({MADE_BY[manifest]})" if manifest else ""
     if not list_file(name).exists():
-        return f"{name} not made yet{made_by}"
+        return f"not made yet ({MADE_BY[manifest]})" if manifest else "missing from $EXPDATE_DIR/yolo"
     if manifest is None:
         return None
     record = read_json(manifest_path(manifest)) or {}
     vouched = (name in record.get("sets", {}) if manifest == "derived"
                else record.get("complete") is True)
-    return None if vouched else f"{name} not vouched for by manifests/{manifest}.json{made_by}"
+    return None if vouched else f"not yet vouched for by manifests/{manifest}.json ({MADE_BY[manifest]})"
+
+
+def missing(reasons: Mapping[str, str | None]) -> str | None:
+    """The names that aren't ready, grouped by reason, e.g. "real_rot,
+    synth_rot not made yet (S2's derive_sets.py)"; None if all are ready."""
+    grouped: dict[str, list[str]] = {}
+    for name, why in reasons.items():
+        if why:
+            grouped.setdefault(why, []).append(name)
+    return "; ".join(f"{', '.join(names)} {why}" for why, names in grouped.items()) or None
 
 
 def manifest_hashes(names: Sequence[str]) -> dict[str, str]:

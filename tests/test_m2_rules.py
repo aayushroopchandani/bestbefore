@@ -1,12 +1,17 @@
 """M2's arms, budget, recipe and decision rules (docs/m2-synthetic-generator.md),
 against the plan's own numbers and on made-up results."""
 import json
+import math
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from bestbefore import detector, m2
+from bestbefore import detector, m2, runs, slurm
+from bestbefore.derived import write_list
 from bestbefore.yolo import split_repeats
 
 # The list sizes the plan's arms table was worked out from.
@@ -186,6 +191,10 @@ def test_a_list_is_ready_once_its_manifest_vouches_for_it(monkeypatch, tmp_path)
     (tmp_path / "expdate" / "yolo" / "train_real.txt").write_text("./images/real-train/a.jpg\n")
     assert m2.list_missing("train_real") is None
     assert m2.suite_missing("synth-val") is not None
+    assert m2.missing({"real_rot": None, "synth_rot": "not made yet (S2)",
+                       "gen50k": "not made yet (S6)", "gen10k": "not made yet (S6)"}) == (
+        "synth_rot not made yet (S2); gen50k, gen10k not made yet (S6)")
+    assert m2.missing({"train_real": None}) is None
 
 
 def test_listed_images_keep_repeats(monkeypatch, tmp_path):
@@ -201,3 +210,220 @@ def test_listed_images_keep_repeats(monkeypatch, tmp_path):
     assert len(images) == 7 and images.count(Path("/g/1.jpg")) == 3
     assert m2.list_spec("train_real*2") == "train_real*2"       # in the dataset file's folder
     assert m2.list_spec("gen10k*5") == f"{m2.list_path('gen10k')}*5"
+
+
+# --- The chain: task readiness (scripts/m2_chain.py) ---------------------------
+
+DERIVED_LISTS = ("train_synth_clean", "real_rot", "synth_rot", "real_val_rot", "real_val_small")
+
+
+@pytest.fixture
+def stage1(monkeypatch, tmp_path):
+    """The cluster as S2 leaves it: stage 1's lists and the pretrained
+    weights, nothing of S6's, no runs yet."""
+    monkeypatch.setenv("EXPDATE_DIR", str(tmp_path / "expdate"))
+    monkeypatch.setenv("GENERATED_DIR", str(tmp_path / "generated"))
+    monkeypatch.setenv("CHECKPOINT_DIR", str(tmp_path / "ckpt"))
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
+    for name in ("train_real", "val"):
+        write_list(tmp_path / "expdate" / "yolo" / f"{name}.txt", ["./images/real-train/a.jpg"])
+    for name in DERIVED_LISTS:
+        write_list(m2.list_path(name), [Path("/d/a.jpg")])
+    write_json_file(m2.manifest_path("derived"), {"sets": {name: {} for name in DERIVED_LISTS}})
+    (tmp_path / "ckpt" / "pretrained").mkdir(parents=True)
+    (tmp_path / "ckpt" / "pretrained" / "yolo11n.pt").write_bytes(b"weights")
+    return tmp_path
+
+
+def write_json_file(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+
+
+def finish(run: str, epoch_times=(40.0,), images=12_781, suite=None) -> Path:
+    """A finished run's record, its results.csv and maybe its suite.json,
+    as train_detector.py and score_suite.py leave them."""
+    save_dir = runs.RUNS_DIR.parent / "ckpt" / "m2" / run
+    save_dir.mkdir(parents=True)
+    (save_dir / "results.csv").write_text(
+        "epoch,time\n" + "".join(f"{i + 1},{t}\n" for i, t in enumerate(epoch_times)))
+    run_dir = runs.start_run(f"m2-{run}", {})
+    runs.update_run(run_dir, status="finished",
+                    applied={"save_dir": str(save_dir), "train_images": images})
+    if suite is not None:
+        (run_dir / "suite.json").write_text(json.dumps(suite))
+    return run_dir
+
+
+def by_name(chain, decisions, claims, live=frozenset()) -> dict:
+    return {t.name: s for t, s in chain.states(decisions, claims, set(live)).items()}
+
+
+def test_the_chain_starts_with_stage_1_and_waits_for_the_generated_data(load_script, stage1):
+    chain = load_script("m2_chain")
+    current = by_name(chain, chain.decide(), slurm.Claims(chain.claims_dir(), "72914"))
+    assert [n for n, s in current.items() if s.status == "ready"] == [
+        "m2-smoke", "m2-speed-a", "m2-speed-b", "m2-speed-c"]
+    assert all(s.status == "waiting" for n, s in current.items() if n not in (
+        "m2-smoke", "m2-speed-a", "m2-speed-b", "m2-speed-c"))
+    assert "loader decision" in current["m2-base-s0"].note
+    assert current["m2-pilot"].note == "waiting for gen50k not made yet (S6's generation)"
+    assert current["score-m2-smoke"].note == "waiting for m2-smoke to finish"
+    # The speed runs aren't scored; every other run is.
+    assert "score-m2-speed-a" not in current and "score-m2-gen10k-s2" in current
+
+
+def test_the_speed_runs_decide_the_loader_and_scoring_goes_first(load_script, stage1):
+    chain = load_script("m2_chain")
+    finish("smoke")
+    # Epoch 2 takes 30, 25 and 24 s: c is the fastest, b within 10% of it.
+    for k, times in (("a", (40, 70, 100)), ("b", (40, 65, 90)), ("c", (90, 114, 138))):
+        finish(f"speed-{k}", times)
+    decisions = chain.decide()
+    assert decisions["loader"]["choice"] == "b"
+    assert (decisions["loader"]["workers"], decisions["loader"]["cache"]) == (24, False)
+    claims = slurm.Claims(chain.claims_dir(), "72914")
+    current = chain.states(decisions, claims, set())
+    named = {t.name: s for t, s in current.items()}
+    assert named["m2-speed-a"].status == "done" and named["m2-base-s0"].status == "ready"
+    assert named["score-m2-smoke"].status == "ready"        # the smoke needs only the real sets
+    assert named["score-m2-base-s0"].note == "waiting for m2-base-s0 to finish"
+    assert chain.pick(current, math.inf).name == "score-m2-smoke"
+    training = {t: s for t, s in current.items() if not t.score}
+    assert chain.pick(training, math.inf).name == "m2-base-s0"
+    assert [t.name for t, s in training.items() if s.status == "ready"][:3] == [
+        "m2-base-s0", "m2-rot-s0", "m2-base-s1"]                  # seed 0 of every arm first
+    # A 2-hour run starts only with 4 hours left.
+    assert chain.pick(training, 3.9 * 3600) is None
+    assert chain.pick(current, 3.9 * 3600).name == "score-m2-smoke"
+    # And the run it trains takes the loader decision's settings.
+    base = next(t for t in chain.TASKS if t.name == "m2-base-s0")
+    assert chain.loader_flags(decisions["loader"]) == ("--workers", "24")
+    assert base.loader and not base.flags
+    # Once trained, an arm's run is scored only with all four suite sets.
+    finish("base-s0")
+    assert by_name(chain, decisions, claims)["score-m2-base-s0"].note == (
+        "waiting for synth-val not made yet (S6's generation)")
+
+
+def test_claims_failures_and_stale_claims(load_script, stage1):
+    chain = load_script("m2_chain")
+    a = slurm.Claims(chain.claims_dir(), "72914")
+    assert slurm.Claims(chain.claims_dir(), "72915").claim("m2-smoke", {"72915"})
+    speed_a = next(t for t in chain.TASKS if t.name == "m2-speed-a")
+    chain.record_failure(speed_a, "train_detector.py exited with 1", "72915")
+    assert by_name(chain, {}, a, {"72914", "72915"})["m2-speed-a"].status == "ready"
+    chain.record_failure(speed_a, "watchdog: no progress for 2 hours, in setup", "72915")
+    current = by_name(chain, {}, a, {"72914", "72915"})
+    assert current["m2-smoke"] == chain.State("claimed", "claimed by job 72915")
+    assert current["m2-speed-a"].status == "failed"            # twice: left for a person
+    # Once job 72915 has ended, its claim is stale and the smoke ready again.
+    assert by_name(chain, {}, a, {"72914"})["m2-smoke"].status == "ready"
+
+
+def test_the_pilot_gate_holds_back_stage_2(load_script, stage1):
+    chain = load_script("m2_chain")
+    for name in ("gen50k", "gen10k", "synth_val"):
+        write_list(m2.list_path(name), [Path("/g/a.jpg")])
+    write_json_file(m2.manifest_path("gen"), {"complete": True})
+    write_json_file(m2.manifest_path("synth-val"), {"complete": True})
+    claims = slurm.Claims(chain.claims_dir(), "72914")
+    loader = {"loader": {"workers": 8, "cache": False}}
+    assert by_name(chain, loader, claims)["m2-pilot"].status == "ready"
+    assert "pilot gate" in by_name(chain, loader, claims)["m2-gen-s0"].note
+    failed = {**loader, "pilot": {"passes": False}}
+    assert by_name(chain, failed, claims)["m2-gen-rot-1280-s0"].status == "blocked"
+    passed = {**loader, "pilot": {"passes": True}}
+    assert by_name(chain, passed, claims)["m2-gen-rot-1280-s0"].status == "ready"
+    # The pilot's suite makes the gate's decision.
+    finish("pilot", suite={"synth-val": {"any_conf": {"expiry_recall": 0.62}}})
+    assert chain.decide()["pilot"] == {"synth_val_any_conf": 0.62, "passes": True}
+
+
+def test_a_job_ending_with_tasks_left_submits_its_replacement(load_script, stage1, fake_slurm,
+                                                             monkeypatch, capsys):
+    chain = load_script("m2_chain")
+    claims = slurm.Claims(chain.claims_dir(), "72914")
+    waiting = {t: chain.State("waiting", "gen50k") for t in chain.TASKS[:2]}
+    chain.replace_job(waiting, "72914")       # 72915 waits too: room for one more
+    assert (fake_slurm / "sbatch.args").read_text().split() == [
+        "--parsable", "--hold", chain.GPU_SCRIPT]                 # held: no data ready
+    chain.replace_job(chain.states({}, claims, set()), "72914")
+    assert "--hold" not in (fake_slurm / "sbatch.args").read_text()   # the smoke is ready
+    monkeypatch.setenv("SBATCH_REFUSE", "1")
+    chain.replace_job(waiting, "72914")       # the 5-job cap: logged, no error
+    assert "sbatch refused a replacement" in capsys.readouterr().out
+    (fake_slurm / "sbatch.args").unlink()
+    chain.replace_job(waiting, "70000")       # two other M2 jobs already: none
+    chain.replace_job({t: chain.State("done") for t in chain.TASKS}, "72914")
+    assert not (fake_slurm / "sbatch.args").exists()
+
+
+# A stand-in for train_detector.py: starts training after a moment (its
+# run.json gains "applied"), then writes an epoch to results.csv every
+# 0.4 s, four times.
+TRAINING = """
+import json, sys, time
+from datetime import datetime
+from pathlib import Path
+runs_dir, save_dir = Path(sys.argv[1]), Path(sys.argv[2])
+run_dir = runs_dir / f"{datetime.now():%Y%m%d-%H%M%S}-m2-base-s0"
+run_dir.mkdir(parents=True)
+time.sleep(0.4)
+(run_dir / "run.json").write_text(json.dumps({"applied": {"save_dir": str(save_dir)}}))
+save_dir.mkdir(parents=True)
+for epoch in range(1, 5):
+    time.sleep(0.4)
+    with (save_dir / "results.csv").open("a") as f:
+        f.write(("epoch,time\\n" if epoch == 1 else "") + f"{epoch},{epoch}\\n")
+"""
+
+
+def test_the_watchdog_stops_a_run_without_progress(load_script, monkeypatch, tmp_path):
+    chain = load_script("m2_chain")
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(chain, "STALL", 1.0)
+    monkeypatch.setattr(chain, "POLL", 0.2)
+    hung = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                            start_new_session=True)
+    why = chain.watch(hung, "base-s0", time.time())
+    assert why.startswith("watchdog: no progress") and why.endswith("in setup")
+    assert hung.poll() is not None                   # stopped, with its process group
+
+
+def test_the_watchdog_lets_a_run_that_writes_epochs_finish(load_script, monkeypatch, tmp_path):
+    chain = load_script("m2_chain")
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(chain, "STALL", 1.0)          # shorter than the run, longer than an epoch
+    monkeypatch.setattr(chain, "POLL", 0.2)
+    started = time.time()
+    proc = subprocess.Popen([sys.executable, "-c", TRAINING, str(tmp_path / "runs"),
+                             str(tmp_path / "ckpt")], start_new_session=True)
+    assert chain.watch(proc, "base-s0", started) is None
+    assert time.time() - started > chain.STALL
+    assert chain.progress("base-s0", started) == (True, 4)
+
+
+def test_the_chain_loop_runs_ready_tasks_then_ends(load_script, stage1, fake_slurm, monkeypatch,
+                                                  capsys):
+    chain = load_script("m2_chain")
+    smoke = [t for t in chain.TASKS if t.run == "smoke"]           # m2-smoke and its scoring
+    monkeypatch.setattr(chain, "TASKS", smoke)
+    ran = []
+
+    def fake_run_task(task, decisions):
+        assert chain.claims_dir().joinpath(task.name, "job").read_text().startswith("72914 ")
+        ran.append(task.name)
+        if task.score:
+            (m2.finished_run("smoke") / "suite.json").write_text("{}")
+        else:
+            finish("smoke")
+
+    monkeypatch.setattr(chain, "run_task", fake_run_task)
+    monkeypatch.setenv("SLURM_JOB_ID", "72914")
+    monkeypatch.setattr(sys, "argv", ["m2_chain.py"])
+    chain.main()
+    assert ran == ["m2-smoke", "score-m2-smoke"]
+    assert list(chain.claims_dir().iterdir()) == []                 # every claim released
+    assert "nothing left that a GPU job could do" in capsys.readouterr().out
+    assert not (fake_slurm / "sbatch.args").exists()               # so no replacement

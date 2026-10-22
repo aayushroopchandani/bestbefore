@@ -126,9 +126,8 @@ def train_m1(args: argparse.Namespace) -> None:
 
 def train_m2(args: argparse.Namespace) -> None:
     arm = m2.ARMS[args.arm]
-    missing = [reason for reason in map(m2.list_missing, arm.names()) if reason]
-    if missing:
-        raise SystemExit(f"can't train {args.arm} yet: {'; '.join(missing)}")
+    if why := m2.missing({name: m2.list_missing(name) for name in arm.names()}):
+        raise SystemExit(f"can't train {args.arm} yet: {why}")
     counts = {name: m2.count_listed(name) for name in arm.names()}
     mix = m2.mix(arm, counts)
     schedule = m2.schedule(mix.n_listed, args.budget_share, args.epochs)

@@ -233,10 +233,8 @@ def score_suite(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dic
     from . import m2, sets
 
     missing = {name: why for name in m2.SUITE if (why := m2.suite_missing(name))}
-    lacking = [name for name in m2.THRESHOLD_SETS if name in missing]
-    if lacking:
-        raise FileNotFoundError(f"the threshold needs {', '.join(lacking)}: "
-                                + "; ".join(missing[n] for n in lacking))
+    if lacking := m2.missing({n: missing.get(n) for n in m2.THRESHOLD_SETS}):
+        raise FileNotFoundError(f"the threshold needs every real set: {lacking}")
     model = YOLO(str(checkpoint))
     matched = {}
     for name in m2.SUITE:
