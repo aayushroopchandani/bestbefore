@@ -1,6 +1,7 @@
 """Write M2's derived sets under $GENERATED_DIR/m2/ (docs/m2-synthetic-generator.md, S2).
 
     python scripts/derive_sets.py --only val      # the two validation sets (laptop)
+    python scripts/derive_sets.py --only lists    # train_synth_clean alone (laptop: no new photos)
     python scripts/derive_sets.py --workers 16    # all five (slurm/m2_derive.sbatch)
 
 The sets, each listed in lists/<set>.txt (absolute paths):
@@ -26,6 +27,7 @@ import json
 import shutil
 import time
 from collections import Counter
+from contextlib import nullcontext
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -98,8 +100,8 @@ def without_copies(synth: list[Path]) -> list[Path]:
 
 
 def save_manifest(made: dict[str, dict], common: dict, run_dir: Path) -> dict:
-    """Merge into manifests/derived.json, so `--only val` keeps the training
-    sets' entries; a copy goes into the run folder."""
+    """Merge into manifests/derived.json, so `--only val` and `--only lists`
+    keep the other sets' entries; a copy goes into the run folder."""
     path = m2.manifest_path("derived")
     manifest = json.loads(path.read_text()) if path.exists() else {"sets": {}}
     manifest["sets"].update({name: {**entry, **common} for name, entry in made.items()})
@@ -112,17 +114,24 @@ def save_manifest(made: dict[str, dict], common: dict, run_dir: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--only", choices=["val"], help="only the two validation sets")
+    parser.add_argument("--only", choices=["val", "lists"],
+                        help="val: only the two validation sets; lists: only "
+                             "train_synth_clean, which writes no photos")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0, help="for the turns")
     args = parser.parse_args()
+    make_val = args.only in (None, "val")          # real_val_rot, real_val_small
+    make_list = args.only in (None, "lists")       # train_synth_clean
+    make_turned = args.only is None                # real_rot, synth_rot
 
     # Read and check every source before writing anything.
     yolo, root = expdate_dir() / "yolo", m2.derived_dir()
-    val = derived.read_list(yolo / "val.txt")
-    if args.only != "val":
-        real = derived.read_list(yolo / "train_real.txt")
+    if make_val:
+        val = derived.read_list(yolo / "val.txt")
+    if make_list or make_turned:
         synth = without_copies(derived.read_list(yolo / "train_synth.txt"))
+    if make_turned:
+        real = derived.read_list(yolo / "train_real.txt")
 
     run_dir = start_run("m2-derive", {"only": args.only, "workers": args.workers,
                                       "root": m2.root()}, seed=args.seed)
@@ -132,13 +141,15 @@ def main() -> None:
               "code_sha256": code_sha256(derived, m2)}
 
     made: dict[str, dict] = {}
-    with Pool(args.workers) as pool:
-        made["real_val_rot"] = turned(pool, root, "real_val_rot", val, args.seed)
-        made["real_val_small"] = gridded(pool, root, "real_val_small", val)
-        if args.only != "val":
+    with Pool(args.workers) if make_val or make_turned else nullcontext() as pool:
+        if make_val:
+            made["real_val_rot"] = turned(pool, root, "real_val_rot", val, args.seed)
+            made["real_val_small"] = gridded(pool, root, "real_val_small", val)
+        if make_list:
             made["train_synth_clean"] = {
                 "photos": derived.write_list(m2.list_path("train_synth_clean"), synth),
                 "left_out": sorted(m2.REUSED_VAL_COPIES)}
+        if make_turned:
             made["real_rot"] = turned(pool, root, "real_rot", real, args.seed)
             made["synth_rot"] = turned(pool, root, "synth_rot", synth, args.seed)
     save_manifest(made, common, run_dir)
