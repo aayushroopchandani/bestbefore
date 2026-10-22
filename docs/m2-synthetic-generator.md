@@ -854,11 +854,14 @@ real start is likely later.
 job cut off by its limit means queueing again. 3 days is the `gpu`
 partition's maximum, so the partition stays the same; stage 2 alone
 (about 29 GPU-hours at M1's speed) then fits even if the generated photos
-load 2.5 times slower. The two held jobs are raised with `scontrol
-update JobId=72914 TimeLimit=3-00:00:00` (and the same for 72915; S1's
-check showed a waiting job's limit can be raised), and the script now
-says 3 days for any replacement. `long` would allow 7 days,
-but nothing in M2 needs more than 3.
+load 2.5 times slower. The two held jobs were raised on 2026-10-22 with
+`scontrol update JobId=72914 TimeLimit=3-00:00:00` (and the same for
+72915; S1's check showed a waiting job's limit can be raised). `squeue`
+then showed both still `PENDING`, reason `JobHeldUser`, with a time limit
+of `3-00:00:00` and their submit time unchanged (2026-10-22 20:41:43),
+so they kept their place in the queue. The script now says 3 days for
+any replacement. `long` would allow 7 days, but nothing in M2 needs more
+than 3.
 
 ### S2. Derived sets · laptop, then a CPU job · *submits 1 CPU job*
 
