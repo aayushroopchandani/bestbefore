@@ -726,12 +726,12 @@ scoring: needs a finished run and all four suite sets
 - **Nothing to do:** the job exits, freeing the GPU, except while the
   other job is running the pilot, which unlocks most of stage 2 within
   minutes: then it waits up to 30 minutes, checking every 5.
-- **Watchdog** (added 2026-10-23, with the 3-day limit): the chain stops
+- **Watchdog** (added 2026-10-22, with the 3-day limit): the chain stops
   a training run when its `results.csv` gains no epoch for 2 hours (the
-  longest epoch, `base` at 1280 px, is a few minutes), marks it failed in
-  its `run.json`, and moves on. A hung loader or a stuck read on the
-  shared filesystem doesn't crash, so without this it would hold the GPU
-  until the time limit.
+  longest epoch, `gen-rot-1280`'s, is about 6 minutes at M1's speed),
+  marks it failed in its `run.json`, and moves on. A hung loader or a
+  stuck read on the shared filesystem doesn't crash, so without this it
+  would hold the GPU until the time limit.
 - **Decisions** are written to `results/runs/m2-decisions.json` as soon as
   their inputs are complete. `--dry-run` prints every task with its state
   (done, claimed by job N, ready, waiting for X).
@@ -850,7 +850,7 @@ gave an unheld copy a start of 2026-10-27 on `cn5`. That estimate leaves
 out the jobs ahead that are waiting only on their owners' caps, so the
 real start is likely later.
 
-**Changed 2026-10-23: 3 days, not 2.** A GPU is hard to get here, and a
+**Changed 2026-10-22: 3 days, not 2.** A GPU is hard to get here, and a
 job cut off by its limit means queueing again. 3 days is the `gpu`
 partition's maximum, so the partition stays the same; stage 2 alone
 (about 29 GPU-hours at M1's speed) then fits even if the generated photos
