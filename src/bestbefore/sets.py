@@ -12,7 +12,7 @@ from .samples import Sample
 # real-val-rot, real-val-small: the same photos turned 90 or 270 degrees,
 # and in 2 x 2 grids (M2's hard validation sets, scripts/derive_sets.py).
 # store: the retailer's photos, test only (store.py).
-DERIVED = {"real-val-rot": "real_val_rot", "real-val-small": "real_val_small"}
+DERIVED = m2.DERIVED_SETS
 NAMES = (*expdate.SPLITS, "real-val", *DERIVED, "store")
 
 

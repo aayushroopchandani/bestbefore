@@ -32,6 +32,20 @@ def label_lines(sample: Sample) -> tuple[list[str], int]:
     return lines, dropped
 
 
+def split_repeats(spec: str) -> tuple[str, int]:
+    """'train_real*5' -> ('train_real', 5); 'gen50k' -> ('gen50k', 1).
+
+    A list written name*k goes into a dataset file k times, which repeats
+    its photos: Ultralytics keeps repeated entries (M2's real photos).
+    """
+    name, star, k = spec.rpartition("*")
+    if not star:
+        return spec, 1
+    if not (name and k.isdigit() and int(k) >= 1):
+        raise ValueError(f"{spec!r}: a list is written name or name*k")
+    return name, int(k)
+
+
 def list_ids(yolo_dir, list_name: str) -> set[str]:
     """Photo ids in one of the converter's image lists, e.g. 'val'."""
     lines = (yolo_dir / f"{list_name}.txt").read_text().splitlines()
