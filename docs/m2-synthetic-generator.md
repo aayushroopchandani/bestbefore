@@ -2,8 +2,9 @@
 
 Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
 `72914` and B `72915` held); S2 done 2026-10-22 (the derived sets, on both
-machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A ready to
-release). Next: S4 (fonts, text and rendering).
+machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A released,
+expected to start between 2026-10-25 and about 2026-11-09). Next: S4
+(fonts, text and rendering).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -1092,8 +1093,23 @@ then `feat: slurm job for the derived sets`
 `feat: m2 chain, two GPU jobs sharing one work queue`
 
 **Done 2026-10-22.** Code from `95a2261` to `814d825`, 193 tests pass.
-Job A (`72914`) is still held, for the owner to release. What was
-measured:
+Job A (`72914`) was released at 22:24 (step 3); job B (`72915`) stays
+held for S6. What was measured:
+
+- **Job A after its release** (`squeue --start`, `scontrol show job`,
+  22:25): `PENDING`, reason `Priority` (no longer `JobHeldUser`), and its
+  submit time is still 20:41:43. So it kept its place in the queue: the
+  risk that a released hold loses it didn't happen. Slurm's estimated
+  start is **2026-10-25 22:45** (end 2026-10-28 22:45). That is only when
+  the first H100 frees up, and Slurm gives four of mehul's jobs the same
+  time. It leaves out the six jobs waiting only on their owners' 2-job
+  caps, as S1 found. Ten GPU jobs submitted earlier wait ahead of A (shovik
+  3, meera 3, mehul 4). Taking them first come, first served, with each
+  user's cap, job A gets about the 11th GPU to free up. If every job runs
+  to its time limit (7 days for most), that is about **2026-11-09**. It
+  will be earlier by however much those jobs finish early. Jobs submitted
+  later queue behind A and B. Slurm's backfill may slip a short one in,
+  but only where that doesn't delay them.
 
 - **The recipe, on a real trainer.** The laptop smoke run's log says
   `optimizer: MuSGD(lr=0.01, momentum=0.937)`, with no `optimizer=auto`
