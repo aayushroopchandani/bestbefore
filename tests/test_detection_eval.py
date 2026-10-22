@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from bestbefore.detection_eval import (Prediction, best_threshold, evaluate,
-                                       iou, match_photo, summary)
+                                       iou, match_photo, pooled, summary)
 from bestbefore.samples import Box, Sample
 
 DATE = (0.10, 0.40, 0.30, 0.45)        # a labelled date
@@ -97,3 +97,30 @@ def test_best_threshold():
     conf, f1 = best_threshold(evaluate([s], {"a": preds}))
     assert conf == pytest.approx(0.2)
     assert f1 == pytest.approx(2 * 0.75 * 1.0 / 1.75)
+
+
+def test_f2_picks_a_lower_threshold_than_f1():
+    # Four dates; boxes at 0.9, 0.8, 0.7 (right), 0.4, 0.3 (wrong), 0.2 (right).
+    # Keeping down to 0.7: P = 1,   R = 3/4  ->  F1 0.857 (best), F2 0.789
+    # Keeping down to 0.2: P = 4/6, R = 1    ->  F1 0.800,        F2 0.909 (best)
+    dates = [(0.1, y, 0.2, y + 0.05) for y in (0.1, 0.3, 0.5, 0.7)]
+    wrong = [(0.6, y, 0.7, y + 0.05) for y in (0.1, 0.3)]
+    s = photo("a", *(("date", d) for d in dates))
+    preds = [pred(dates[0], 0.9), pred(dates[1], 0.8), pred(dates[2], 0.7),
+             pred(wrong[0], 0.4), pred(wrong[1], 0.3), pred(dates[3], 0.2)]
+    m = evaluate([s], {"a": preds})
+    assert best_threshold(m) == pytest.approx((0.7, 6 / 7))
+    assert best_threshold(m, beta=1) == best_threshold(m)          # M1's calls unchanged
+    assert best_threshold(m, beta=2) == pytest.approx((0.2, 5 * (2 / 3) / (4 * (2 / 3) + 1)))
+
+
+def test_pooled_matches_are_the_sets_scored_together():
+    a = photo("a", ("date", DATE), tag="x")
+    b = photo("b", ("exp", EXPIRY), ("date", DATE))
+    preds = {"a": [pred(DATE, 0.9)], "b": [pred(EXPIRY, 0.6), pred((0.5, 0.5, 0.6, 0.6), 0.7)]}
+    together = evaluate([a, b], preds)
+    pool = pooled([evaluate([a], preds), evaluate([b], preds)])
+    assert pool == together
+    assert summary(pool, 0.5) == summary(together, 0.5)
+    with pytest.raises(ValueError, match="IoU"):
+        pooled([evaluate([a], preds, 0.5), evaluate([b], preds, 0.3)])

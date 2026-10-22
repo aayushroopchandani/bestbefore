@@ -128,9 +128,29 @@ def summary(m: Matches, conf: float, tags: set | None = None) -> dict:
     return out
 
 
-def best_threshold(m: Matches) -> tuple[float, float]:
-    """The confidence that maximises F1 for dates, and that F1.
+def pooled(matches: list[Matches]) -> Matches:
+    """Several sets' matches as one, so a threshold can be chosen over all
+    of them together (M2 pools its three real validation sets)."""
+    if len({m.iou_min for m in matches}) != 1:
+        raise ValueError("pooled matches need the same IoU level")
+    out = Matches(matches[0].iou_min)
+    for m in matches:
+        for tag, n in m.n_photos.items():
+            out.n_photos[tag] = out.n_photos.get(tag, 0) + n
+        out.pred_conf += m.pred_conf
+        out.pred_tp += m.pred_tp
+        out.pred_tag += m.pred_tag
+        out.truth_conf += m.truth_conf
+        out.truth_expiry += m.truth_expiry
+        out.truth_tag += m.truth_tag
+    return out
 
+
+def best_threshold(m: Matches, beta: float = 1.0) -> tuple[float, float]:
+    """The confidence that maximises F-beta for dates, and that F-beta.
+
+    beta 1 is F1 (M1). beta 2 is F2 (M2, decision 11): a missed date
+    weighs twice as much as a false box, so the threshold sits lower.
     Candidates are the predictions' own confidences: between two of them,
     nothing changes.
     """
@@ -142,11 +162,12 @@ def best_threshold(m: Matches) -> tuple[float, float]:
     kept = np.arange(1, len(conf) + 1)
     recall = tp / len(m.truth_conf)
     precision = tp / kept
-    f1 = 2 * precision * recall / np.maximum(precision + recall, 1e-12)
+    b2 = beta * beta
+    f = (1 + b2) * precision * recall / np.maximum(b2 * precision + recall, 1e-12)
     # Among equal confidences only the last position counts (all kept at once).
     last = np.r_[conf[1:] != conf[:-1], True]
-    i = int(np.argmax(np.where(last, f1, -1)))
-    return float(conf[i]), float(f1[i])
+    i = int(np.argmax(np.where(last, f, -1)))
+    return float(conf[i]), float(f[i])
 
 
 def _ratio(a, b) -> float | None:
