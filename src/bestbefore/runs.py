@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -29,6 +30,21 @@ def _git(*args: str) -> str:
     return out.stdout.strip()
 
 
+def git_state() -> dict:
+    """The commit the code is at, and whether it has uncommitted changes."""
+    return {"git_commit": _git("rev-parse", "HEAD"),
+            "git_dirty": bool(_git("status", "--porcelain"))}
+
+
+def write_json(path: Path, data) -> None:
+    """Write JSON atomically: into a temporary file, then renamed over
+    `path`. A reader sees the old file or the new one, never half of one
+    (M2's two GPU jobs read each other's records while they are written)."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str))
+    os.replace(tmp, path)
+
+
 def _versions() -> dict[str, str]:
     found = {}
     for name in PACKAGES:
@@ -50,14 +66,13 @@ def start_run(name: str, config: dict, seed: int | None = None,
         "name": name,
         "started": now.isoformat(timespec="seconds"),
         "command": sys.argv,
-        "git_commit": _git("rev-parse", "HEAD"),
-        "git_dirty": bool(_git("status", "--porcelain")),
+        **git_state(),
         "seed": seed,
         "config": config,
         "python": platform.python_version(),
         "packages": _versions(),
     }
-    (run_dir / "run.json").write_text(json.dumps(record, indent=2, default=str))
+    write_json(run_dir / "run.json", record)
     return run_dir
 
 
@@ -66,7 +81,7 @@ def update_run(run_dir: Path, **fields) -> None:
     path = run_dir / "run.json"
     record = json.loads(path.read_text())
     record.update(fields)
-    path.write_text(json.dumps(record, indent=2, default=str))
+    write_json(path, record)
 
 
 def latest_run(name: str, root: Path | None = None) -> Path | None:
