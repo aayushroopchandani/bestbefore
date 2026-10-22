@@ -8,6 +8,7 @@ $CHECKPOINT_DIR/pretrained/ beforehand, on the login node.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ from .config import checkpoint_dir
 from .detection_eval import Matches, Prediction, best_threshold, evaluate, summary
 from .images import load_upright
 from .samples import Sample
-from .yolo import CLASSES
+from .yolo import CLASSES, split_repeats
 
 # Fixed for every M1 run (decision 4). Horizontal flips are off: a flipped
 # date is mirrored text, which no pack prints. Rotation stays at YOLO's
@@ -30,6 +31,11 @@ SETTINGS = dict(
 )
 PREDICT_CONF = 0.001   # keep nearly every box; thresholds are applied later
 
+# The arguments `applied` reads back off Ultralytics' trainer.
+APPLIED_ARGS = ("optimizer", "lr0", "momentum", "warmup_momentum", "warmup_bias_lr",
+                "warmup_epochs", "epochs", "close_mosaic", "patience", "val", "batch",
+                "fliplr", "deterministic", "imgsz", "seed", "fraction", "workers", "cache")
+
 
 def pretrained_path(name: str) -> Path:
     """$CHECKPOINT_DIR/pretrained/<name>.pt, which must already exist."""
@@ -41,35 +47,86 @@ def pretrained_path(name: str) -> Path:
     return path
 
 
-def dataset_yaml(yolo_dir: Path, train_lists: list[str], out: Path) -> Path:
+def dataset_yaml(yolo_dir: Path, train_lists: list[str], out: Path,
+                 val: str = "val") -> Path:
     """A YOLO dataset file training on the chosen image lists.
 
     This is how "synthetic + real" vs "real only" is switched without
-    touching the converter's expdate.yaml.
+    touching the converter's expdate.yaml. A list is a name in `yolo_dir`
+    (`train_real` is train_real.txt) or the absolute path of a list file
+    (M2's live elsewhere). `name*5` lists it five times: Ultralytics keeps
+    repeats, so its photos are seen five times as often. `val` is chosen
+    the same way (M2 scores each validation set through its own file).
     """
-    for name in train_lists:
-        if not (yolo_dir / f"{name}.txt").exists():
-            raise FileNotFoundError(yolo_dir / f"{name}.txt")
+    train = []
+    for spec in train_lists:
+        name, k = split_repeats(spec)
+        train += [_list_entry(yolo_dir, name)] * k
     out.write_text(
         "# Made by bestbefore.detector.dataset_yaml\n"
         f"path: {yolo_dir.resolve()}\n"
-        f"train: [{', '.join(f'{n}.txt' for n in train_lists)}]\n"
-        "val: val.txt\n"
+        f"train: [{', '.join(train)}]\n"
+        f"val: {_list_entry(yolo_dir, val)}\n"
         "test: test.txt\n"
         "names:\n" + "".join(f"  {i}: {c}\n" for i, c in enumerate(CLASSES)))
     return out
 
 
+def _list_entry(yolo_dir: Path, name: str) -> str:
+    """A list as the dataset file names it: a list in `yolo_dir` by its
+    file name, as M1 always wrote it; any other by its absolute path,
+    quoted, since a path may hold spaces."""
+    if Path(name).is_absolute():
+        path, entry = Path(name), json.dumps(name)
+    else:
+        path, entry = yolo_dir / f"{name}.txt", f"{name}.txt"
+    if not path.exists():
+        raise FileNotFoundError(path)
+    return entry
+
+
 def train(weights: Path, data: Path, imgsz: int, seed: int, project: Path,
-          name: str, **overrides) -> Path:
-    """Fine-tune `weights` on `data`; returns the path of best.pt."""
+          name: str, keep: str = "best", callbacks: dict | None = None,
+          **overrides) -> Path:
+    """Fine-tune `weights` on `data`; returns the path of best.pt, or with
+    keep="last" of last.pt, the final weights (M2, decision 10).
+
+    `callbacks` maps Ultralytics events (e.g. "on_train_start") to
+    functions of the trainer.
+    """
+    if keep not in ("best", "last"):
+        raise ValueError(f"keep is 'best' or 'last', not {keep!r}")
     from ultralytics import YOLO
 
     model = YOLO(str(weights))
+    for event, fn in (callbacks or {}).items():
+        model.add_callback(event, fn)
     settings = {**SETTINGS, **overrides}
     model.train(data=str(data), imgsz=imgsz, seed=seed, project=str(project),
                 name=name, exist_ok=False, **settings)
-    return Path(model.trainer.save_dir) / "weights" / "best.pt"
+    return Path(model.trainer.save_dir) / "weights" / f"{keep}.pt"
+
+
+def applied(trainer) -> dict:
+    """What Ultralytics trains with, read off its trainer when training
+    starts (an "on_train_start" callback), after optimizer="auto" would
+    have been resolved: its arguments, the optimiser it built, how many
+    photos the training set holds (repeats included), and whether they
+    are cached in RAM (Ultralytics' own memory check can refuse)."""
+    dataset = trainer.train_loader.dataset
+    return {"args": {k: getattr(trainer.args, k) for k in APPLIED_ARGS},
+            "optimizer": type(trainer.optimizer).__name__,
+            "train_images": len(dataset),
+            "distinct_images": len(set(dataset.im_files)),
+            "ram_cache": dataset.cache == "ram",
+            "loader_workers": trainer.train_loader.num_workers,
+            "save_dir": str(trainer.save_dir)}
+
+
+def momenta(trainer) -> list[float]:
+    """The momentum of every parameter group. After warmup it stays where
+    warmup left it, close to the `momentum` argument (decision 9)."""
+    return sorted({round(g["momentum"], 4) for g in trainer.optimizer.param_groups})
 
 
 def epochs_run(best: Path) -> int | None:

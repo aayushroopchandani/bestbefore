@@ -5,6 +5,7 @@ experiments/m2-*/summarise.py re-check them."""
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import os
@@ -86,6 +87,13 @@ def list_missing(name: str) -> str | None:
     vouched = (name in record.get("sets", {}) if manifest == "derived"
                else record.get("complete") is True)
     return None if vouched else f"{name} not vouched for by manifests/{manifest}.json{made_by}"
+
+
+def manifest_hashes(names: Sequence[str]) -> dict[str, str]:
+    """SHA-256 of each manifest behind these lists, so a run's record names
+    exactly the data it saw."""
+    found = sorted({MANIFEST_OF[n] for n in names if n in MANIFEST_OF})
+    return {m: hashlib.sha256(manifest_path(m).read_bytes()).hexdigest() for m in found}
 
 
 def count_listed(name: str) -> int:
