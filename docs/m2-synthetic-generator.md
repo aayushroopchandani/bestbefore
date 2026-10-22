@@ -1112,6 +1112,26 @@ held for S6. What was measured:
   later queue behind A and B. Slurm's backfill may slip a short one in,
   but only where that doesn't delay them.
 
+  Who gets each H100 as it frees up, in that worst case (first come,
+  first served, at most 2 running jobs per user, every job running to its
+  time limit):
+
+  | GPU frees up | It goes to |
+  |---|---|
+  | 2026-10-25 22:45 | shovik's `72861` |
+  | 2026-10-26 10:27 | shovik's `72864` (meera's older `72863` waits: meera already runs 2) |
+  | 2026-10-29 02:10 | meera's `72863` |
+  | 2026-10-29 11:29 | mehul's `72868` (shovik already runs 2) |
+  | 2026-11-01 22:45 | shovik's `72867` (a 12-hour job) |
+  | 2026-11-02 10:27 | mehul's `72869` |
+  | 2026-11-02 10:45 | meera's `72886` |
+  | 2026-11-05 02:10 | meera's `72889` |
+  | 2026-11-05 11:29 | mehul's `72870` |
+  | 2026-11-09 10:27 | mehul's `72888` |
+  | **2026-11-09 10:45** | **job A** |
+
+  Job B, released by then, would get the next one, about 2026-11-12.
+
 - **The recipe, on a real trainer.** The laptop smoke run's log says
   `optimizer: MuSGD(lr=0.01, momentum=0.937)`, with no `optimizer=auto`
   line, and its record of what Ultralytics applied matches the recipe and
@@ -1167,6 +1187,33 @@ held for S6. What was measured:
   run rebuilds it (3 s for 16,529 photos on the laptop). Ultralytics
   checks the cache's hash and rescans on any mismatch or unreadable file,
   so two jobs at once only cost a rescan.
+- **A 2% smoke run trains on real photos only.** With `--fraction`,
+  Ultralytics keeps the first round(n × fraction) photos of the *sorted*
+  list (`data/base.py`, `get_img_files`). ExpDate's `real-train` paths
+  sort before `synth` on both machines, so `m2-smoke`'s 256 photos are
+  all real. That's fine for a test of the plumbing, and only smoke runs
+  use a fraction (the pilot shortens its epochs instead).
+- **The mAP comes from batches grouped by shape.** `suite.json`'s mAP,
+  the decision rule's measure, comes from Ultralytics' `model.val()`.
+  That call sets `rect=True` by default (`engine/model.py`), so it pads
+  photos less than our own predictions do, exactly as for M1's mAP. Only
+  our matching, the threshold and the recall use `rect=False`. mAP needs
+  no threshold, and every arm is measured the same way, so the rule
+  stays fair. But a set's mAP and its recall come from slightly different
+  predictions.
+- **The RAM cache, in detail.** Ultralytics caches every *listed* photo
+  separately, so a photo listed five times takes five times the memory;
+  `m2.ram_check` scales its 30-photo sample to the whole list for that
+  reason. Ultralytics' own check (`check_cache_ram`) also wants twice its
+  estimate free on the node. When the node is that busy, it trains
+  without the cache and only warns in the log. Each run's record says
+  whether the cache was really filled (`applied.ram_cache`).
+- **What `val=False` leaves behind.** Ultralytics still writes `best.pt`
+  every epoch: with no validation, the epoch's score and the best score
+  are both empty, and it treats them as equal. At the end `best.pt` is
+  the same as `last.pt`. It also validates twice at the end, after the
+  last epoch and again when it checks `best.pt`, which takes seconds on
+  a GPU. Harmless: M2's model is `last.pt`.
 
 ### S4. Generator, part 1: fonts, text and rendering · laptop
 
