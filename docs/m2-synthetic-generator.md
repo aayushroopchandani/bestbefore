@@ -2,7 +2,8 @@
 
 Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
 `72914` and B `72915` held); S2 done 2026-10-22 (the derived sets, on both
-machines). Next: S3 (the M2 recipe and the chain).
+machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A ready to
+release). Next: S4 (fonts, text and rendering).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -1090,6 +1091,66 @@ then `feat: slurm job for the derived sets`
 `feat: validation suite scoring with a pooled F2 threshold`,
 `feat: m2 chain, two GPU jobs sharing one work queue`
 
+**Done 2026-10-22.** Code from `95a2261` to `814d825`, 193 tests pass.
+Job A (`72914`) is still held, for the owner to release. What was
+measured:
+
+- **The recipe, on a real trainer.** The laptop smoke run's log says
+  `optimizer: MuSGD(lr=0.01, momentum=0.937)`, with no `optimizer=auto`
+  line, and its record of what Ultralytics applied matches the recipe and
+  schedule: `lr0` 0.01, `momentum` 0.937, `warmup_bias_lr` 0, `patience` 0,
+  `val` False, `batch` 16, `fliplr` 0. The first try stopped at train
+  start, as the check is meant to: Ultralytics sets `workers` to 0 on a
+  CPU. The loader is now recorded, not checked (`3efe889`).
+- **Momentum (decision 9's correction).** M1's `n640` checkpoint
+  records `momentum: 0.937`. Two CPU runs with 4 warmup batches ended
+  warmup at 0.9028 (argument 0.937) and 0.875 (argument 0.9), which is
+  0.8 + (momentum − 0.8) × 3/4 both times. So the `momentum` argument,
+  not the logged 0.9, sets the momentum training runs at.
+- **`val=False`** still writes one `results.csv` row per epoch (3 rows
+  for 3 epochs), with the cumulative `time` column.
+- **Repeats.** A laptop run on `train_real*5` + `train_synth_clean`,
+  stopped before epoch 1, logged `Using 16529 train, 165 val images`
+  (5 × 937 + 11,844) from 12,781 distinct photos; its label scan counted
+  16,529 photos, 0 corrupt. Stage 1 lists nothing twice, so every M2 run
+  checks the count at train start.
+- **The laptop's list.** `derive_sets.py --only lists` took 0.3 s:
+  11,844 names in the same order as the cluster's list (the same SHA-256
+  of the names, `71f49c3a…`), each under its own machine's
+  `yolo/images/synth/`, and none of the 14 copies.
+- **Laptop smoke** (`smoke-laptop`, CPU): 256 photos for 1 epoch in
+  1.7 minutes; `run.json` (finished), `data.yaml`, `last.pt`; then
+  `score_suite.py` in 1.0 minute, writing `suite.json` with synth-val
+  marked missing. A 1-epoch model's scores mean nothing.
+- **The suite on a real model** (M1's `n640`, laptop CPU, validation
+  sets only). Pooled F2 threshold 0.182, against the F1 threshold of 0.728
+  M1 chose:
+
+  | Set | Dates found | Boxed at any confidence | Precision | mAP@0.5 date |
+  |---|---:|---:|---:|---:|
+  | `real-val` | 187 / 187 (M1 at F1: 184) | 187 | 0.921 | 0.991 |
+  | `real-val-rot` | 0 / 187 | 0 | | 0.000 |
+  | `real-val-small` | 167 / 186 | 179 | 0.729 | 0.898 |
+
+  Ultralytics' own recall at the threshold agrees within 1.1 points. The
+  hard sets see what M1 missed (no sideways date boxed at all), and F2
+  lowers the threshold, as decision 11 intends.
+- **The chain's dry run**, on the laptop and on the cluster (at
+  `814d825`): smoke and speed runs ready; `base` and `rot` waiting only
+  for the loader decision (on the laptop, `rot` also waits for its turned
+  copies, which stay on the cluster); stage 2 waiting for `gen50k` and
+  `gen10k` (S6); every scoring task waiting for its run. `squeue --me`
+  answers as the chain reads it. The cluster's Slurm tracks a job's
+  processes by cgroup (`ProctrackType=proctrack/cgroup`), so a training
+  run in its own process group still ends with its job; `KillWait` is
+  30 s, `JobRequeue` 1.
+- **Ultralytics' label cache.** The cache sits beside the first label
+  file in sorted order, and every dataset here starts in ExpDate's
+  `labels/real-train/`, so they all share `labels/real-train.cache`. Each
+  run rebuilds it (3 s for 16,529 photos on the laptop). Ultralytics
+  checks the cache's hash and rescans on any mismatch or unreadable file,
+  so two jobs at once only cost a rescan.
+
 ### S4. Generator, part 1: fonts, text and rendering · laptop
 
 **Goal:** any block of text drawn in any of the four styles, with an
@@ -1176,6 +1237,11 @@ cluster, checked, with GPU job B released the moment they're complete.
 > split into the same `--task` ranges inside the job, so any split gives
 > the same photos. At S6's estimate of 0.2 s per photo per CPU, that's
 > about 4 minutes.
+>
+> **Also to revise (found in S3).** A GPU job that runs out of ready
+> tasks before S6 submits a held replacement (the chain's rule). So the
+> check job should release every held M2 job
+> (`squeue --me --name=m2 --states=PENDING`), not only `72915`.
 
 **Code:**
 
