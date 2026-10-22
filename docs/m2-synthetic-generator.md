@@ -1036,8 +1036,11 @@ then `feat: slurm job for the derived sets`
     `optimizer=auto` would have been resolved) a callback records what
     Ultralytics actually uses: its arguments, the optimiser, the number
     of training images (repeats included) and whether the RAM cache was
-    filled. The run stops there if any of it differs from the recipe and
-    schedule. At the end it records the momentum after warmup.
+    filled. The run stops there if any of it differs from the recipe,
+    the schedule, the input size, the seed or the fraction. The loader is
+    only recorded: Ultralytics uses no workers on a CPU, on purpose (the
+    laptop smoke run's first try stopped on that). At the end it records
+    the momentum after warmup.
     (`detector.train(..., keep, callbacks)`, `detector.applied(trainer)`,
     `m2.recipe_problems()`.)
   - **`--epochs` recomputes warmup and mosaic-off** from the epochs

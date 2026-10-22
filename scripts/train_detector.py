@@ -155,7 +155,9 @@ def train_m2(args: argparse.Namespace) -> None:
           f"{mix.n_listed} photos listed ({', '.join(mix.lists)}), "
           f"{schedule['epochs']} epochs at {arm.imgsz} px", flush=True)
 
-    wanted = {**m2.RECIPE, **schedule, **loader, "imgsz": arm.imgsz, "seed": args.seed,
+    # The loader isn't checked, only recorded: Ultralytics uses no workers
+    # on a CPU, on purpose.
+    wanted = {**m2.RECIPE, **schedule, "imgsz": arm.imgsz, "seed": args.seed,
               "fraction": args.fraction}
 
     def check_start(trainer) -> None:
