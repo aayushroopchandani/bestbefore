@@ -881,23 +881,36 @@ machines.
     `(1−y2, x1, 1−y1, x2)` for 270°.
   - `grid(four samples)`: each photo centred in a C × C cell (grey 114
     padding, C = the longest side of the four), on a 2C × 2C canvas;
-    boxes scaled and shifted.
+    boxes scaled and shifted. **(new)** The photos go into grids in fours
+    of similar size (sorted by long side), so every grid halves its
+    dates' size nearly exactly; the largest photo is the one left over.
   - `write_yolo(...)`: the JPEG (quality 95) into `images/<set>/`, the
-    label lines (`yolo.label_lines`) into `labels/<set>/`.
-  - `load_yolo_set(list_path, sidecar=None) -> list[Sample]`: samples
-    from images and label files, so the evaluator, `contact_sheet.py` and
-    `box_stats.py` work on every derived and generated set. With a
-    sidecar, `target` dates load as `exp` and the stratum becomes the
-    sample's `tag`.
+    label lines (`yolo.label_lines`) into `labels/<set>/`; then
+    `check_written` reads every one back (size, classes, boxes).
+  - `load_yolo_set(list_path) -> list[Sample]`: samples from images and
+    label files, so the evaluator, `contact_sheet.py` and `box_stats.py`
+    work on every derived and generated set. **(changed)** The `sidecar`
+    argument (`target` dates as `exp`, the stratum as `tag`) moves to S6,
+    which writes synth-val. Its sidecar's format is only fixed in S5, so
+    writing the reader now would mean guessing that format.
 - `src/bestbefore/m2.py` (begun): `REUSED_VAL_COPIES`, the 14 ids, with a
   comment pointing to the near-duplicates experiment; the
-  `$GENERATED_DIR/m2/` layout.
+  `$GENERATED_DIR/m2/` layout: `derived/images/<set>/` and
+  `derived/labels/<set>/`, `lists/<name>.txt`, `manifests/<name>.json`.
 - `scripts/derive_sets.py [--only val] [--workers N]`: writes
   `m2/derived/`, the lists (`train_synth_clean`, `real_rot`, `synth_rot`,
   `real_val_rot`, `real_val_small`) and `m2/manifests/derived.json`
-  (counts, seed, git commit). The turn for each photo comes from a seeded
-  generator keyed by its id. It stops if any of the 14 ids is missing
-  from the synthetic list.
+  (counts, seed, git commit). It stops if any of the 14 ids is missing
+  from the synthetic list. Details fixed while writing it:
+  - **Sources** are ExpDate's YOLO lists and label files, exactly what M1
+    trained and validated on, not the JSON annotations.
+  - **The coin** for each photo's turn is seeded with its set and file
+    name, not the file name alone: real and synthetic photos share names
+    (`img_00003.jpg` is in both).
+  - **Lists** hold absolute paths, one per line, written on each machine.
+    `train_synth_clean` lists ExpDate's own `yolo/images/synth/` paths
+    without resolving their symlinks, because Ultralytics finds a label
+    by turning `/images/` into `/labels/` in the path as listed.
 - `sets.py`: `real-val-rot`, `real-val-small`.
 - `slurm/m2_derive.sbatch`: partition `short`, 16 CPUs, 16 GB, 1 hour;
   loads the Python module and the venv as `m1_chain.sh` does, then runs
@@ -1065,6 +1078,11 @@ cluster, checked, with GPU job B released the moment they're complete.
 > about 4 minutes.
 
 **Code:**
+
+- `derived.load_yolo_set(list_path, sidecar=None)` (moved from S2): with
+  a sidecar, `target` dates load as `exp` and the stratum becomes the
+  sample's `tag`, so the evaluator's expiry recall is synth-val's target
+  recall per stratum. `sets.py`: `synth-val`.
 
 - `synth/spec.py`: the synth-val strata and the held-out fonts.
 - `scripts/generate.py`:
