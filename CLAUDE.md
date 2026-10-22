@@ -185,7 +185,20 @@ this repo.
 - **Queue:** first come, first served by submit time (every job has
   priority 1, every partition the same tier). A job submitted with
   `--hold` keeps its submit time when released, and a waiting job's CPUs,
-  memory and time limit can be changed with `scontrol update`.
+  memory and time limit can be changed with `scontrol update`. Other
+  users are capped at 2 running jobs too, so `squeue --start` can be far
+  too early. It gives the time the first GPU frees up (on 2026-10-22 the
+  same time to five jobs), and leaves out older jobs held back only by
+  their owners' caps. To estimate a start, count the older GPU jobs
+  ahead and the running ones' end times.
+- **Inside a job** (Slurm 23.11.4, checked 2026-10-22):
+  `SLURM_JOB_END_TIME` holds the job's end (Unix time), so a job can tell
+  how long it has left. At the time limit or a `scancel`, every process
+  gets SIGTERM, then SIGKILL 30 s later (`KillWait`). Processes are
+  tracked by cgroup (`proctrack/cgroup`), so even one in its own process
+  group ends with its job. A job whose node fails is requeued under the
+  same id and runs its script again from the top (`JobRequeue=1`).
+  `squeue --me` lists only our own jobs.
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. **There is

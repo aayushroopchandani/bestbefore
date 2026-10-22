@@ -1056,7 +1056,8 @@ then `feat: slurm job for the derived sets`
   - `detection_eval.pooled()`: several sets' matches as one, for the
     pooled threshold.
   - `score_suite(checkpoint, imgsz, out_dir, device)`: one dataset file
-    per set, kept in `out_dir/suite/`.
+    per set, kept in `out_dir/suite/`. The threshold is stored
+    unrounded, for S7 to use exactly (see S7).
   - `src/bestbefore/slurm.py` (new): `squeue`, `sbatch`, the job's time
     left, and the claims, apart from the chain so a test can fake
     `squeue`. `tests/test_slurm.py` holds those tests.
@@ -1318,6 +1319,12 @@ exist, against M1's runs and validation only.
 - `scripts/eval_detector.py`: knows `m1-` and `m2-` runs. An M2 run uses
   `last.pt` and the threshold in its `suite.json`; an M1 run works as
   before. It still refuses to score a run twice on `store` or `real-test`.
+  **(noted in S3)** `suite.json` keeps the threshold unrounded (a full
+  float), so test and store photos are cut exactly where validation
+  chose. Use it as stored, never rounded. M1's `val.json` kept 4
+  decimals, and rounding up can move the cut past the box it was chosen
+  at. Its display copies (`conf` in each summary) are rounded; don't
+  read the threshold from those.
 - `m2.py`: the tables. The suite table per arm (mean and range over
   seeds), synth-val per stratum, store by tag per arm, and **store by
   cause**: month word (full name or abbreviation) and numbers by print
