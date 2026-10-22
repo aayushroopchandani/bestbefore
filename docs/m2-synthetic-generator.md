@@ -153,7 +153,7 @@ finding about synthetic realism, and it gets written up as one.
 | background photos: real train 937 (930 at least 640 px on the long side, 711 at least 1,000 px); synthetic 11,844 once the 14 copies are out (7,255 at least 640 px, 3,143 at least 1,000 px); validation 165 (590 to 2,048 px) | measured for this plan | enough real pack surfaces to draw on |
 | `n640` trained 1.28 M images (100 epochs × 12,795) in 66 min, at 22.1 batches of 16 a second (354 images/s) with 8 loader workers; `n1280` at 13.5 batches a second (216 images/s) | M1 GPU budget, job log | the speeds every estimate below starts from |
 | `s640` trained as fast as `n640`, and the log warned of slow image access (17.7 MB/s) | M1, learnings §2.9 | loading photos, not the GPU, set the pace |
-| `optimizer=auto` gave MuSGD (lr 0.01) to runs over 10,000 steps and AdamW to shorter ones, and set `warmup_bias_lr` to 0 | M1 job log; Ultralytics `trainer.py` | set it by hand, the same for every arm |
+| `optimizer=auto` gave MuSGD (lr 0.01) to runs over 10,000 steps and AdamW to shorter ones, and set `warmup_bias_lr` to 0. The momentum 0.9 it printed lasted only until warmup, which moves momentum to the `momentum` argument (default 0.937) for the rest of training (found in S3) | M1 job log and checkpoint; Ultralytics `trainer.py` | set it by hand, the same for every arm |
 | with `val=False`, Ultralytics validates only after the last epoch; `patience=0` turns early stopping off | Ultralytics 8.4.177 source | how the fixed budget is run |
 | Ultralytics reads list files without removing repeats | `data/base.py`, `get_img_files` | listing a file twice repeats its photos |
 | Ultralytics checks free RAM for `cache="ram"` on the **node**, not the job's Slurm limit | `data/base.py`, `check_cache_ram` | our own check, or the job is killed |
@@ -232,9 +232,16 @@ before. **(changes M1 n)** marks a departure from M1's decision n.
    photos are added. Arms then differ only in what the other 93% is made
    of.
 9. **(new) The optimiser is set by hand: MuSGD, `lr0=0.01`,
-   `momentum=0.9`, `warmup_bias_lr=0.0`** (from M1 Later). That's exactly
-   what `optimizer=auto` chose for `n640`, so `base` repeats M1's recipe,
-   and no arm's optimiser depends on its data size (M1 C2's caveat).
+   `momentum=0.937`, `warmup_bias_lr=0.0`** (from M1 Later). That's
+   exactly what `n640` trained with under `optimizer=auto`, so `base`
+   repeats M1's recipe, and no arm's optimiser depends on its data size
+   (M1 C2's caveat). **(changed 2026-10-22, S3)** The plan said
+   `momentum=0.9`, read off M1's log line `MuSGD(lr=0.01, momentum=0.9)`.
+   That is only the starting value: Ultralytics' warmup moves every
+   parameter group's momentum from 0.8 to the `momentum` argument, which
+   auto leaves at its default of 0.937, and never resets it. M1's
+   checkpoint records `momentum: 0.937`, and two tiny CPU runs ended
+   warmup exactly where that predicts (S3).
 10. **(new) The final weights are the model; no early stopping**
     (changes M1 4). `best.pt` is picked on ExpDate validation, which can't
     see the hard dates, so it would pick for ExpDate's kind of date.
@@ -619,10 +626,10 @@ def schedule(n_listed: int, share: float = 1.0) -> dict:
 ### The recipe
 
 ```python
-RECIPE = dict(batch=16, fliplr=0.0, deterministic=True,   # as M1
-              optimizer="MuSGD", lr0=0.01, momentum=0.9,   # what auto chose for n640
-              warmup_bias_lr=0.0,                          # auto sets this too
-              patience=0, val=False)                       # no early stopping; validate at the end
+RECIPE = dict(batch=16, fliplr=0.0, deterministic=True,     # as M1
+              optimizer="MuSGD", lr0=0.01, momentum=0.937,   # what n640 trained with (decision 9)
+              warmup_bias_lr=0.0,                            # auto sets this too
+              patience=0, val=False)                         # no early stopping; validate at the end
 ```
 
 Everything else is Ultralytics' default, as in M1 (mosaic, HSV, ±10%
@@ -645,10 +652,14 @@ def loader_choice(speed: dict[str, float]) -> str:
     of it, the simplest (a, then b, then c)."""
 ```
 
-Epoch 2 is timed because epoch 1 includes start-up and caching, and the
-last epoch includes the final validation (Ultralytics' `results.csv` has
-a cumulative `time` column). An arm uses RAM cache only if 30 sampled
-photos, scaled to the arm's size, need under 60% of `SLURM_MEM_PER_NODE`.
+Epoch 2 is timed because epoch 1 includes the loader workers' start-up
+and the first, uncached read of every photo, and the last epoch includes
+the final validation (Ultralytics' `results.csv` has a cumulative `time`
+column). **(corrected in S3)** The RAM cache is filled before that
+clock starts, so it isn't in epoch 1's time either; it is in the wait
+for the first row, which the watchdog counts separately. An arm uses RAM
+cache only if 30 sampled photos, scaled to the arm's size, need under 60%
+of `SLURM_MEM_PER_NODE`.
 
 **2. Pilot gate** (before the generated arms):
 
@@ -698,10 +709,11 @@ and runs the first task that is **ready** (its data and inputs exist),
 
 ```
 stage 1: needs the derived sets (S2)
-  m2-smoke              1 epoch on 2% of base                           ~3 min
+  m2-smoke              1 epoch on 2% of base, then scored at once      ~3 min
+                        (synth-val missing), so scoring is tested on the GPU too
   m2-speed-a, -b, -c    3 epochs of base each                           ~5 min each
   → loader decision
-  m2-base-s0..s2, m2-rot-s0..s2                                         ~2 h each
+  m2-base-s0, m2-rot-s0, then the s1s, then the s2s                     ~2 h each
 
 stage 2: needs the generated sets (S6)
   m2-pilot              gen, seed 0, 10% of the budget, then scored     ~15 min
@@ -709,15 +721,19 @@ stage 2: needs the generated sets (S6)
   m2-gen-rot-1280-s0..s2   (longest first)                              ~3.3 h each
   m2-gen-s0, m2-gen-rot-s0, m2-gen10k-s0, then the s1s, then the s2s    ~2 h each
 
-scoring: needs a finished run and all four suite sets
-  suite.json for each run                                               ~3 min each
+scoring: needs a finished run and all four suite sets (the smoke: the three real ones)
+  suite.json for each run but the speed runs                            ~3 min each
   → the M2 detector, once every candidate is scored
 ```
 
 - **Claims.** A task is claimed by creating `results/runs/m2-claims/<task>/`
   with `os.mkdir`, which is atomic: of two jobs trying at once, exactly
   one succeeds. The folder holds the Slurm job id. A claim whose job is no
-  longer in `squeue` is stale, and is taken over.
+  longer in `squeue` is stale, and is taken over. **(added in S3)** So is
+  a claim holding this job's own id: it dates from before a Slurm requeue
+  (this cluster requeues a job whose node fails, `JobRequeue=1`). Of two
+  jobs taking over the same stale claim, one wins: each first creates a
+  takeover marker named after that claim, again with `os.mkdir`.
 - **Done** means the run's `run.json` says `finished` (training), or its
   `suite.json` exists (scoring). A run cut off midway is restarted from
   scratch in a new folder.
@@ -732,7 +748,21 @@ scoring: needs a finished run and all four suite sets
   longest epoch, `gen-rot-1280`'s, is about 6 minutes at M1's speed),
   marks it failed in its `run.json`, and moves on. A hung loader or a
   stuck read on the shared filesystem doesn't crash, so without this it
-  would hold the GPU until the time limit.
+  would hold the GPU until the time limit. **(added in S3)** Training
+  starting counts as progress too: a callback records it in `run.json`
+  once the label scan and the RAM cache are done. So caching has its own
+  2 hours and never counts against the first epoch, and a read stuck
+  during caching is still caught. `results.csv` gains a row every epoch
+  with `val=False` too (checked in S3).
+- **Failures** (added in S3): a task that fails twice (an error, or
+  stopped by the watchdog) is left for a person. The dry run lists it,
+  and it doesn't keep a job alive or earn a replacement.
+- **Time left** (added in S3): a task starts only if twice its estimate
+  fits before the job's end (`SLURM_JOB_END_TIME`). Otherwise the job
+  ends with tasks left and gets a replacement, so the time limit doesn't
+  cut runs short in normal running. A run cut off anyway (a much slower
+  run, a `scancel`) is restarted from scratch by a later job, once its
+  claim is stale.
 - **Decisions** are written to `results/runs/m2-decisions.json` as soon as
   their inputs are complete. `--dry-run` prints every task with its state
   (done, claimed by job N, ready, waiting for X).
@@ -740,7 +770,9 @@ scoring: needs a finished run and all four suite sets
   yet) gets a replacement at once: held if its data isn't ready, released
   if it is. At most two GPU jobs are kept. The replacement counts toward
   the 5-job cap (S1), which other jobs of ours share, so if `sbatch`
-  refuses, the chain logs it and exits normally.
+  refuses, the chain logs it and exits normally. **(added in S3)** An
+  error in the chain itself ends the job without a replacement, which
+  would only fail the same way.
 
 ---
 
@@ -999,10 +1031,45 @@ then `feat: slurm job for the derived sets`
   `squeue`, task readiness.
 - `tests/test_detection_eval.py`: on a small example, F2 picks a lower
   threshold than F1.
+- Details fixed while writing it:
+  - **The recipe is checked, not assumed.** At train start (after
+    `optimizer=auto` would have been resolved) a callback records what
+    Ultralytics actually uses: its arguments, the optimiser, the number
+    of training images (repeats included) and whether the RAM cache was
+    filled. The run stops there if any of it differs from the recipe and
+    schedule. At the end it records the momentum after warmup.
+    (`detector.train(..., keep, callbacks)`, `detector.applied(trainer)`,
+    `m2.recipe_problems()`.)
+  - **`--epochs` recomputes warmup and mosaic-off** from the epochs
+    given, so a 3-epoch speed run keeps mosaic on in epoch 2 (with
+    `base`'s 200-epoch schedule, `close_mosaic=20` would turn it off from
+    the start).
+  - `yolo.split_repeats("train_real*5")` and `m2.mix()`: an arm's lists
+    with the real photos' repeats, from the lists' line counts.
+    `m2.list_missing()`: a list is usable once its file exists and the
+    manifest that made it names it (S6's must also say complete).
+  - `detection_eval.pooled()`: several sets' matches as one, for the
+    pooled threshold.
+  - `score_suite(checkpoint, imgsz, out_dir, device)`: one dataset file
+    per set, kept in `out_dir/suite/`.
+  - `src/bestbefore/slurm.py` (new): `squeue`, `sbatch`, the job's time
+    left, and the claims, apart from the chain so a test can fake
+    `squeue`. `tests/test_slurm.py` holds those tests.
+  - `runs.update_run` writes `run.json` atomically (a temporary file,
+    then `os.replace`): the two jobs read each other's records, and half
+    a file would stop the other job's chain.
+  - `scripts/derive_sets.py --only lists`: writes `train_synth_clean`
+    without the 2.4 GB of turned copies, merged into the manifest as
+    `--only val` is. The laptop's smoke run needs it.
+  - `tests/test_detector.py`: M1 unchanged (`SETTINGS`, M1's
+    `data.yaml` text, and `train_detector.py`'s m1 path: same run
+    record, same calls); Ultralytics keeps a list's repeats.
 
 **Steps:**
 
-1. Laptop smoke: `python scripts/train_detector.py --milestone m2 --arm
+1. Laptop smoke: `python scripts/derive_sets.py --only lists` (the
+   same 11,844 names as the cluster's list, none of the 14 copies), then
+   `python scripts/train_detector.py --milestone m2 --arm
    base --epochs 1 --fraction 0.02 --device cpu --name smoke-laptop`,
    then `python scripts/score_suite.py --run smoke-laptop` (synth-val
    shows as missing).
@@ -1286,15 +1353,15 @@ about 1.5 GB, synth-val about 0.5 GB, checkpoints under 1 GB. About
 
 ```
 docs/              m2-synthetic-generator.md; datasets.md gains "Generated data (M2)"
-src/bestbefore/    m2.py, derived.py, synth/{spec,fonts,text,render,warp,compose,camera,make}.py;
-                   changed: config.py, detector.py, detection_eval.py, sets.py, runs.py
+src/bestbefore/    m2.py, derived.py, slurm.py, synth/{spec,fonts,text,render,warp,compose,camera,make}.py;
+                   changed: config.py, detector.py, detection_eval.py, sets.py, runs.py, yolo.py
 scripts/           derive_sets.py, score_suite.py, m2_chain.py, fetch_fonts.py, render_sheet.py,
                    generate.py, m2_report.py; changed: train_detector.py, eval_detector.py,
                    pull_cluster_results.sh
 slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sbatch,
                    m2_generate_check.sbatch
 experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/
-tests/             test_derived.py, test_m2_rules.py, test_synth_text.py, test_synth_render.py,
+tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_render.py,
                    test_synth_warp.py, test_synth_compose.py; changed: test_detection_eval.py,
                    test_detector.py
 results/           m2_detector.md   (committed; runs/ is not)
