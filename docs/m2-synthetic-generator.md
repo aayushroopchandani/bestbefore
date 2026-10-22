@@ -1,6 +1,7 @@
 # M2: Synthetic generator
 
-Planned 2026-10-21. Status: **planned**. Next: S1 (queue the GPU jobs).
+Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
+`72914` and B `72915` held). Next: S2 (the derived sets).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -835,6 +836,14 @@ release keeps the submit time (both measured in step 3).
 this plan.
 **Commit:** `feat: m2 GPU job script, submitted held`
 
+**Done 2026-10-22.** Job A is **`72914`**, job B **`72915`**: both
+`PENDING`, reason `JobHeldUser`, submitted at 20:41:43 with 24 CPUs,
+96 GB and 2 days, logging to `slurm/logs/m2-<id>.out`. The script on the
+cluster has the same SHA-256 as the committed one. `sbatch --test-only`
+gave an unheld copy a start of 2026-10-27 on `cn5`. That estimate leaves
+out the jobs ahead that are waiting only on their owners' caps, so the
+real start is likely later.
+
 ### S2. Derived sets · laptop, then a CPU job · *submits 1 CPU job*
 
 **Goal:** the turned training copies (for `rot`), the two real hard
@@ -938,8 +947,8 @@ then `feat: slurm job for the derived sets`
 2. `python scripts/m2_chain.py --dry-run` on the laptop.
 3. Commit, push. Cluster: `git pull`; once S2's job has finished,
    `python scripts/m2_chain.py --dry-run` must show stage 1 as ready and
-   stage 2 as waiting for the generated data. Then `scontrol release <A>`
-   and note its expected start (`squeue --start -j <A>`).
+   stage 2 as waiting for the generated data. Then `scontrol release 72914`
+   and note its expected start (`squeue --start -j 72914`).
 
 **Check:** the laptop smoke writes `run.json`, `data.yaml`, `last.pt` and
 `suite.json`.
@@ -1070,12 +1079,12 @@ cluster, checked, with GPU job B released the moment they're complete.
 
    ```bash
    ARRAY=$(sbatch --parsable slurm/m2_generate.sbatch)
-   sbatch --dependency=afterok:$ARRAY --export=ALL,GPU_JOB=<B> slurm/m2_generate_check.sbatch
+   sbatch --dependency=afterok:$ARRAY --export=ALL,GPU_JOB=72915 slurm/m2_generate_check.sbatch
    ```
 
 **Check:** the manifests say `complete: true` with 50,000 and 2,100
 photos; the measured shares are within 3 points of the spec; job B shows
-as eligible (`squeue -j <B>` reason no longer `JobHeldUser`).
+as eligible (`squeue -j 72915` reason no longer `JobHeldUser`).
 **Commits:** `feat: synth-val strata with held-out fonts`,
 `feat: generation job array and completeness check`,
 `docs: generated data in the dataset notes`
