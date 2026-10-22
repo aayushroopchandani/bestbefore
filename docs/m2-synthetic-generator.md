@@ -263,7 +263,9 @@ before. **(changes M1 n)** marks a departure from M1's decision n.
     is used only when our own estimate fits in 60% of the job's memory.
 16. **(new) Two GPU jobs share one work queue, and both are queued on
     day one, held** (changes M1's single holder job). See S1 and [The
-    chain](#the-chain-two-gpu-jobs-one-work-queue).
+    chain](#the-chain-two-gpu-jobs-one-work-queue). The cluster's caps
+    (2 running and 5 submitted, counting every job of ours: S1) allow
+    it, but the two run together only while nothing else of ours runs.
 17. **Store photos never go to the cluster** (as M1 7). Store scoring
     runs on the laptop's CPU. ExpDate test is scored once, for the M2
     detector's 3 seeds only (as M1 6).
@@ -728,7 +730,9 @@ scoring: needs a finished run and all four suite sets
   (done, claimed by job N, ready, waiting for X).
 - **A job that ends with tasks left** (time limit, crash, or nothing ready
   yet) gets a replacement at once: held if its data isn't ready, released
-  if it is. At most two GPU jobs are kept.
+  if it is. At most two GPU jobs are kept. The replacement counts toward
+  the 5-job cap (S1), which other jobs of ours share, so if `sbatch`
+  refuses, the chain logs it and exits normally.
 
 ---
 
@@ -746,18 +750,26 @@ before its work is ready.
 
 **Why held.** In M1 the placeholder job had to exit if it started before
 the chain existed, which would have lost its place. A job submitted with
-`--hold` keeps its place in this first-come, first-served queue but can't
-start; `scontrol release` makes it eligible when its work is ready.
+`--hold` can't start; `scontrol release` makes it eligible when its work
+is ready. It keeps its place because the queue is ordered by submit time
+alone (every job has priority 1, every partition the same tier) and a
+release keeps the submit time (both measured in step 3).
 
 1. **Laptop:** write `slurm/m2_gpu.sbatch`, commit, push.
 
    ```bash
    #!/bin/bash
    # Holds a place in the GPU queue for M2's training (docs/m2-synthetic-generator.md, S1).
-   #   sbatch --hold slurm/m2_gpu.sbatch      # twice: jobs A and B
-   #   scontrol release <job id>              # once its work is ready
-   # Slurm reads slurm/m2_chain.sh when the job starts, so the chain can be
-   # written after submitting. With nothing ready to run, the job exits.
+   #
+   #   cd ~/bestbefore && sbatch --hold slurm/m2_gpu.sbatch   # twice: jobs A and B
+   #   scontrol release <job id>                              # once its work is ready
+   #
+   # The queue is first come, first served by submit time, and a release
+   # keeps the submit time, so a held job keeps its place without starting
+   # early. Slurm copies this script at submission but reads
+   # slurm/m2_chain.sh when the job starts, so the chain can be written
+   # after submitting. If it isn't there yet, the job exits at once rather
+   # than keep a GPU idle.
    #SBATCH --job-name=m2
    #SBATCH --partition=gpu
    #SBATCH --gres=gpu:1
@@ -778,8 +790,11 @@ start; `scontrol release` makes it eligible when its work is ready.
 
    24 CPUs and 96 GB are half a GPU node's CPUs and a fifth of its
    memory: room for 24 loader workers and a RAM cache of the smaller arms.
-   These can't be raised once the job waits, so they're set generously
-   now.
+   They fit beside any GPU job queued on 2026-10-22 (8 to 23 CPUs, 110 to
+   230 GB each). The plan said they couldn't be raised once the job
+   waits; step 3 found they can (`scontrol update`), so S3 and S6 can
+   adjust them before releasing a job. Only the script is fixed at
+   submission, which is why it does nothing but start the chain.
 2. **Cluster, login node:**
 
    ```bash
@@ -789,10 +804,32 @@ start; `scontrol release` makes it eligible when its work is ready.
    squeue -u $USER -o "%.10i %.6j %.9T %.16r"
    ```
 
-3. **Read the limits** and write them here:
-   `sacctmgr show qos limit_gpu_qos format=Name,MaxJobsPU,MaxSubmitPU`
-   (can 2 GPU jobs wait while 2 CPU jobs run?) and `sinfo -s` (the CPU
-   partitions S2 and S6 use).
+3. **Read the limits** and write them here. Measured 2026-10-22 with
+   `sacctmgr`, `scontrol show config`, `sprio`, `sinfo`, and three
+   throwaway jobs on `short` (held, never run, cancelled at once):
+
+   | What | Measured | What it means for M2 |
+   |---|---|---|
+   | job caps | `limit_gpu_qos` is our account's only QOS, so it covers **every** job of ours on every partition, CPU jobs and other projects' jobs included: **2 running**, **5 submitted** (waiting + running) | A, B and every CPU job share 2 run slots and 5 queue slots |
+   | job arrays | each task counts as one job: with 1 job queued, a 6-task array was refused (`QOSMaxSubmitJobPerUserLimit`), a 4-task one accepted | S6's 51-task array can't be submitted (note in S6) |
+   | queue order | every job has priority 1 (`priority/multifactor`, all weights 0), every partition priority tier 1; Slurm 23.11, backfill | first come, first served by submit time |
+   | hold, then release | a held job kept its submit time after `scontrol release`, at priority 1 | a released job keeps its place |
+   | changing a waiting job | `scontrol update` raised a held job's CPUs, memory and time limit | S1's resources aren't final |
+   | CPU partitions | `short`: `cn1`–`cn4`, 6 h; `defaultq`: `cn1`–`cn4`, 3 days; 48 CPUs and about 500 GB per node | S2's derive job (16 CPUs, 1 h) fits `short` |
+
+   **Can 2 GPU jobs wait while 2 CPU jobs run?** Yes: that is 4 of the
+   5 submitted. But only 2 jobs of ours run at once, so while 2 CPU jobs
+   run neither GPU job can start, and A and B run together only while
+   nothing else of ours runs. A job from another project of ours was
+   running on 2026-10-22 (ends 2026-10-23), so A, B and S2's derive job
+   bring us to 4 of 5.
+
+   **The GPU queue on 2026-10-22:** all four H100s are in jobs of up to
+   7 days; the first ends about 2026-10-25 22:45. 10 GPU jobs from 3
+   other users, submitted earlier, wait ahead of A and B (each user runs
+   at most 2). So job A is unlikely to start before 2026-10-26 and may
+   wait a week or more. S2 and S3 have time; releasing A as soon as S3 is
+   done costs nothing.
 
 **Check:** both jobs `PENDING`, reason `JobHeldUser`. Their ids go into
 this plan.
@@ -990,6 +1027,14 @@ that passes a look check.
 
 **Goal:** the 50,000 training photos and the 2,100-photo synth-val on the
 cluster, checked, with GPU job B released the moment they're complete.
+
+> **To revise when S6 is written (found in S1).** Each array task counts
+> as one job toward the 5-job cap, and jobs A and B already take 2 of the
+> 5, so the 51-task array below can't be submitted. Recommended instead:
+> one job on `short` using a whole node (48 CPUs, `--workers 48`), still
+> split into the same `--task` ranges inside the job, so any split gives
+> the same photos. At S6's estimate of 0.2 s per photo per CPU, that's
+> about 4 minutes.
 
 **Code:**
 
@@ -1191,9 +1236,13 @@ results/           m2_detector.md   (committed; runs/ is not)
 - **New text pasted over unlabelled text in a background.** Placement
   avoids every labelled box and prefers plain surfaces; ExpDate labels
   every date, so no date is hidden under a new block.
-- **A released hold may not keep its place** on this cluster. Check
-  `squeue --start` after releasing job A. If it doesn't, the next
-  milestone goes back to M1's unheld placeholder.
+- **A released hold may not keep its place** on this cluster. S1's test
+  says it does (the queue is ordered by submit time, and a release keeps
+  it), but check `squeue --start` after releasing job A. If it doesn't,
+  the next milestone goes back to M1's unheld placeholder.
+- **The GPU queue is long** (S1: all four H100s in jobs of up to 7 days,
+  10 GPU jobs ahead of ours on 2026-10-22). Job A may wait a week or
+  more. The two jobs keep their place; nothing else is changed for it.
 - **RAM cache bigger than the job's memory.** Ultralytics checks the
   node's free memory, not the job's limit, so the job would be killed
   mid-run. Our own check keeps the cache under 60% of

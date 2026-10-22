@@ -176,8 +176,16 @@ this repo.
   48 CPUs and about 500 GB RAM each, shared with other users). Partitions
   with GPUs: `gpu` (3-day limit), `medium` (2 days), `long` (7 days).
   CPU-only: `short` (6 h), `defaultq` (default, 3 days), `smp` (7 days).
-  QOS `limit_gpu_qos` allows **2 jobs at a time** per user; one H100 per
-  job is plenty for every model here.
+  One H100 per job is plenty for every model here.
+- **Job limits** (checked 2026-10-22): QOS `limit_gpu_qos` is the
+  account's only QOS, so it covers **every** job on every partition,
+  CPU-only ones and other projects' too: **2 running** and **5 submitted**
+  (waiting + running) per user. Each task of a job array counts as one
+  job.
+- **Queue:** first come, first served by submit time (every job has
+  priority 1, every partition the same tier). A job submitted with
+  `--hold` keeps its submit time when released, and a waiting job's CPUs,
+  memory and time limit can be changed with `scontrol update`.
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. **There is
@@ -203,7 +211,8 @@ Conventions:
   `~/bestbefore-data/`. (The original rule said "on scratch, never in
   home", but this cluster has no scratch.)
 - Synthetic generation and OCR labelling run as **job arrays**: every image
-  is independent.
+  is independent. With the 5-job cap, an array has a few tasks, each using
+  many CPUs.
 - Every run records its config, git commit and random seed.
 
 ## Repo layout
