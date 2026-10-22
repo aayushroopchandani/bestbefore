@@ -1,7 +1,8 @@
 # M2: Synthetic generator
 
 Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
-`72914` and B `72915` held). Next: S2 (the derived sets).
+`72914` and B `72915` held); S2 done 2026-10-22 (the derived sets, on both
+machines). Next: S3 (the M2 recipe and the chain).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -933,6 +934,35 @@ machines.
 41 photos.
 **Commits:** `feat: GENERATED_DIR and the derived sets (turned copies, 2×2 grids)`,
 then `feat: slurm job for the derived sets`
+
+**Done 2026-10-22.** All from commit `7b3fc0b`, clean tree, seed 0:
+
+| Set | Photos | Dates | Turned 90° / 270° | Worst box error after reading back |
+|---|---:|---:|---:|---:|
+| `real_val_rot` | 165 | 187 | 75 / 90 | 0.0 px |
+| `real_val_small` | 41 | 186 | | 0.002 px |
+| `train_synth_clean` | 11,844 | | | (a list) |
+| `real_rot` | 937 | 1,057 | 442 / 495 | 0.0 px |
+| `synth_rot` | 11,844 | 16,652 | 5,910 / 5,934 | 0.0 px |
+
+- **The boxes are right.** Breaking the formulas on purpose (turning the
+  wrong way, mirroring, swapping a grid's rows and columns, dropping
+  the centring) fails `tests/test_derived.py` every time. The laptop's
+  contact sheets show every turned and gridded box on its date.
+- **The sets measure what they should** (`box_stats.py`): every date box
+  in `real-val-rot` is tall (0% in `real-val`), and in `real-val-small`
+  the median date's short side at 640 px drops from 16.0 to 8.0 px, with
+  51.6% under 8 px (0% at 1280 px). The left-over photo is
+  `img_00500.jpg`, the largest.
+- **The same on both machines:** the validation sets' label files are
+  byte-identical on the laptop and the cluster.
+- **Checked on the cluster:** every list matches its image and label
+  folders, none of the 24,831 listed photos lacks a label file, and none
+  of the 14 copies is left in either synthetic list.
+- **Cost:** CPU job `72917` took 2.5 minutes on 16 CPUs (`short`, `cn2`).
+  The photos take **2.8 GB**, not the 1.5 GB estimated: re-saving at
+  quality 95 makes `synth_rot` (2.4 GB) twice the size of the synthetic
+  originals. That's fine against 950 GB of quota.
 
 ### S3. The M2 recipe and the chain · laptop · *releases GPU job A*
 
