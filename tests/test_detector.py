@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from bestbefore import detector, m2, runs
+from bestbefore import detector, m2, runs, sets
 from bestbefore.derived import write_list, write_yolo
 from bestbefore.detection_eval import Prediction
-from bestbefore.samples import Box
+from bestbefore.samples import Box, Sample
 from bestbefore.yolo import CLASSES
 
 # What dataset_yaml wrote for M1's runs before M2 changed it (commit 7b3fc0b).
@@ -301,3 +301,55 @@ def test_train_detector_m2_checks_the_recipe_when_training_starts(
         assert record["momentum_after_warmup"] == [0.937]
     else:
         assert record["status"] == "running"        # the chain marks it failed
+
+
+def _fake_ultralytics(monkeypatch) -> None:
+    fake = types.ModuleType("ultralytics")
+    fake.YOLO = lambda weights: SimpleNamespace(weights=weights)
+    monkeypatch.setitem(sys.modules, "ultralytics", fake)
+
+
+def test_score_suite_pools_the_real_sets_and_marks_missing_ones(monkeypatch, tmp_path):
+    _m2_base_lists(tmp_path, monkeypatch)
+    for name in ("real_val_rot", "real_val_small"):
+        write_list(m2.list_path(name), [Path("/d/1.jpg")])
+    _fake_ultralytics(monkeypatch)
+    date, wrong = (0.1, 0.4, 0.3, 0.45), (0.6, 0.6, 0.7, 0.65)
+    # One date per set, found at a different confidence in each, plus a false box.
+    found_at = {"real-val": 0.9, "real-val-rot": 0.4, "real-val-small": 0.2}
+    samples = {name: [Sample(id=name, image=Path(f"/{name}.jpg"), width=100, height=100,
+                             boxes=(Box("date", date),))] for name in found_at}
+    validated = {}
+
+    def fake_val_metrics(model, data, split, imgsz, device, project, name, conf):
+        validated[name] = data.read_text()
+        return {"map50": {"date": 0.9}}
+
+    monkeypatch.setattr(m2, "suite_missing",
+                        lambda name: "synth_val not made yet (S6)" if name == "synth-val" else None)
+    monkeypatch.setattr(sets, "load_set", lambda name: samples[name])
+    monkeypatch.setattr(detector, "predict_samples", lambda model, ss, imgsz, device: {
+        s.id: [Prediction("date", date, found_at[s.id]), Prediction("date", wrong, 0.5)]
+        for s in ss})
+    monkeypatch.setattr(detector, "_val_metrics", fake_val_metrics)
+
+    suite = detector.score_suite(tmp_path / "ckpt" / "run" / "weights" / "last.pt", 640, tmp_path)
+    # Alone, real-val would keep only boxes at 0.9 (F2 = 1). Pooled, every
+    # date counts: keeping down to 0.2 gives P = 1/2, R = 1, F2 = 0.833.
+    assert suite["threshold"] == pytest.approx(0.2)
+    assert suite["f2_at_threshold"] == pytest.approx(0.8333, abs=1e-4)
+    assert suite["synth-val"] == {"missing": "synth_val not made yet (S6)"}
+    assert suite["missing"] == {"synth-val": "synth_val not made yet (S6)"}
+    for name in found_at:
+        at5 = suite[name]["iou0.5"]
+        assert (at5["dates_found"], at5["false_boxes_per_photo"]) == (1, 1.0)
+        assert suite[name]["map50"] == {"date": 0.9}
+    assert "val: val.txt" in validated["real-val"]
+    assert f'val: "{m2.list_path("real_val_rot")}"' in validated["real-val-rot"]
+    assert (tmp_path / "suite" / "real-val-small.yaml").exists()
+
+    # Without all three real sets there is no threshold.
+    monkeypatch.setattr(m2, "suite_missing",
+                        lambda name: None if name == "real-val" else f"{name} not made yet")
+    with pytest.raises(FileNotFoundError, match="real-val-rot"):
+        detector.score_suite(tmp_path / "last.pt", 640, tmp_path)

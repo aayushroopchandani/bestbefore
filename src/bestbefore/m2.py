@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import runs
 from .config import expdate_dir, generated_dir
 from .derived import read_list
 from .images import upright_size
@@ -328,8 +329,24 @@ def decide_detector(suites: dict[str, list[dict]]) -> str:
     return next(a for a in eligible if at_least(map50_date(suites[a], HARD), best - NOISE))
 
 
+# --- Run records ----------------------------------------------------------
+
+def run_dirs(name: str, root: Path | None = None) -> list[Path]:
+    """Every attempt at M2 run `name`, oldest first: <runs>/<stamp>-m2-<name>/.
+    The name must match whole: base-s0 is not gen-base-s0."""
+    base = root or runs.RUNS_DIR
+    return sorted(d for d in base.glob(f"*-m2-{name}") if d.name[16:] == f"m2-{name}")
+
+
+def finished_run(name: str, root: Path | None = None) -> Path | None:
+    """The newest attempt at this run whose run.json says it finished."""
+    return next((d for d in reversed(run_dirs(name, root))
+                 if (read_json(d / "run.json") or {}).get("status") == "finished"), None)
+
+
 def read_json(path: Path) -> dict | None:
-    """A JSON file, or None if it doesn't exist (yet)."""
+    """A JSON file, or None if it doesn't exist (yet). Records are written
+    atomically (runs.write_json), so one that exists is whole."""
     try:
         return json.loads(path.read_text())
     except FileNotFoundError:

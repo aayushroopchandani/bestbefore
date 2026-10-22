@@ -13,8 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import checkpoint_dir
-from .detection_eval import Matches, Prediction, best_threshold, evaluate, summary
+from .config import checkpoint_dir, expdate_dir
+from .detection_eval import Matches, Prediction, best_threshold, evaluate, pooled, summary
 from .images import load_upright
 from .samples import Sample
 from .yolo import CLASSES, split_repeats
@@ -210,15 +210,77 @@ def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | Non
     if tags:
         out["by_tag"] = {t: _summaries(at_05, at_03, conf, {t}) for t in tags}
     if data is not None:
-        metrics = model.val(data=str(data), split=split, imgsz=imgsz, batch=16,
-                            device=device, plots=False, verbose=False,
-                            project=str(project) if project else None, name=f"val-{split}")
-        box = metrics.box
-        classes = np.asarray(box.ap_class_index).tolist()
-        out["map50"] = {CLASSES[c]: round(float(v), 4) for c, v in zip(classes, box.ap50)}
-        out["map50_95"] = {CLASSES[c]: round(float(v), 4) for c, v in zip(classes, box.ap)}
-        out["ultralytics_date_recall_at_threshold"] = ultralytics_recall_at(metrics, conf)
+        out.update(_val_metrics(model, data, split, imgsz, device, project, f"val-{split}", conf))
     return out
+
+
+def score_suite(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dict:
+    """Score an M2 run on its validation suite (docs/m2-synthetic-generator.md,
+    "The validation suite").
+
+    Every set is predicted with rect=False, as M1 D3. The threshold is the
+    one that maximises F2 for dates over the three real sets pooled
+    (decision 11), kept unrounded. Per set: found at IoU 0.5 and 0.3 at
+    that threshold, boxed at any confidence, precision, false boxes per
+    photo, and Ultralytics' mAP per class through the set's own dataset
+    file (kept in out_dir/suite/); per stratum too where photos carry tags
+    (synth-val, from S6). A set that isn't made yet is marked missing,
+    never skipped silently; without all three real sets there is no
+    threshold, so that raises.
+    """
+    from ultralytics import YOLO
+
+    from . import m2, sets
+
+    missing = {name: why for name in m2.SUITE if (why := m2.suite_missing(name))}
+    lacking = [name for name in m2.THRESHOLD_SETS if name in missing]
+    if lacking:
+        raise FileNotFoundError(f"the threshold needs {', '.join(lacking)}: "
+                                + "; ".join(missing[n] for n in lacking))
+    model = YOLO(str(checkpoint))
+    matched = {}
+    for name in m2.SUITE:
+        if name not in missing:
+            samples = sets.load_set(name)
+            preds = predict_samples(model, samples, imgsz, device)
+            matched[name] = samples, evaluate(samples, preds, 0.5), evaluate(samples, preds, 0.3)
+    conf, f_beta = best_threshold(pooled([matched[n][1] for n in m2.THRESHOLD_SETS]),
+                                  beta=m2.THRESHOLD_BETA)
+    out = {"checkpoint": str(checkpoint), "imgsz": imgsz, "threshold": conf,
+           "threshold_rule": f"best F{m2.THRESHOLD_BETA:g} for dates on "
+                             f"{' + '.join(m2.THRESHOLD_SETS)}, pooled",
+           "f2_at_threshold": round(f_beta, 4), "missing": missing}
+    (out_dir / "suite").mkdir(parents=True, exist_ok=True)
+    for name in m2.SUITE:
+        if name in missing:
+            out[name] = {"missing": missing[name]}
+            continue
+        samples, at_05, at_03 = matched[name]
+        out[name] = _summaries(at_05, at_03, conf)
+        tags = [t for t in dict.fromkeys(s.tag for s in samples) if t]
+        if tags:
+            out[name]["by_tag"] = {t: _summaries(at_05, at_03, conf, {t}) for t in tags}
+        listed = m2.list_spec(m2.SUITE[name])
+        # Ultralytics wants a train entry too; validating never reads it.
+        data = dataset_yaml(expdate_dir() / "yolo", [listed], out_dir / "suite" / f"{name}.yaml",
+                            val=listed)
+        out[name].update(_val_metrics(model, data, "val", imgsz, device,
+                                      checkpoint.parent.parent / "suite", name, conf))
+    return out
+
+
+def _val_metrics(model, data: Path, split: str, imgsz: int, device, project: Path | None,
+                 name: str, conf: float) -> dict:
+    """Ultralytics' mAP per class on one split of a dataset file, and its own
+    date recall at `conf`, to cross-check ours."""
+    metrics = model.val(data=str(data), split=split, imgsz=imgsz, batch=16,
+                        device=device, plots=False, verbose=False,
+                        project=str(project) if project else None, name=name)
+    box = metrics.box
+    classes = np.asarray(box.ap_class_index).tolist()
+    return {"map50": {CLASSES[c]: round(float(v), 4) for c, v in zip(classes, box.ap50)},
+            "map50_95": {CLASSES[c]: round(float(v), 4) for c, v in zip(classes, box.ap)},
+            "ultralytics_date_recall_at_threshold": ultralytics_recall_at(metrics, conf)}
 
 
 def _summaries(at_05: Matches, at_03: Matches, conf: float, tags: set | None = None) -> dict:
