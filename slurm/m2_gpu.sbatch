@@ -15,7 +15,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=96G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --output=slurm/logs/%x-%j.out
 
 echo "started $(date '+%F %T') on $(hostname)"
