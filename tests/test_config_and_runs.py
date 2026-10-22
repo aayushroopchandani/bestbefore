@@ -21,6 +21,11 @@ def test_checkpoint_dir(monkeypatch):
     assert config.checkpoint_dir() == config.REPO_ROOT / "data" / "checkpoints"
 
 
+def test_generated_dir_expands_home(monkeypatch):
+    monkeypatch.setenv("GENERATED_DIR", "~/bestbefore-data/generated")
+    assert config.generated_dir() == config.Path.home() / "bestbefore-data" / "generated"
+
+
 def test_run_record(monkeypatch, tmp_path):
     monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
     run_dir = runs.start_run("demo", {"split": "real-test"}, seed=0)

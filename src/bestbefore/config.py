@@ -41,3 +41,8 @@ def scanify_dir() -> Path:
 def checkpoint_dir() -> Path:
     """Where training writes model weights and plots (never into git)."""
     return _path("CHECKPOINT_DIR")
+
+
+def generated_dir() -> Path:
+    """Where M2's derived and generated photos go (never into git)."""
+    return _path("GENERATED_DIR")
