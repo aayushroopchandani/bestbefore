@@ -5,8 +5,10 @@ Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
 machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A released,
 expected to start between 2026-10-25 and about 2026-11-09); S4 done
 2026-10-23 (fonts, text and rendering; the owner's two questions
-answered the same day: 7 and 9 dot rows, times boxed as `code`). Next:
-S5 (geometry, composing, camera).
+answered the same day: 7 and 9 dot rows, times boxed as `code`); S5 done
+2026-10-23 (geometry, composing, camera; the 500-photo sample looked at,
+two findings for the owner: blocks off the pack, faint dates). Next: S6
+(generate at scale).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -1582,6 +1584,167 @@ that passes a look check.
 **Commits:** `feat: geometry for text layers (turn, tilt, perspective, curve)`,
 `feat: compose generated dates onto ExpDate backgrounds`,
 `feat: camera effects for generated photos`
+
+**Done 2026-10-23.** Code from `682ea21` to `edfe264`; 431 tests pass (102
+new: `test_synth_warp.py` 67, `test_synth_compose.py` 23,
+`test_synth_camera.py` 12), and each commit's tests pass in a checkout of
+that commit alone. The sample, `gen-sample`: 500 photos from `edfe264`
+(clean tree), seed 3, in `$GENERATED_DIR/m2/gen/` with
+`manifests/gen-sample.json` (run `20261023-201420-m2-generate-gen-sample`);
+its contact sheet is `results/runs/20261023-201527-contact-gen-sample/`.
+Two findings wait for the owner (below); nothing in the plan was changed
+for them. What was found:
+
+- **The sample.** 701 blocks placed; 6 skipped for want of a free place
+  (0.8%), 17 placed after shrinking to 80%, none drawn again for lost
+  ink. 1,129 generated dates, 2.26 a photo (the spec gives 1.4 blocks ×
+  1.6 dates = 2.24), beside the backgrounds' own 641. Boxes: 1,770 date,
+  939 due, 494 prod, 412 code. The JPEGs take 175 kB a photo and the
+  sidecar 1.6 kB, so S6's 50,000 photos come to about 8.7 GB (the plan
+  allowed 12.5 GB). Backgrounds to draw from: 930 real and 7,255
+  synthetic, 711 and 3,143 of them for small print, as the plan counted.
+- **Every share, as drawn** (`generate.py`'s table; "drawn" counts the
+  skipped blocks too, geometry and ink the placed ones):
+
+  | Share | Spec | Sample | n |
+  |---|---:|---:|---:|
+  | photos with 2 blocks | 40% | 41.4% | 500 |
+  | background real / synthetic | 50% / 50% | 47.8% / 52.2% | 500 |
+  | kind: single / pair / panel / range / relative | 35 / 35 / 20 / 5 / 5% | 34.4 / 37.3 / 19.1 / 4.5 / 4.7% | 707 |
+  | style: solid / dot-matrix / label / embossed | 40 / 35 / 15 / 10% | 42.7 / 35.5 / 13.3 / 8.5% | 707 |
+  | size: normal / small | 70 / 30% | 70.6 / 29.4% | 707 |
+  | upright / tilted / sideways | 55 / 15 / 30% | 55.2 / 16.7 / 28.1% | 701 |
+  | flat / cylinder / bend | 75 / 15 / 10% | 74.0 / 16.6 / 9.4% | 701 |
+  | perspective | 40% | 38.7% | 701 |
+  | colourful / low-contrast ink (solid, dot-matrix) | 15 / 20% | 13.2 / 20.3% | 547 |
+  | a scratch (inked blocks) | 10% | 9.5% | 641 |
+  | month as a word (dates outside ranges) | 45% | 46.8% | 1,065 |
+  | full month name (of month words) | 50% | 49.4% | 498 |
+  | a day printed: numeric / month-word dates | 70 / 40% | 73.4 / 39.2% | 567 / 498 |
+  | an ordinal (month words with a day) | 50% | 59.5% | 195 |
+  | uneven / dim / glare / defocus / motion / cast | 30 / 10 / 15 / 40 / 10 / 30% | 34.6 / 10.6 / 16.0 / 41.2 / 11.0 / 29.6% | 500 |
+  | noise (with every dim photo) | 55% | 55.8% | 500 |
+
+  Three are more than 3 points off: ordinals (+9.5, of 195), uneven light
+  (+4.6) and a day on numeric dates (+3.4, where the two dates of a pair
+  share one format). That is 2.6, 2.2 and under 2 standard errors, and
+  the tests hold each within 3 points over 10,000 draws: noise in 500
+  photos. S6's check measures them on 50,000.
+- **Box stats** (`box_stats.py gen-sample real-val`): 17.9% of all date
+  boxes are tall (real-val 0%). The backgrounds' own dates are almost
+  never tall, so that is about 28% of the generated dates, as many as the
+  blocks drawn sideways (28.1%; spec 30%). Date box area, p10 / median /
+  p90: 0.12 / 0.55 / 2.21% of the photo (real-val 0.29 / 0.45 / 0.95%).
+  83% of the photos show 3 or more dates (real-val: 87% show one): 2.26
+  generated and 1.28 of the background's own. That follows from 1 or 2
+  blocks with pairs and panels, as designed.
+- **A box is taller than its digits.** 23.9% of the generated dates have
+  digits under 8 px at 640 px input (the bands give 30% × 80% = 24%), but
+  only 11.5% of their boxes have a short side under 8 px (7.9% of all date
+  boxes). An upright rectangle round a date is 1.3 times its digits'
+  height when upright (±5° across a long date, ordinals, dots), 1.5
+  times sideways and 2.8 times tilted. The store's small-print rule
+  measures the box, so generated small print, measured as the store's
+  is, comes out somewhat bigger than its digits.
+- **The same bytes however the work is split.** One worker and four
+  write the same 1,001 files (500 JPEGs, 500 label files, the sidecar),
+  and so did runs before and after a refactor of `make.py`. Every label
+  file equals the one rebuilt from its sidecar line.
+- **Speed, one CPU** (the laptop's M2, OpenCV's threads off, other
+  programs open): **54 ms a photo** on average, median 45, 95th
+  percentile 123, slowest 318. By stage: drawing the blocks (render,
+  warp, defects, shrink, boxes) 17.4 ms, camera 14.2, decoding and
+  shrinking the background 7.2, JPEG 6.5, blending 4.3, reading the
+  surface 3.9, writing 0.4, placing 0.3. Loading the 8,185 backgrounds'
+  sizes and labels takes 3 s, once per run. Four workers made the 500 in
+  11.3 s (78 ms a photo each: they share the laptop's mixed cores). So a
+  photo takes about a quarter of S6's 0.2 s budget. The slow tail is
+  large dot-matrix blocks and bends at 1,600 px: a bend's map costs 19 ms
+  a block, after computing it in float32 on a row and a column (35 ms
+  before). Noise over the whole photo costs 25 ms when it is drawn. A
+  first timing with more running on the laptop gave 67 ms.
+- **The tests catch what they should.** 31 deliberate bugs, one at a
+  time. 29 are caught: quarter turns swapped or misplaced, a negative
+  margin round a patch, patches off the grid, a clockwise angle, bends upside down, bounds from a curved
+  patch's corners only, a cylinder's inverse that isn't its forward
+  map's, an embossed tone resampled without its alpha, no perspective, no
+  margin round a placed block, a block running off the photo, the
+  plainest never preferred, validation backgrounds allowed, no
+  shrinking, dark and light ink swapped, low contrast ignoring opacity,
+  light ink ignoring shadows, dark ink laid over, ink spread with no room,
+  no uneven density, no scratch, small print on any background, the
+  background's labels first, a date kept without its box, noise from
+  global random state, dim light without noise, glare never near a block,
+  a radial ramp inverted. The other two moved a patch's outline 4 px
+  inward, which the patch's slack (1 px beyond its outer pixels, a 2 px
+  margin) and every sprite's blank border absorb, so no ink was lost;
+  moved 7 px, both are caught. **Six first got through:** checking that a
+  warped patch's edges are blank proves nothing, because the patches are
+  padded back onto the grid afterwards (S4's lesson about borders,
+  again). Each warp step is now also run with plenty of room round every
+  patch and must keep the same ink, as S4's relief test does; and ink
+  spread from 1 px inside its patch must keep all of it.
+- **By eye: the boxes.** On the contact sheet and, for 10 photos, every
+  block at full size with the sidecar's text beside it: every date, due,
+  prod and code token has its box, tight on its warped ink, and no
+  distractor has one (`Net Wt. 18.7 kg`, `Lic. No. …`, `MRP Rs. …`,
+  `(Incl. of all taxes)`, `24 months from Mfg.`). Nothing is cut off. Two
+  boxes looked missing on the sheet: grey `code` boxes on grey stickers,
+  there at full size. ExpDate's synthetic backgrounds bring their own
+  pasted dark polygons and their own text (an impossible `2024/11/31`, a
+  time left without a box), which M1 trained on too.
+- **Changed after the look check: the light on a sticker.** The first
+  estimate of the surface's local brightness, its luminance blurred over
+  2% of the long side and darkening down to 0.4, printed the background
+  onto labels: a can lid's dark rings and an ExpDate polygon showed
+  through white stickers, an obvious sign of pasting. A photo can't tell
+  a shadow from dark print, but light varies slowly and print has edges:
+  the light is now the luminance's brightest within 5% of the long side,
+  blurred over 2%, darkening ink and stickers down to 0.6 at most. Seen
+  again on the same photos, the ringed sticker is plain; over the
+  polygon, which is wider than 5%, a soft shade of up to 40% remains,
+  like a shadow. A test checks that print narrower than the window isn't
+  taken for shadow and a wide shadow still is. These are numbers S5
+  fixed, not the plan's shares.
+- **For the owner (1): blocks off the pack.** On the 50 photos of the
+  sheet, with each generated block outlined, 20 of 72 blocks lie mostly
+  off the pack: on hands, floors, tables, shelves and walls, mostly near
+  the photo's edges. The plainest of 20 free places, taken 70% of the
+  time, is often not the pack: a hand or an out-of-focus shelf has a lower
+  gradient than printed packaging. So crisp text lands on blurred
+  surfaces, a sign of pasting a model could learn instead of the date.
+  The plan's rule stands until the owner decides.
+- **For the owner (2): faint dates.** The same measure on generated and
+  real dates, the contrast inside each date box (Otsu's split of its
+  luminance: the bright half's mean minus the dark half's, 0 to 255):
+
+  | Dates | n | median | p10 | under 20 | under 30 |
+  |---|---:|---:|---:|---:|---:|
+  | generated (gen-sample) | 1,129 | 60 | 21 | 9.2% | 17.4% |
+  | real (`real-val`) | 187 | 122 | 68 | 1.1% | 3.7% |
+
+  Low-contrast ink lands where the plan puts it (medians 31 to 36: 8 to
+  15% of 255), but stacked with faint dots, uneven density and opacity, a
+  third of it falls under 20 (solid 35%, dot-matrix 32%), next to 3% of
+  solid and 9% of dot-matrix dates without it. So about 1 generated date
+  in 11 is boxed round almost nothing visible, against 1 in 90 real ones.
+  The shares are the plan's and stand until the owner decides.
+- **Not checked:** that the cluster draws the same pixels (Pillow,
+  FreeType, libjpeg and OpenCV builds; S6 compares the render sheet, and
+  can compare a few generated photos too); the speed on the cluster's
+  CPUs (S6's step 1); more than these 50 photos by eye (the rest by the
+  tests and the shares only); the held-out fonts and synth-val's strata
+  (S6); whether either finding hurts a model (the pilot and the suite
+  would show it, at a cost of GPU time).
+- **For S6:** `generate.py --task N` can make photos `i` of its range
+  with `make.make_one(i, GEN, pool, SET_SEEDS["gen"])` and write one
+  sidecar file per task, in photo order: any split gives the same bytes.
+  `--check` can rebuild every label file from its sidecar line
+  (`make.label_text`), compare them byte for byte, and measure the shares
+  with `make.shares`. synth-val's overrides set `fonts="held-out"` and
+  `backgrounds=(("val", 1.0),)`; `compose.forbidden` allows validation
+  photos in the `val` list only. Loading the background pool takes about
+  3 s, once per job.
 
 ### S6. Generator, part 3: generate at scale · laptop, then a CPU job array · *releases GPU job B*
 
