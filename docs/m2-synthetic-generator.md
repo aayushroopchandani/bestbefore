@@ -1478,6 +1478,96 @@ that passes a look check.
 - `tests/test_synth_compose.py`: a placed block never overlaps an
   existing box; every box lies inside the photo; YOLO lines round-trip;
   the same `i` gives the same JPEG bytes.
+- Details fixed while writing it:
+  - **Warped sprite by sprite.** Each sprite is resampled onto its own
+    new patch, big enough for all of its warped ink: that is the plan's
+    "enlarged canvas", per sprite, so no canvas the size of the whole
+    block is made. The patches go back onto the 4× grid
+    (`render.aligned`, `render.assemble`, made public from S4's
+    `_aligned` and `_placed`), so a box is still the tight rectangle
+    around its token's shrunk ink. The order is the one a pack is
+    printed, turned and photographed in: the surface (cylinder or bend),
+    then the exact quarter turn, then the angle left over and the
+    perspective as one homography, so one resampling.
+  - **`make_one(i, spec, pool, set_seed)`**: the font split and the
+    background lists are fields of `GenSpec` (`fonts`, `backgrounds`), so
+    the spec's hash covers them and synth-val's overrides (S6) set them
+    with the rest. They are the plan's separate `fonts` argument.
+  - **Left open by the plan, fixed by rule** (in `spec.py`; nothing looked
+    at the store photos):
+    - cylinder: the block's width wraps 40 to 100° of a can's round, both
+      ends within 70° of facing the camera (so an end is squeezed to no
+      less than cos 70° = 0.34 of its width), seen square on;
+    - bend: the lines follow circles round one centre, below the block
+      (arching up, like the top edge of a cap) or above it, half each;
+      the middle line covers 20 to 70° of its circle, whose radius is at
+      least the block's height so no line folds;
+    - perspective: the block's plane turned 10 to 30° about any axis in
+      it, seen from 2 to 5 block diagonals: its near side up to about
+      1.3× its far side;
+    - inks (RGB): black (24, 24, 27), dark blue (30, 45, 110), brown
+      (90, 55, 30), dark red (120, 25, 32); white (246, 246, 242), cream
+      (238, 228, 196), silver (196, 199, 205), yellow (242, 208, 64). A
+      colourful ink is any hue at saturation 0.6 to 1.0, value 0.35 to 0.7
+      as dark ink and 0.75 to 1.0 as light ink;
+    - a surface takes dark ink when its mean luminance (Rec. 601, 0 to 1)
+      under the block is at least 0.5;
+    - low contrast's "8 to 15% apart" is the luminance gap, 0 to 1, as
+      blended at the ink's opacity;
+    - ink defects: density up to 40% lighter in places, varying about a
+      character apart; a spread of σ 0 to 0.4 px on solid and dot-matrix
+      text (a label's thermal print stays crisp); a scratch on 10% of
+      inked blocks, 0.5 to 1 px wide and a digit long, through one boxed
+      token; none on embossed text, which has no ink. They change the
+      drawn ink at 4×, so the boxes, made after, include them;
+    - the surface's local brightness: the light falling on it, estimated
+      as the luminance's brightest within 5% of the long side, blurred
+      over 2%; light ink, a label's sticker and an embossed highlight
+      darken with it, down to 0.6 (fixed after the look check: see the
+      record);
+    - glare: a Gaussian ellipse whose long radius is 5 to 25% of the short
+      side (σ half of it), its short radius 0.4 to 1.0 of the long one,
+      raising the photo towards white by 0.4 to 0.9 at its centre; "near a
+      block" is a centre inside one;
+    - uneven light: brightness up and down by 10 to 25%, half linear
+      (along any direction, across the whole photo), half radial (from a
+      point to the corner farthest from it);
+    - dim light brings noise: every dim photo is noisy, so noise is on
+      55% of photos, not 50%;
+    - the camera's order is the light's: uneven and dim light, glare (the
+      sensor saturates there), defocus, motion, noise, colour cast; the
+      JPEG save is last;
+    - a block whose boxed token loses all its ink is drawn again, 3 draws
+      in all, then skipped and recorded.
+  - **Backgrounds are refused, not trusted:** `compose.forbidden` stops
+    a list holding a test photo, one of the 14 copies, or a validation
+    photo (except the `val` list itself, synth-val's in S6). Shrinking
+    uses libjpeg's own scaling (`Image.draft`, 1/2 to 1/8) and then PIL's
+    BOX filter, which is the area filter: about 30 ms for the largest
+    synthetic background, against 180 ms for OpenCV's area resize.
+  - **The sidecar** (`$GENERATED_DIR/m2/gen/sidecars/<list>.jsonl`, one
+    line per photo, in photo order): `image`, `i`, `seed`, `size`; the
+    `background` (list, image, size, its boxes); per block its kind,
+    style, font, weight, size band, digits' height in pixels and as a
+    print height, whether it shrank, its redraws, the render's own
+    record, geometry, defects, ink and place; per token its text, class
+    and box (photo pixels, ends exclusive) and, for dates, the role,
+    format and parts; the skipped blocks and why; the camera effects; the
+    JPEG quality. The label file is built from the sidecar alone
+    (`make.label_text`): every boxed token, block by block, then the
+    background's boxes. So S6's check can rebuild each label file from
+    its sidecar line and compare them byte for byte.
+  - **Where it goes:** `$GENERATED_DIR/m2/gen/images/<list>/` and
+    `gen/labels/<list>/` (`000000.jpg` on), the list `lists/gen_sample.txt`,
+    and `manifests/gen-sample.json` with the counts, the shares measured
+    against the spec, the spec and its hash, the font and code hashes and
+    the timing. The 500 photos are built on ExpDate's, so they stay in
+    `data/`, never committed.
+  - **Month words are counted from the sidecar.** YOLO label files carry
+    no text, so `box_stats.py` can't tell a month word; `generate.py`
+    prints every share the spec sets against what the photos show.
+  - **`tests/test_synth_camera.py`** is new: the camera module has its own
+    tests, as each module does since S4.
 
 **Look check** (written down in this plan when done):
 
@@ -1711,7 +1801,7 @@ slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sba
                    m2_generate_check.sbatch
 experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/, m2-dot-rows/
 tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_fonts.py,
-                   test_synth_render.py, test_synth_warp.py, test_synth_compose.py;
+                   test_synth_render.py, test_synth_warp.py, test_synth_compose.py, test_synth_camera.py;
                    changed: test_detection_eval.py, test_detector.py
 results/           m2_detector.md   (committed; runs/ is not)
 ```
