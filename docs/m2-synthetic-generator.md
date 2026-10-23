@@ -1595,15 +1595,20 @@ that passes a look check.
 `feat: compose generated dates onto ExpDate backgrounds`,
 `feat: camera effects for generated photos`
 
-**Done 2026-10-23.** Code from `682ea21` to `edfe264`; 431 tests pass (102
-new: `test_synth_warp.py` 67, `test_synth_compose.py` 23,
+**Done 2026-10-23.** Code from `682ea21` to `d4de541`, the owner's
+decision on faint ink included (`d4de541`); 434 tests pass (105 new:
+`test_synth_warp.py` 67, `test_synth_compose.py` 26,
 `test_synth_camera.py` 12), and each commit's tests pass in a checkout of
-that commit alone. The sample, `gen-sample`: 500 photos from `edfe264`
-(clean tree), seed 3, in `$GENERATED_DIR/m2/gen/` with
-`manifests/gen-sample.json` (run `20261023-201420-m2-generate-gen-sample`);
-its contact sheet is `results/runs/20261023-201527-contact-gen-sample/`.
-The owner decided on its two findings the same day (below). What was
-found:
+that commit alone. The sample looked at, `gen-sample`: 500 photos from
+`edfe264` (clean tree), seed 3, in `$GENERATED_DIR/m2/gen/` with
+`manifests/gen-sample.json` (run `20261023-201420-m2-generate-gen-sample`;
+contact sheet `results/runs/20261023-201527-contact-gen-sample/`). Made
+again after the decisions from `d4de541` (clean tree; run
+`20261023-203147-m2-generate-gen-sample`, contact sheet
+`results/runs/20261023-203225-contact-gen-sample/`), it is the same but
+for 45 photos ([after the decisions](#after-the-decisions), the last
+finding). The owner decided on its two findings the same day (below).
+What was found:
 
 - **The sample.** 701 blocks placed; 6 skipped for want of a free place
   (0.8%), 17 placed after shrinking to 80%, none drawn again for lost
@@ -1757,6 +1762,51 @@ found:
   [Placement and blending](#placement-and-blending-synthcomposepy).
   Measured on the same 500 photos in the record after the decisions,
   below.
+- <a id="after-the-decisions"></a>**After the decisions: the floor on faint
+  ink, on the same 500 photos** (`d4de541`; the same seed, so the same
+  backgrounds, and each first ink drawn as before):
+  - **What it did.** 41 placed blocks got a fresh ink (35 a second ink,
+    6 a third) and 4 were skipped as still too faint (3 dot-matrix, 1
+    solid), so 697 blocks are placed, against 701. Every placed block's
+    faintest boxed token now changes the photo by at least 0.0406. 45
+    JPEGs changed (and 12 label files, where a block was skipped or the
+    random draws after a fresh ink placed one differently); the other
+    455 photos are byte for byte the same.
+  - **The shares still hold:** over every ink drawn, low contrast is
+    20.3% and colourful 14.3% (the spec's 20 and 15%; 602 inks). As
+    placed, low contrast falls to 14.5% of solid and dot-matrix blocks:
+    the floor takes off the faintest of them, as decided. 38 of the 47
+    inks replaced were low contrast, 4 colourful.
+  - **The look check's measure moved less:**
+
+    | Dates | n | median | p10 | under 20 | under 30 |
+    |---|---:|---:|---:|---:|---:|
+    | generated, before | 1,129 | 60 | 21 | 9.2% | 17.4% |
+    | generated, after | 1,123 | 59 | 22 | 7.9% | 16.8% |
+    | real (`real-val`) | 187 | 122 | 68 | 1.1% | 3.7% |
+
+    The floor (0.04, about 10 levels, before the camera) sits below the
+    measure's line of 20 levels, and the plan's own low contrast is 8 to
+    15%, about 20 to 38 levels, before opacity, density, blur and noise.
+    Of the 89 dates still under 20, about half are low-contrast ink and
+    a third full-ink dot-matrix, mostly small or blurred. By eye (36 of
+    them cropped) nearly all are faint but readable (`30-08-2030`,
+    `DEC 2024`, `26 12 2026`, `APR-2028`); a few dark ones show by
+    their colour (blue on navy), which a luminance measure can't see. So
+    the floor took off what was really invisible, and the rest of the
+    gap to real dates is the spec's own: its low-contrast share and gap,
+    and dots as faint as S4 drew them. Narrowing that would mean
+    changing the plan's shares, which nobody has decided.
+  - **Its tests catch what they should:** 5 deliberate bugs, all caught
+    (the floor ignored, a faint ink left on the photo, a faint block kept
+    as placed, the change not weighted by alpha, the change measured in
+    luminance alone).
+  - **The sidecar** now records, per placed block, the inks it replaced
+    (`faint_inks`) and how much its faintest boxed token shows (`shown`),
+    and for a block skipped as too faint its inks, so S6's check can
+    measure the ink shares over every ink drawn.
+  - **Cost:** 56.6 ms a photo on one CPU (median 47, 95th percentile
+    128); blending, now with the check, takes 5.2 ms, against 4.3 before.
 - **Not checked:** that the cluster draws the same pixels (Pillow,
   FreeType, libjpeg and OpenCV builds; S6 compares the render sheet, and
   can compare a few generated photos too); the speed on the cluster's
