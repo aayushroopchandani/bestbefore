@@ -4,7 +4,7 @@ the renderer by eye (docs/m2-synthetic-generator.md, S4).
     python scripts/render_sheet.py               # sheet.png
     python scripts/render_sheet.py --time 1000   # also time 1000 random blocks
 
-Rows are the print styles, dot-matrix once per row count (5, 7, 9). Columns
+Rows are the print styles, dot-matrix once per row count (7, 9). Columns
 are the format families. Each cell is one block in a training font, at a
 normal size (digits 22 px) above the same block as small print (digits 8 px,
 shown 3x with its pixels kept). Boxes: date red, due blue, prod green, code

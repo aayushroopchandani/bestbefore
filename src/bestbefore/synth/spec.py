@@ -44,7 +44,7 @@ class StyleSpec:
     supersample: int = 4                  # drawn at 4x, then shrunk with an area filter
     line_spacing: Range = (1.2, 1.6)      # baseline to baseline, in em
     # dotify (dot-matrix and inkjet)
-    dot_rows: tuple[int, ...] = (5, 7, 9)    # dots across a digit's height
+    dot_rows: tuple[int, ...] = (7, 9)       # dots across a digit's height (at 5 they garble: S4)
     dot_aspect: Range = (0.8, 1.2)        # horizontal pitch / vertical pitch
     dot_cover: float = 0.40               # a dot where the text covers this much of its cell
     dot_radius: Range = (0.30, 0.48)      # x vertical pitch

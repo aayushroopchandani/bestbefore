@@ -148,7 +148,8 @@ def test_dotify_draws_dots_on_a_character_and_none_on_a_blank():
 
 
 def test_a_dot_fits_inside_its_kernel():
-    widest = replace(STYLE, dot_rows=(5,), dot_radius=(0.48, 0.48), dot_blur=(0.35, 0.35))
+    widest = replace(STYLE, dot_rows=(min(STYLE.dot_rows),), dot_radius=(0.48, 0.48),
+                     dot_blur=(0.35, 0.35))                     # the biggest dots drawn
     for digit_px in (20, 80, 300):
         kernel = R.dot_params(np.random.default_rng(0), widest, digit_px)[0]["kernel"]
         border = np.concatenate([kernel[0], kernel[-1], kernel[:, 0], kernel[:, -1]])

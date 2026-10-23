@@ -73,7 +73,6 @@ without a bold; then Lato (0.17).
 
 ## Decision
 
-For the owner, before S5: drop 5 rows (recommended), or keep the plan's
-5, 7 and 9. S4 keeps the plan's three until then. If 5 goes, `dot_rows`
-in `synth/spec.py` becomes `(7, 9)`, and the change is written in the
-plan.
+Decided 2026-10-23 by the owner: 5 rows dropped. `dot_rows` in
+`synth/spec.py` is now `(7, 9)`, and the plan says so. `measure.py`
+still measures all three row counts, so the numbers above reproduce.

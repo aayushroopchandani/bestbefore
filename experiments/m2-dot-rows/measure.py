@@ -39,7 +39,7 @@ from bestbefore.synth.spec import STYLE
 from bestbefore.tables import markdown_table
 
 OUT = Path(__file__).parent / "results"
-ROWS = STYLE.dot_rows
+ROWS = (5, 7, 9)                # the plan's rows as first written
 KEEPS = 0.8                     # a stroke this many cells wide keeps its dots (40% rule)
 
 
