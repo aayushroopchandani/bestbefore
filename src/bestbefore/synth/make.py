@@ -28,7 +28,7 @@ from ..samples import Box, Sample
 from . import camera, compose, fonts, render, text, warp
 from .compose import Backgrounds, Surface
 from .render import Layer
-from .spec import GenSpec
+from .spec import ComposeSpec, GenSpec
 from .text import Block, Token
 from .warp import Geometry
 
@@ -99,9 +99,12 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
                             "why": "no free place" if drawn else "a boxed token kept no ink"})
             continue
         (x, y), layer = spot, drawn.layer
-        ink = compose.choose_ink(rng, style, surface.luminance(x, y, layer.width, layer.height), c)
         with clock("blend"):
-            compose.blend(photo, layer, x, y, ink, surface)
+            inks, shown = ink_block(photo, layer, block, style, x, y, surface, rng, c)
+        if shown < c.visible:
+            skipped.append({"kind": block.kind, "style": style, "band": band, "size": round(size, 2),
+                            "why": "its ink stayed too faint", "inks": [i.record() for i in inks]})
+            continue
         taken.append((x, y, x + layer.width, y + layer.height))
         blocks.append({
             "kind": block.kind, "style": style, "family": family.name, "weight": layer.params["weight"],
@@ -109,7 +112,8 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
             "print_height": round(size * drawn.scale / max(width, height), 5),
             "shrunk": drawn.scale < 1, "redraws": drawn.redraws,
             "render": {k: v for k, v in layer.params.items() if k not in ("style", "family", "weight", "size")},
-            "geometry": geometry.record(), "defects": drawn.defects, "ink": ink.record(),
+            "geometry": geometry.record(), "defects": drawn.defects, "ink": inks[-1].record(),
+            "faint_inks": [i.record() for i in inks[:-1]], "shown": round(shown, 4),
             "place": [x, y, layer.width, layer.height],
             "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]])
                        for t, b in zip(block.tokens, drawn.boxes)]})
@@ -167,6 +171,30 @@ def _draw(block: Block, style: str, family: fonts.Family, size: float, scale: fl
     return None
 
 
+def ink_block(photo: np.ndarray, layer: Layer, block: Block, style: str, x: int, y: int, surface: Surface,
+              rng: np.random.Generator, c: ComposeSpec) -> tuple[list[compose.Ink], float]:
+    """Lay the block onto the photo at (x, y), and check that every boxed
+    token shows: its ink must change the photo by at least c.visible
+    (compose.ink_change), or the block is taken off again and gets a fresh
+    ink, c.inks in all. An embossed block's one "ink" is its relief, so it gets no
+    other. Returns the inks drawn, the last on the photo, and how much the
+    faintest boxed token shows; the photo is left as it was if that is
+    still under c.visible."""
+    h, w = layer.height, layer.width
+    before = photo[y:y + h, x:x + w].copy()
+    boxed = [s for s, t in zip(layer.tokens, block.tokens) if t.cls is not None and s is not None]
+    luminance = surface.luminance(x, y, w, h)
+    inks, shown = [], 0.0
+    for _ in range(1 if style == "embossed" else c.inks):
+        inks.append(compose.choose_ink(rng, style, luminance, c))
+        compose.blend(photo, layer, x, y, inks[-1], surface)
+        shown = min((compose.ink_change(before, photo[y:y + h, x:x + w], s) for s in boxed), default=1.0)
+        if shown >= c.visible:
+            break
+        photo[y:y + h, x:x + w] = before
+    return inks, shown
+
+
 def _token(t: Token, box: list[int] | None) -> dict:
     """A token for the sidecar; its box in photo pixels (ends exclusive),
     or None when it has no ink (a distractor may lose its)."""
@@ -222,8 +250,9 @@ def write_one(made: Made, images: Path) -> Path:
 def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     """Every share the spec sets, as drawn in these photos: rows of
     {what, spec, measured, n}. Text, style and size count every block drawn,
-    skipped ones too; geometry and ink count the placed ones; month words
-    count placed dates outside ranges, as the text spec draws them."""
+    skipped ones too; geometry counts the placed ones, and ink every ink
+    drawn; month words count placed dates outside ranges, as the text spec
+    draws them."""
     rows: list[dict] = []
 
     def row(what: str, expected: float, hits: Sequence[bool]) -> None:
@@ -231,7 +260,8 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
                      "measured": round(float(np.mean(hits)), 4) if len(hits) else None, "n": len(hits)})
 
     placed = [b for s in sidecars for b in s["blocks"]]
-    drawn = placed + [b for s in sidecars for b in s["skipped"]]
+    skipped = [k for s in sidecars for k in s["skipped"]]
+    drawn = placed + skipped
     row("photos with 2 blocks", spec.compose.two_blocks,
         [len(s["blocks"]) + len(s["skipped"]) == 2 for s in sidecars])
     for name, share in spec.backgrounds:
@@ -245,10 +275,15 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     for name, share in g.surface:
         row(f"surface: {name}", share, [b["geometry"]["surface"] == name for b in placed])
     row("perspective", g.perspective, [b["geometry"]["perspective"] is not None for b in placed])
-    inked = [b for b in placed if b["style"] in ("solid", "dot-matrix")]
-    row("ink: colourful (solid, dot-matrix)", spec.compose.colourful, [b["ink"]["colourful"] for b in inked])
-    row("ink: low contrast (solid, dot-matrix)", spec.compose.low_contrast,
-        [b["ink"]["low_contrast"] is not None for b in inked])
+    # Every ink drawn, those replaced for showing too little included: the
+    # spec draws them all alike, then the floor on faint ink
+    # (spec.compose.visible) takes some low-contrast ones off again.
+    inked = ("solid", "dot-matrix")
+    inks = [i for b in placed if b["style"] in inked for i in (*b["faint_inks"], b["ink"])]
+    inks += [i for k in skipped if k["style"] in inked for i in k.get("inks", ())]
+    row("inks drawn: colourful (solid, dot-matrix)", spec.compose.colourful, [i["colourful"] for i in inks])
+    row("inks drawn: low contrast (solid, dot-matrix)", spec.compose.low_contrast,
+        [i["low_contrast"] is not None for i in inks])
     row("ink defects: a scratch", spec.compose.scratch, [b["defects"]["scratch"] is not None for b in placed
                                                           if b["style"] != "embossed"])
     dates = [(text.FAMILY_OF[d["format"]], d) for b in placed if b["kind"] != "range"

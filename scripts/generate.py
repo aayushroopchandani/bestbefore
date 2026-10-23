@@ -67,6 +67,7 @@ def counts(sidecars: list[dict]) -> dict:
             "blocks": sum(len(s["blocks"]) for s in sidecars),
             "skipped": dict(Counter(k["why"] for s in sidecars for k in s["skipped"])),
             "redrawn": sum(b["redraws"] > 0 for s in sidecars for b in s["blocks"]),
+            "fresh_ink": sum(bool(b["faint_inks"]) for s in sidecars for b in s["blocks"]),
             "shrunk": sum(b["shrunk"] for s in sidecars for b in s["blocks"]),
             "boxes": dict(sorted(labels.items())),
             "generated_dates": sum(t["cls"] == "date" for s in sidecars for b in s["blocks"]
@@ -133,8 +134,8 @@ def main() -> None:
     table = shares_table(summary["shares"])
     (run_dir / "shares.md").write_text(table + "\n")
     print(table)
-    print(json.dumps({k: summary[k] for k in ("photos", "blocks", "skipped", "redrawn", "shrunk", "boxes",
-                                              "generated_dates", "timing")}, indent=2))
+    print(json.dumps({k: summary[k] for k in ("photos", "blocks", "skipped", "redrawn", "fresh_ink", "shrunk",
+                                              "boxes", "generated_dates", "timing")}, indent=2))
     print(run_dir)
 
 

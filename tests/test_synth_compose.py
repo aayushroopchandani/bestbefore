@@ -45,8 +45,8 @@ def pool(tmp_path_factory) -> Backgrounds:
     return Backgrounds({"train_real": (made[0],), "train_synth_clean": tuple(made[1:])})
 
 
-def _photos(pool: Backgrounds, n: int, seed: int = 3) -> list[make.Made]:
-    return [make.make_one(i, GEN, pool, seed) for i in range(n)]
+def _photos(pool: Backgrounds, n: int, seed: int = 3, spec=GEN) -> list[make.Made]:
+    return [make.make_one(i, spec, pool, seed) for i in range(n)]
 
 
 # --- Backgrounds ------------------------------------------------------------------------
@@ -175,6 +175,50 @@ def test_the_light_follows_a_shadow_but_not_dark_print():
     shade = Surface(shadowed).shading(100, 100, 600, 200)
     assert shade[:, :150].min() > 0.97 and shade[:, 450:].max() < 0.65
     assert shade.min() >= COMPOSE.shading_floor
+
+
+def test_ink_change_is_how_far_the_ink_moved_the_colour():
+    photo = np.full((20, 40, 3), 200.0, np.float32)
+    before = photo.copy()
+    alpha = np.zeros((20, 40), np.float32)
+    alpha[:, :20] = 1.0                                           # ink on the left half only
+    layer = R.Layer(40, 20, 1, (R.Sprite(0, 0, alpha),), None, {})
+    compose.blend(photo, layer, 0, 0, compose.Ink("dark", (40.0, 40.0, 40.0)), Surface(before))
+    grey = compose.luminance(before[0, 0]) - compose.luminance(photo[0, 0])      # grey ink: its luminance change
+    assert compose.ink_change(before, photo, layer.tokens[0]) == pytest.approx(grey, abs=1e-5)
+    dark = np.full((20, 40, 3), 82.0, np.float32)
+    blue = dark.copy()
+    compose.blend(blue, layer, 0, 0, compose.Ink("light", (60.0, 60.0, 255.0)), Surface(dark))
+    assert abs(compose.luminance(blue[0, 0]) - compose.luminance(dark[0, 0])) < 0.01     # as light as before,
+    assert compose.ink_change(dark, blue, layer.tokens[0]) > 0.3                          # yet plainly blue
+
+
+def _faint_ink(share: float):
+    """A spec whose low-contrast ink, drawn with this share, barely shows."""
+    return replace(GEN, compose=replace(GEN.compose, low_contrast=share, low_contrast_gap=(0.01, 0.015)))
+
+
+@needs_fonts
+def test_a_boxed_token_that_barely_shows_gets_a_fresh_ink(pool):
+    replaced = []
+    for made in _photos(pool, 20, seed=6, spec=_faint_ink(0.5)):
+        for b in made.sidecar["blocks"]:
+            assert b["shown"] >= COMPOSE.visible                  # every placed token shows
+            replaced += b["faint_inks"]
+    assert len(replaced) >= 3
+    assert np.mean([i["low_contrast"] is not None for i in replaced]) > 0.8     # mostly the faint ones
+
+
+@needs_fonts
+def test_a_block_that_never_shows_is_skipped_and_leaves_no_ink():
+    block = T.Block(((T.Token("EXP", "due"), T.Token("08/2027", "date")),), "single")
+    layer = R.shrink(R.render(block, "solid", fonts.families("train")[0], 20, np.random.default_rng(0)))
+    photo = _texture(300, 120, 4)
+    before = photo.copy()
+    c = _faint_ink(1.0).compose                                   # every ink low contrast, all too faint
+    inks, shown = make.ink_block(photo, layer, block, "solid", 10, 20, Surface(before), np.random.default_rng(1), c)
+    assert len(inks) == c.inks and shown < c.visible
+    assert np.array_equal(photo, before)                          # taken off again: no box, no ink
 
 
 # --- Ink defects ------------------------------------------------------------------------------------

@@ -377,6 +377,19 @@ def blend(photo: np.ndarray, layer: Layer, x: int, y: int, ink: Ink, surface: Su
         region *= 1 - a * (1 - colour / 255)
 
 
+def ink_change(before: np.ndarray, after: np.ndarray, s: Sprite) -> float:
+    """How much a token's ink changed the photo: the colour distance between
+    before and after under its sprite (RGB, scaled so that a grey change is
+    its change in luminance, 0..1), weighted by its alpha, so its strongest
+    ink counts most. Colour counts as well as light: strong blue on dark
+    brown is close in luminance, yet a camera sees it. `before` and `after`
+    are the block's region, as the sprite's own coordinates are."""
+    h, w = s.alpha.shape
+    diff = after[s.y:s.y + h, s.x:s.x + w] - before[s.y:s.y + h, s.x:s.x + w]
+    change = np.sqrt((diff * diff).mean(axis=-1)) / 255
+    return float((change * s.alpha).sum() / max(float(s.alpha.sum()), 1e-6))
+
+
 def _canvas(s: Sprite, h: int, w: int) -> np.ndarray:
     """One sprite's alpha on an h x w canvas."""
     out = np.zeros((h, w), np.float32)

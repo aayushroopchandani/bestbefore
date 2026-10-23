@@ -125,6 +125,9 @@ class ComposeSpec:
     scratch: float = 0.10             # inked blocks with a scratch through one boxed token
     scratch_width: Range = (0.5, 1.0)     # final pixels
     redraws: int = 3                  # draws of a block before it is skipped for a boxed token with no ink
+    # Decided 2026-10-23 (owner), after S5's look check: no box round ink that barely shows.
+    visible: float = 0.04             # a boxed token's ink must change the photo this much (RGB distance, as
+    inks: int = 3                     #   luminance 0..1 for grey), or the block gets a fresh ink; skipped after 3
 
 
 @dataclass(frozen=True)
