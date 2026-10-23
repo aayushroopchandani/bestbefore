@@ -1764,6 +1764,13 @@ results/           m2_detector.md   (committed; runs/ is not)
 - **A time or lot code on the date's own line** (`EXP 11/2027 14:32`,
   `21/05/26 L2307`), so generated photos also teach a date box to stop
   before it (S4 prints codes and times on lines of their own).
+- **More date variants, for M3's reader** (found in S4, not in the plan's
+  format table): a day without its leading zero outside ordinals
+  (`4 Dec 2026`), the four-letter `Sept`, `DDMONYYYY` (`19DEC2026`),
+  ranges with month words (`JUN 2025-DEC 2026`), and CLAUDE.md's shelf-life
+  wording (`Best Before 1 Year from Mfg. Dt.`; S4 prints `Best Before 12
+  months from Mfg.`). To a detector they look almost like formats it
+  already has, so M2 goes without them; a reader has to read each one.
 - **A crop mode for M3:** the generator already records each date's text,
   role and day / month / year, so it can write reader training crops.
 - **A realism check:** a small classifier trained to tell generated date
