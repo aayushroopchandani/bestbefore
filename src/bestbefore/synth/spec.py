@@ -5,13 +5,14 @@ photos, which nothing here was designed from.
 S4 wrote the text and the print styles; S5 adds geometry, size, composing
 and camera effects, and GenSpec, which holds them all. GenSpec's hash goes
 into every manifest and training record, so each model names exactly the
-data it saw. Numbers the plan left open are marked "fixed in S5".
+data it saw. Numbers the plan left open are marked "fixed in S5". S6 adds
+synth-val's strata, each an override of the training spec.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 Shares = tuple[tuple[str, float], ...]     # (name, share) pairs that sum to 1
 Range = tuple[float, float]                # drawn uniformly
@@ -38,6 +39,8 @@ class TextSpec:
     panel_codes: float = 0.50    # of a panel's extra lines, codes; the rest distractors
     range_word: float = 0.70     # a range with an expiry word, as a single date
     relative_months: tuple[int, ...] = (6, 9, 12, 18, 24, 36)   # Best Before N months from Mfg.
+    # Fixed in S6:
+    single_role: str = "expiry"  # a single line's date; synth-val's is its "target"
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,9 @@ class ComposeSpec:
     # Decided 2026-10-23 (owner), after S5's look check: no box round ink that barely shows.
     visible: float = 0.04             # a boxed token's ink must change the photo this much (RGB distance, as
     inks: int = 3                     #   luminance 0..1 for grey), or the block gets a fresh ink; skipped after 3
+    # Fixed in S6:
+    block_tries: int = 1              # blocks drawn for each one wanted, a fresh one each time one is skipped
+    #                                   (synth-val: 10, so every photo has its target)
 
 
 @dataclass(frozen=True)
@@ -183,8 +189,50 @@ GEN = GenSpec()
 SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3}
 
 
+# --- synth-val's strata (S6) ------------------------------------------------------------------
+
+def only(shares: Shares, *names: str) -> Shares:
+    """The named entries of a share table, in their training proportions."""
+    kept = [(name, share) for name, share in shares if name in names]
+    total = sum(share for _, share in kept)
+    return tuple((name, share / total) for name, share in kept)
+
+
+# Every synth-val photo: one block, a single line on a validation photo in a
+# held-out font, its one date the target. A skipped block is replaced by a
+# fresh one, so no photo goes without its target.
+_TARGET = replace(GEN, text=replace(TEXT, kinds=(("single", 1.0),), single_role="target"),
+                  compose=replace(COMPOSE, two_blocks=0.0, block_tries=10),
+                  fonts="held-out", backgrounds=(("val", 1.0),))
+# clean: upright, numbers, normal size, solid or label style, flat. What the
+# plan doesn't name follows the training spec, as its camera effects do.
+CLEAN = replace(_TARGET, text=replace(_TARGET.text, month_word=0.0),
+                style=replace(STYLE, styles=only(STYLE.styles, "solid", "label")),
+                geometry=replace(GEOMETRY, orientation=(("upright", 1.0),), surface=(("flat", 1.0),)),
+                size=replace(SIZE, bands=(("normal", 1.0),)))
+# Each stratum changes one thing from clean; mixed is the training spec.
+SYNTH_VAL = (
+    ("clean", CLEAN),
+    ("sideways", replace(CLEAN, geometry=replace(CLEAN.geometry, orientation=(("sideways", 1.0),)))),
+    ("month-word", replace(CLEAN, text=replace(CLEAN.text, month_word=1.0))),
+    ("small", replace(CLEAN, size=replace(CLEAN.size, bands=(("small", 1.0),)))),
+    ("dot-matrix", replace(CLEAN, style=replace(CLEAN.style, styles=(("dot-matrix", 1.0),)))),
+    ("curved", replace(CLEAN, geometry=replace(CLEAN.geometry, surface=only(GEOMETRY.surface, "cylinder", "bend")))),
+    ("mixed", _TARGET),
+)
+
+
+def _sha256(data) -> str:
+    text = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def spec_hash(spec: GenSpec) -> str:
     """SHA-256 of the spec as JSON: what a manifest and a training record
     name, so each model says exactly what it saw."""
-    text = json.dumps(asdict(spec), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(text.encode()).hexdigest()
+    return _sha256(asdict(spec))
+
+
+def strata_hash(strata: tuple[tuple[str, GenSpec], ...] = SYNTH_VAL) -> str:
+    """SHA-256 of synth-val's strata, in order, as JSON."""
+    return _sha256([[name, asdict(spec)] for name, spec in strata])

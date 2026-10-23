@@ -57,8 +57,9 @@ def sidecar_path(name: str) -> Path:
 
 
 # Generated sets, by set name: their list (and folder) names. gen-sample is
-# S5's 500 photos to look at; S6 adds the training photos and synth-val.
-GENERATED_SETS = {"gen-sample": "gen_sample"}
+# S5's 500 photos to look at; S6 makes the training photos (gen, listed as
+# gen50k, and gen10k for its first 10,000) and synth-val.
+GENERATED_SETS = {"gen-sample": "gen_sample", "gen": "gen50k", "synth-val": "synth_val"}
 
 
 def list_path(name: str) -> Path:

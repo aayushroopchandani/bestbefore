@@ -240,7 +240,7 @@ def _labelled(rng, spec, fmt, case, mfg: date, expiry: date) -> list[tuple[Token
 
 
 def _single(rng, spec, fmt, case):
-    line = (date_token(random_date(rng, spec), fmt, case, "expiry"),)
+    line = (date_token(random_date(rng, spec), fmt, case, spec.single_role),)
     if rng.random() < spec.single_word:
         line = (Token(choice(rng, DUE), "due"),) + line
     return [line]

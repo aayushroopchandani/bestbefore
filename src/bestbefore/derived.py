@@ -9,6 +9,7 @@ so tests/test_derived.py checks the formula against drawn pixels.
 """
 from __future__ import annotations
 
+import json
 import os
 import random
 from collections.abc import Iterable, Sequence
@@ -130,9 +131,32 @@ def load_sample(image: Path) -> Sample:
     return Sample(id=image.name, image=image, width=w, height=h, boxes=read_boxes(image))
 
 
-def load_yolo_set(list_path: Path) -> list[Sample]:
-    """Every image in a list file, with its labels, as `Sample`s."""
-    return [load_sample(p) for p in read_list(list_path)]
+def load_yolo_set(list_path: Path, sidecar: Path | None = None) -> list[Sample]:
+    """Every image in a list file, with its labels, as `Sample`s. With a
+    generated set's sidecar, each `target` date loads as `exp` and the
+    photo's stratum becomes its tag: so on synth-val the evaluator's expiry
+    recall is the target recall, per stratum."""
+    samples = [load_sample(p) for p in read_list(list_path)]
+    if sidecar is None:
+        return samples
+    with sidecar.open() as f:
+        lines = {line["image"]: line for line in map(json.loads, f)}
+    return [with_targets(s, lines[s.id]) for s in samples]
+
+
+def with_targets(sample: Sample, line: dict) -> Sample:
+    """A generated photo with its targets as `exp` and its stratum as tag.
+    The label file lists every boxed token first, block by block, in the
+    sidecar's order (synth/make.py, label_boxes), so a target's box is found
+    by its place among them."""
+    tokens = [t for b in line["blocks"] for t in b["tokens"] if t["cls"]]
+    boxes = list(sample.boxes)
+    for k, t in enumerate(tokens):
+        if t.get("role") == "target":
+            if boxes[k].label != "date":
+                raise ValueError(f"{sample.image}: label line {k} is {boxes[k].label}, the sidecar's target a date")
+            boxes[k] = replace(boxes[k], label="exp")
+    return replace(sample, boxes=tuple(boxes), tag=line.get("stratum"))
 
 
 def write_yolo(root: Path, set_name: str, name: str, image: Image.Image,

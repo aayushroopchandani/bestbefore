@@ -70,9 +70,14 @@ def image_name(i: int) -> str:
     return f"{i:06d}.jpg"
 
 
-def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clock | None = None) -> Made:
+def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clock | None = None,
+             stratum: str | None = None) -> Made:
     """Photo i of the set with seed `set_seed`: 1 or 2 blocks drawn onto a
-    background, through the camera, saved as a JPEG."""
+    background, through the camera, saved as a JPEG. A block that finds no
+    place, or whose ink stays too faint, is skipped; with
+    spec.compose.block_tries above 1 a fresh block is drawn in its place
+    (synth-val, whose every photo needs its target). `stratum` (synth-val's)
+    goes into the sidecar."""
     clock = clock or Clock()
     rng = np.random.default_rng([set_seed, i])
     c = spec.compose
@@ -88,35 +93,15 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
     taken = compose.box_rects(bg.boxes, width, height)
     blocks, skipped = [], []
     for band, fraction in heights:
-        block = text.random_block(rng, spec.text)
-        style = render.random_style(rng, spec.style)
-        family = fonts.random_family(rng, spec.fonts)
-        geometry = warp.random_geometry(rng, spec.geometry)
-        size = fraction * max(width, height)
-        drawn, spot = _place(block, style, family, size, geometry, surface, taken, rng, spec, clock)
-        if spot is None:
-            skipped.append({"kind": block.kind, "style": style, "band": band, "size": round(size, 2),
-                            "why": "no free place" if drawn else "a boxed token kept no ink"})
-            continue
-        (x, y), layer = spot, drawn.layer
-        with clock("blend"):
-            inks, shown = ink_block(photo, layer, block, style, x, y, surface, rng, c)
-        if shown < c.visible:
-            skipped.append({"kind": block.kind, "style": style, "band": band, "size": round(size, 2),
-                            "why": "its ink stayed too faint", "inks": [i.record() for i in inks]})
-            continue
-        taken.append((x, y, x + layer.width, y + layer.height))
-        blocks.append({
-            "kind": block.kind, "style": style, "family": family.name, "weight": layer.params["weight"],
-            "band": band, "size": round(size * drawn.scale, 2),
-            "print_height": round(size * drawn.scale / max(width, height), 5),
-            "shrunk": drawn.scale < 1, "redraws": drawn.redraws,
-            "render": {k: v for k, v in layer.params.items() if k not in ("style", "family", "weight", "size")},
-            "geometry": geometry.record(), "defects": drawn.defects, "ink": inks[-1].record(),
-            "faint_inks": [i.record() for i in inks[:-1]], "shown": round(shown, 4),
-            "place": [x, y, layer.width, layer.height],
-            "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]])
-                       for t, b in zip(block.tokens, drawn.boxes)]})
+        for _ in range(c.block_tries):
+            placed, skip = _block(band, fraction * max(width, height), photo, surface, taken, rng, spec, clock)
+            if placed is None:
+                skipped.append(skip)
+                continue
+            x, y, w, h = placed["place"]
+            taken.append((x, y, x + w, y + h))
+            blocks.append(placed)
+            break
     with clock("camera"):
         effects = camera.draw(rng, width, height, [tuple(_rect(b["place"])) for b in blocks], spec.camera)
         photo = camera.apply(photo, effects, rng)
@@ -127,8 +112,43 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
     sidecar = {"image": name, "i": i, "seed": [set_seed, i], "size": [width, height],
                "background": {"list": bg.list, "image": bg.path.name, "size": [bg.width, bg.height],
                               "boxes": [[b.label, *(round(v, 6) for v in b.xyxy)] for b in bg.boxes]},
-               "blocks": blocks, "skipped": skipped, "camera": effects, "jpeg_quality": quality}
+               "wanted": len(heights), "blocks": blocks, "skipped": skipped, "camera": effects,
+               "jpeg_quality": quality}
+    if stratum is not None:
+        sidecar["stratum"] = stratum
     return Made(name, jpeg, label_text(sidecar), sidecar)
+
+
+def _block(band: str, size: float, photo: np.ndarray, surface: Surface, taken: list, rng: np.random.Generator,
+           spec: GenSpec, clock: Clock) -> tuple[dict | None, dict | None]:
+    """One block drawn, placed and inked onto the photo: its sidecar record,
+    or None and why it was skipped (then the photo is left as it was)."""
+    c = spec.compose
+    block = text.random_block(rng, spec.text)
+    style = render.random_style(rng, spec.style)
+    family = fonts.random_family(rng, spec.fonts)
+    geometry = warp.random_geometry(rng, spec.geometry)
+    drawn, spot = _place(block, style, family, size, geometry, surface, taken, rng, spec, clock)
+    skip = {"kind": block.kind, "style": style, "band": band, "size": round(size, 2)}
+    if spot is None:
+        return None, skip | {"why": "no free place" if drawn else "a boxed token kept no ink"}
+    (x, y), layer = spot, drawn.layer
+    with clock("blend"):
+        inks, shown = ink_block(photo, layer, block, style, x, y, surface, rng, c)
+    if shown < c.visible:
+        return None, skip | {"why": "its ink stayed too faint", "inks": [i.record() for i in inks]}
+    height, width = photo.shape[:2]
+    return {
+        "kind": block.kind, "style": style, "family": family.name, "weight": layer.params["weight"],
+        "band": band, "size": round(size * drawn.scale, 2),
+        "print_height": round(size * drawn.scale / max(width, height), 5),
+        "shrunk": drawn.scale < 1, "redraws": drawn.redraws,
+        "render": {k: v for k, v in layer.params.items() if k not in ("style", "family", "weight", "size")},
+        "geometry": geometry.record(), "defects": drawn.defects, "ink": inks[-1].record(),
+        "faint_inks": [i.record() for i in inks[:-1]], "shown": round(shown, 4),
+        "place": [x, y, layer.width, layer.height],
+        "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]])
+                   for t, b in zip(block.tokens, drawn.boxes)]}, None
 
 
 def _place(block: Block, style: str, family: fonts.Family, size: float, geometry: Geometry,
@@ -262,8 +282,7 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     placed = [b for s in sidecars for b in s["blocks"]]
     skipped = [k for s in sidecars for k in s["skipped"]]
     drawn = placed + skipped
-    row("photos with 2 blocks", spec.compose.two_blocks,
-        [len(s["blocks"]) + len(s["skipped"]) == 2 for s in sidecars])
+    row("photos with 2 blocks", spec.compose.two_blocks, [s["wanted"] == 2 for s in sidecars])
     for name, share in spec.backgrounds:
         row(f"background from {name}", share, [s["background"]["list"] == name for s in sidecars])
     for field, table in (("kind", spec.text.kinds), ("style", spec.style.styles), ("band", spec.size.bands)):
