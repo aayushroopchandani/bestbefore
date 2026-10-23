@@ -1970,6 +1970,94 @@ as eligible (`squeue -j 72915` reason no longer `JobHeldUser`).
 `feat: contact sheet with a row per tag`,
 `docs: generated data in the dataset notes`
 
+**The laptop's part, 2026-10-23.** Code from `f011487` to `fef1e16`;
+461 tests pass (27 new: `test_synth_strata.py` 7, `test_synth_batch.py`
+20), and each commit's tests pass in a checkout of that commit alone, with
+none skipped. What was found:
+
+- **The trial** (`generate.py --tasks 0-4,50 --workers 4`, run
+  `20261023-225552-m2-generate`): 5,000 `gen` photos and all 2,100 of
+  synth-val in 143 s. That's 79 ms a photo per worker, with the four
+  workers sharing the laptop's mixed cores (S5: 55 ms on one CPU, 78 ms
+  each with four). By stage: drawing 24.2 ms, camera 20.3, background
+  11.2, JPEG 10.2, blending 6.4, surface 5.5, writing 0.9, placing 0.3.
+  synth-val's photos alone took 54.9 ms on average: one block each.
+- **Memory, per worker** (to size the job): 773 MB at most in the trial.
+  One process making 1,200 photos holds 84 MB once the backgrounds are
+  loaded, about 750 MB once its font cache is full (512 faces at their
+  sizes), then 420 to 750 MB, and peaked at 1.07 GB on one
+  dot-matrix block. So the job asks 48 GB for 24 workers (1.5 GB each, and
+  the check).
+- **The check on the trial** (`generate.py --check`, run
+  `20261023-230007-m2-generate-check`, 8 s on 4 workers, 178 MB): `gen`
+  incomplete with exactly one problem, "tasks 5-49 not made (no record)",
+  so its lists were not written and its manifest says `complete: false`;
+  synth-val complete with no problem, its list, sidecar and manifest
+  written. Every one of the 7,100 photos opened whole, and every label
+  file equals the one rebuilt from its sidecar line.
+- **The shares on 5,000 training photos are all within 3 points** of the
+  spec (36 rows). The largest gaps: an ordinal on month words with a day
+  48.6% (spec 50%, n = 1,775), a day on month-word dates 38.6% (40%),
+  dot-matrix 33.7% (35%), small print 31.3% (30%), perspective 38.8%
+  (40%). S5's ordinal of 59.5% (n = 195) was noise, as S5 judged.
+- **More blocks find no free place than S5's sample showed:** 142 of
+  7,004 drawn (2.0%), against 6 of 707 (0.8%) in S5's 500 photos; 27 more
+  (0.4%) were skipped as too faint. Every 1,000 photos give 1.5 to 2.7%,
+  so S5's seed simply drew few (about a 2% chance at this rate). All 142
+  are normal-size blocks, mostly panels (62) and pairs (38), the largest
+  blocks. The text, style and size shares count skipped blocks too, so
+  they still match the spec; the placed blocks lean slightly smaller.
+- **synth-val, stratum by stratum** (2,100 photos, the sidecar's own
+  record): every `clean` target is upright, flat, numeric, normal size,
+  solid (226) or label (74); `sideways` all turned, `month-word` all words,
+  `small` all small print on backgrounds of at least 1,000 px, `dot-matrix`
+  all dot-matrix, `curved` cylinder 185 and bend 115; `mixed` spreads as
+  the training spec. 164 validation photos are backgrounds. 4 photos
+  needed a fresh block (no free place for the first); none went without
+  its target.
+- **By eye, the synth-val sheet** (`contact_sheet.py --set synth-val
+  --per-tag 8`, `results/runs/20261023-230120-contact-synth-val/`): each
+  row changes one thing from `clean`, as designed. Faint print shows up
+  again: in the dot-matrix row 5 of 8 targets are hard to read (faint dots,
+  some in low-contrast ink), and 2 of 8 in the small row barely show. This
+  is S5's second finding (the spec's low-contrast share and S4's faint
+  dots), now visible per stratum; nothing new was decided.
+- **Training photos didn't change.** S5's 500-photo sample, made again
+  with the new code, gives the same 1,000 files byte for byte; its sidecar
+  gains `wanted` (the blocks drawn for, 1 or 2), which "photos with 2
+  blocks" now counts, as a block replaced by a fresh one would otherwise
+  count twice.
+- **The render sheet** drawn today (seed 0) is byte-identical to S4's
+  (SHA-256 `e1aa1311…`).
+- **The tests catch what they should.** 18 deliberate bugs, one at a time,
+  all caught: the stratum not written, synth-val's pool from the training
+  lists, a stratum in training fonts, the guard re-check without
+  `compose.forbidden`, label files not compared, images not decoded (a
+  cut-off JPEG passes), no fresh block, results taken out of order, a
+  photo seeded by its place in the run instead of its index, a target
+  found one label line off, no check for extra files, for the spec hash,
+  for a task's record or for the lines' order, shares held to 3 points at
+  any sample size, a release after a failed check, any waiting job taken
+  for a held one, and `gen10k` taken from the end.
+- **The cluster's login node:** `git pull` to `20ac48d`; `fetch_fonts.py`
+  fetched the 24 files and checked them all (hashes, the 67 characters,
+  axes, licences). The same library versions as the laptop: Pillow
+  12.3.0, FreeType 2.14.3, libjpeg-turbo 3.1.4.1, OpenCV 5.0.0, numpy
+  2.4.6 (Python 3.11.11 against 3.11.13). The pools load through the
+  guards with the counts the plan has: 930 and 7,255 training backgrounds
+  (711 and 3,143 for small print), 164 validation ones (131).
+- **(changed in S6) Backgrounds are read on 32 threads** (`fef1e16`).
+  Loading the pools took **435 s on the login node**, against 3.7 s on
+  the laptop: 16,700 small files (each background's JPEG header and label
+  file) opened one after another on the shared filesystem, about 25 ms
+  each, while the job's other 23 CPUs would wait. Read on 32 threads, in
+  the same order, it took 7.8 s there (the files had been read 20 minutes
+  before, which may have helped) and 1.2 s on the laptop, and gives the
+  same pool (one SHA-256 over every background's path, size and boxes).
+  The trial made again at `fef1e16` is byte for byte the first (14,200
+  files), and the check exits with code 1 while a set is incomplete, so
+  the job stops before releasing anything.
+
 ### S7. Scoring and report code · laptop · *while the GPUs run*
 
 **Goal:** everything S8 and S9 run, written and tested before the results
