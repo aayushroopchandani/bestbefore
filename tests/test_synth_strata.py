@@ -72,9 +72,10 @@ def test_synth_val_alone_uses_the_held_out_fonts_and_the_validation_photos():
 
 def test_a_training_list_never_takes_a_validation_photo(fake_expdate):
     gen, val = _pools()
-    assert {b.path.name for b in val.by_list["val"]} == {"v1.jpg", "v2.jpg"}        # v3: under 640 px
-    assert {b.path.name for bs in gen.by_list.values() for b in bs} == {"a.jpg", "b.jpg", "img_00001.jpg",
-                                                                         "img_00002.jpg"}
+    assert [b.path.name for b in val.by_list["val"]] == ["v1.jpg", "v2.jpg"]        # v3: under 640 px
+    assert [b.path.name for bs in gen.by_list.values() for b in bs] == ["a.jpg", "b.jpg", "img_00001.jpg",
+                                                                         "img_00002.jpg"]   # in list order
+    assert [(b.width, b.height, len(b.boxes)) for b in val.by_list["val"]] == [(1100, 800, 1), (1050, 1000, 0)]
 
 
 @needs_fonts

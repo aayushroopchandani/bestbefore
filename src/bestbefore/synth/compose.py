@@ -24,6 +24,7 @@ from __future__ import annotations
 import colorsys
 import math
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -43,6 +44,8 @@ from .spec import COMPOSE, SIZE, ComposeSpec, Shares, SizeSpec
 from .text import choice, pick
 
 LUMA = np.array([0.299, 0.587, 0.114])      # Rec. 601, as OpenCV's grey
+READERS = 32                                 # threads opening backgrounds: the cluster's shared filesystem
+#                                              takes ~25 ms to open a file (S6), the laptop's SSD far less
 Rect = tuple[float, float, float, float]     # x1, y1, x2, y2 in photo pixels
 _LIGHT_SCALE = 8                             # the local-brightness map is kept at 1/8 size
 
@@ -85,20 +88,25 @@ def load_backgrounds(shares: Shares, min_side: int) -> Backgrounds:
     """Every photo of the lists in `shares` with a long side of at least
     min_side, with its size and labelled boxes. Refuses a list holding a
     test photo, one of the 14 copies of a validation photo, or a
-    validation photo outside "val" (synth-val's own list, S6)."""
+    validation photo outside "val" (synth-val's own list, S6). Each
+    photo's header and label file are read on READERS threads, in list
+    order."""
     by_list = {}
-    for name, _ in shares:
-        paths = derived.read_list(m2.list_file(name))
-        if problems := forbidden(name, paths):
-            raise ValueError(f"{name}: never a background: {', '.join(problems[:5])}"
-                             f"{' ...' if len(problems) > 5 else ''}")
-        found = []
-        for p in paths:
-            w, h = upright_size(p)
-            if max(w, h) >= min_side:
-                found.append(Background(name, p, w, h, derived.read_boxes(p)))
-        by_list[name] = tuple(found)
+    with ThreadPoolExecutor(READERS) as readers:
+        for name, _ in shares:
+            paths = derived.read_list(m2.list_file(name))
+            if problems := forbidden(name, paths):
+                raise ValueError(f"{name}: never a background: {', '.join(problems[:5])}"
+                                 f"{' ...' if len(problems) > 5 else ''}")
+            found = readers.map(lambda p, name=name: _background(name, p, min_side), paths)
+            by_list[name] = tuple(b for b in found if b is not None)
     return Backgrounds(by_list)
+
+
+def _background(name: str, path: Path, min_side: int) -> Background | None:
+    """A photo with its size and boxes; None if under min_side."""
+    w, h = upright_size(path)
+    return Background(name, path, w, h, derived.read_boxes(path)) if max(w, h) >= min_side else None
 
 
 def forbidden(name: str, paths: Sequence[Path]) -> list[str]:
