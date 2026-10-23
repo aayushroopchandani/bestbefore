@@ -1415,6 +1415,10 @@ again, it is byte-identical). What was found:
   2026-10-23 (owner): generated times are `code`**, as in ExpDate.
   Phrases like `Best Before` keep one `due` box, as the plan says; M2
   scores dates only.
+- **Codes and times print on lines of their own**, never right after a
+  date on its line (`EXP 11/2027 14:32`): the plan gives no share for
+  that, so none was invented. A date box stopping before a time on the
+  same line is therefore taught by ExpDate's photos only (Later).
 - **Speed**, on one CPU (OpenCV's own threads off, as in S6's workers):
   1,000 blocks drawn as the spec draws them, print heights from the
   plan's size bands (`render_sheet.py --time 1000 --long-side N`):
@@ -1443,7 +1447,9 @@ again, it is byte-identical). What was found:
 - **For S5:** `render.render()` gives the block at 4× (a `Layer`, one
   sprite per token in `Block.tokens` order): warp the sprites at 4×, then
   `render.shrink()`, then `render.boxes()`, with `INK` the one definition
-  of ink. `size` is the digits' height in final pixels: the print height
+  of ink. Training text takes its font from `fonts.random_family(rng,
+  "train")`, synth-val's from `"held-out"` (S6): the held-out test checks
+  that function, so it must be the one used. `size` is the digits' height in final pixels: the print height
   times the photo's long side. A boxed token whose ink is gone at its
   final size gets no box (`None`); none did here, but S5 must redraw or
   skip such a block rather than write a date without its box. The ink's
@@ -1755,6 +1761,9 @@ results/           m2_detector.md   (committed; runs/ is not)
 - **200,000 generated photos**, if `gen` clearly beats `gen10k`.
 - **Superscript ordinals** (`19ᵗʰ`), **upside-down packs** (180°), and
   **Hindi** label words.
+- **A time or lot code on the date's own line** (`EXP 11/2027 14:32`,
+  `21/05/26 L2307`), so generated photos also teach a date box to stop
+  before it (S4 prints codes and times on lines of their own).
 - **A crop mode for M3:** the generator already records each date's text,
   role and day / month / year, so it can write reader training crops.
 - **A realism check:** a small classifier trained to tell generated date
