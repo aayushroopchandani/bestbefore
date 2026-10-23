@@ -21,7 +21,7 @@ RUNS_DIR = REPO_ROOT / "results" / "runs"
 
 # Versions worth recording when installed; the rest of the env rarely matters.
 PACKAGES = ("numpy", "pillow", "rapidocr-onnxruntime", "onnxruntime",
-            "ultralytics", "torch", "fonttools")
+            "ultralytics", "torch", "opencv-python", "fonttools")
 
 
 def _git(*args: str) -> str:
