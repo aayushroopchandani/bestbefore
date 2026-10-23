@@ -3,8 +3,9 @@
 Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
 `72914` and B `72915` held); S2 done 2026-10-22 (the derived sets, on both
 machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A released,
-expected to start between 2026-10-25 and about 2026-11-09). Next: S4
-(fonts, text and rendering).
+expected to start between 2026-10-25 and about 2026-11-09); S4 done
+2026-10-23 (fonts, text and rendering; two questions for the owner before
+S5, in S4's record). Next: S5 (geometry, composing, camera).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -393,7 +394,8 @@ Each token gets its own mask, so its box is known exactly.
 License or Apache 2.0, fetched from the Google Fonts repository at a
 pinned commit and checked by SHA-256 (as `download_expdate.py` does). A
 check with `fontTools` confirms every font has every character the text
-spec uses. Candidates, pinned in S4:
+spec uses. Pinned in S4 (google/fonts `e7db6ca`, all 20 in its `ofl/`
+folder):
 
 | Split | Families |
 |---|---|
@@ -1311,6 +1313,131 @@ looks printed, boxes hugging the ink.
 `feat: font list and fetch script with hashes`,
 `feat: text renderer: solid, dot-matrix, embossed and label styles`
 
+**Done 2026-10-23.** Code from `757149d` to `ef9156e`; 328 tests pass (135
+new: `test_synth_text.py` 69, `test_synth_fonts.py` 23,
+`test_synth_render.py` 43), and each commit's tests pass in a checkout of
+that commit alone. **(changed)** The font tests have their own file,
+`tests/test_synth_fonts.py`, so each of the three modules has one. The
+render sheet is `results/runs/20261023-124738-render-sheet/sheet.png`
+(seed 0); drawn again, it is byte-identical. What was found:
+
+- **Fonts.** 24 files, 15.6 MB, from google/fonts at `e7db6ca` (main on
+  2026-10-23). Each download matched the git blob hash GitHub lists for
+  its path; the SHA-256s are in `fonts.py`. On the laptop
+  `fetch_fonts.py` fetched two of the files itself and checked all 24:
+  hash, the 67 characters the text can print (every face has all of
+  them), axes and licence.
+  - **All 20 families are SIL OFL**, in the repository's `ofl/` folder:
+    Roboto, Roboto Condensed and Roboto Mono, once Apache 2.0, have moved
+    there. Roboto Condensed's own name table still says Apache 2.0;
+    either is allowed.
+  - **Four variable fonts default to lighter than regular:** Montserrat
+    Thin (100), Source Sans 3 and Source Code Pro ExtraLight (200),
+    Merriweather Light (300). Loaded without their axes set, they would
+    draw hairline dates. Every instance names all its axes (`wght` 400 or
+    700, `wdth` 100, Merriweather's `opsz` 18, its default); a test
+    checks that Montserrat's regular draws over 1.5 times the ink of its
+    default.
+  - VT323 and Share Tech Mono have no bold. They draw regular wherever
+    bold is asked, and the layer's record says so.
+  - A loaded face at a new size costs 0.03 to 0.07 ms (FreeType reads the
+    file lazily), so faces are cached per size, and each face's axis
+    order and digit height once.
+  - On the laptop's connection the two largest files (Merriweather
+    4.6 MB, Noto Serif 1.9 MB) took over a minute each. `fetch_fonts.py`
+    waits up to 60 s between reads, not for a whole file, and moves a
+    file into place only once it is complete.
+- **Text.** Over 10,000 blocks every share is within 3 points of the
+  spec, the plan's and those fixed in S4 (a test; the range shares over
+  10,000 ranges).
+- **Boxes come from the ink, checked another way.** Each box is made from
+  its token's own shrunk sprite; the tests find the block's ink a second
+  way, all sprites on one 4× canvas shrunk with a plain numpy mean. In
+  every style, at 6 to 40 px, over 160 random blocks and 60 lone tokens,
+  every box holds all of its token's ink and touches it on all four sides
+  within 1 px, and no ink lies outside every box. No sprite has ink on its
+  edge, so nothing is cut off.
+- **Size.** `size` is the digits' height: `2031` comes out within −1 to
+  +2 px of 8, 20 and 45 px in every training font (a test). Measuring the
+  ten digits together instead made Merriweather's dates about 8% too
+  small: its `6` rises above the other digits and its `9` drops below the
+  baseline.
+- **The tests catch what they should.** 20 deliberate bugs, one at a
+  time: 9 in the text (`11st`, no day clamp, unpadded days, month-only
+  dates keeping a day, a pair running past 2035, month words at 40%, mfg
+  always first, a spaced range dash, `Month` printed as `MON`) and 11 in
+  the renderer (sprites off the 4× grid, a shrunk sprite 1 px off, boxes
+  from any alpha instead of `INK`, an inclusive box end, a dot kernel cut
+  at its radius, a relief margin of 1 px and of 2 sigma, dots without
+  soft edges, dot-matrix left undotted, variable axes not set, the
+  digits' height over all ten). All are caught. Two first got through,
+  the cut kernel and the 1 px margin, because OpenCV's blur reflects at
+  an image's border. Dots and relief now blur with a zero border (outside
+  a sprite is flat surface), and two new tests catch both.
+- **By eye, the render sheet** (each style by format family, a normal size
+  over small print shown 3×): solid, label and embossed text looks
+  printed, month words are legible at both sizes in those styles, and the
+  boxes hug the ink, the light and shade of embossed text included.
+  Dot-matrix at 7 and 9 rows looks like a coding printer next to ExpDate
+  validation dates (`contact_sheet.py --set real-val --n 80 --seed 1`):
+  distinct round dots, mostly dark, some faint.
+- **Dot-matrix at 5 rows garbles** (`2` reads as `Z`, `1` as `!`, Oswald's
+  `EXP` as `#KP`). Measured in `experiments/m2-dot-rows/`: at 5 rows a
+  bold stem is about one cell wide (median 0.99, at the edge of what the
+  40% rule keeps), 5 rows is too coarse for a TrueType glyph's curves,
+  and RapidOCR reads 1 of 160 dates at 5 rows against 13 at 7 and 41 at
+  9 (155 when drawn solid). The plan's reason for its rows names 7 and 9
+  ("5×7 and 7×9 are printer standards"). **Question 1 for the owner:
+  drop 5 rows (recommended)?** Not changed.
+- **Dots lighten as they blur, as the plan's ranges make them.** A dot's
+  darkest point is 1 − exp(−r²/2σ²): from 0.31 (radius 0.30, blur 0.35)
+  to 0.99 (radius 0.48, blur 0.15) of full ink. Kept as the plan says:
+  spread ink is lighter, and faint dot-matrix is among the validation
+  dates too.
+- **ExpDate's other labels**, seen by eye on 24 crops each of `code`, `due`
+  and `prod` boxes from real-train and from the synthetic set (seed 0;
+  counts not kept): a `code` box holds a time printed after a date
+  (`10:13`, `22:54`) or a short lot code (`L20640`, `A1`), never a word
+  like LOT; a `due` or `prod` box holds the key word only (`EXP`, `PROD`,
+  `BEFORE` of `BEST BEFORE`, `BY` of `BEST BY`), sometimes with its
+  colon. The plan prints times as distractors with no box, the opposite
+  of ExpDate's photos, which are half of what every arm sees. **Question
+  2 for the owner: box generated times as `code`, as ExpDate does
+  (recommended)?** Phrases like `Best Before` keep one `due` box, as the
+  plan says; M2 scores dates only. Not changed.
+- **Speed**, on one CPU (OpenCV's own threads off, as in S6's workers):
+  1,000 blocks drawn as the spec draws them, print heights from the
+  plan's size bands (`render_sheet.py --time 1000 --long-side N`):
+
+  | Photo's long side | Mean per block | Median | 95th percentile | Slowest | Dot-matrix mean |
+  |---|---:|---:|---:|---:|---:|
+  | 1,600 px | 11.9 ms | 4.8 ms | 50.6 ms | 154 ms | 23.0 ms |
+  | 1,000 px | 5.9 ms | 3.4 ms | 19.1 ms | 58 ms | 10.2 ms |
+
+  At 1.4 blocks a photo, that's at most about 17 ms of S6's 0.2 s per
+  photo. Large dot-matrix dates are the slow tail: their dots are drawn at
+  4× with kernels up to 185 px wide (`filter2D`). Measuring each cell's
+  coverage with `cv2.integral` instead of numpy's `cumsum` saved 15%. No
+  boxed token lost all its ink at its final size (3,269 of 3,269).
+- **A slip:** looking for real dates to compare with, I opened
+  `docs/assets/expdate_dates.jpg` before noticing it is made from the test
+  split. Nothing was designed from it; the comparison used validation
+  photos only.
+- **Not checked:** that the cluster's Pillow and FreeType draw the same
+  pixels as the laptop's (Pillow 12.3.0, FreeType 2.14.3; see S6),
+  `fetch_fonts.py` on the cluster's login node (S6), and how a block looks
+  turned, on a real surface and through a camera (S5).
+- **For S5:** `render.render()` gives the block at 4× (a `Layer`, one
+  sprite per token in `Block.tokens` order): warp the sprites at 4×, then
+  `render.shrink()`, then `render.boxes()`, with `INK` the one definition
+  of ink. `size` is the digits' height in final pixels: the print height
+  times the photo's long side. A boxed token whose ink is gone at its
+  final size gets no box (`None`); none did here, but S5 must redraw or
+  skip such a block rather than write a date without its box. The ink's
+  colour and opacity are S5's to choose: the boxes measure the drawn
+  alpha. A label's text is black on its sticker (`params["label"]`), and
+  embossed ink is white where lit, black in shade (`render.tone`).
+
 ### S5. Generator, part 2: geometry, composing, camera · laptop
 
 **Goal:** complete generated photos with labels, and a 500-photo sample
@@ -1364,6 +1491,12 @@ cluster, checked, with GPU job B released the moment they're complete.
 > tasks before S6 submits a held replacement (the chain's rule). So the
 > check job should release every held M2 job
 > (`squeue --me --name=m2 --states=PENDING`), not only `72915`.
+>
+> **And (found in S4).** Draw the render sheet on the cluster too
+> (`render_sheet.py`, seed 0) and compare it with the laptop's byte for
+> byte. If the two differ, nothing breaks (every box comes from the ink
+> drawn on the machine that drew it), but the laptop's look checks no
+> longer show the exact pixels trained on; say so in this plan.
 
 **Code:**
 
@@ -1557,10 +1690,10 @@ scripts/           derive_sets.py, score_suite.py, m2_chain.py, fetch_fonts.py, 
                    pull_cluster_results.sh
 slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sbatch,
                    m2_generate_check.sbatch
-experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/
-tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_render.py,
-                   test_synth_warp.py, test_synth_compose.py; changed: test_detection_eval.py,
-                   test_detector.py
+experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/, m2-dot-rows/
+tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_fonts.py,
+                   test_synth_render.py, test_synth_warp.py, test_synth_compose.py;
+                   changed: test_detection_eval.py, test_detector.py
 results/           m2_detector.md   (committed; runs/ is not)
 ```
 
