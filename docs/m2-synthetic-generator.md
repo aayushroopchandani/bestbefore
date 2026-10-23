@@ -1320,13 +1320,15 @@ looks printed, boxes hugging the ink.
 `feat: font list and fetch script with hashes`,
 `feat: text renderer: solid, dot-matrix, embossed and label styles`
 
-**Done 2026-10-23.** Code from `757149d` to `ef9156e`; 328 tests pass (135
-new: `test_synth_text.py` 69, `test_synth_fonts.py` 23,
-`test_synth_render.py` 43), and each commit's tests pass in a checkout of
-that commit alone. **(changed)** The font tests have their own file,
+**Done 2026-10-23.** Code from `757149d` to `846410a`, the owner's two
+decisions included (`fa8fe86`, `846410a`); 329 tests pass (136 new:
+`test_synth_text.py` 70, `test_synth_fonts.py` 23, `test_synth_render.py`
+43), and each commit's tests pass in a checkout of that commit alone.
+**(changed)** The font tests have their own file,
 `tests/test_synth_fonts.py`, so each of the three modules has one. The
-render sheet is `results/runs/20261023-124738-render-sheet/sheet.png`
-(seed 0); drawn again, it is byte-identical. What was found:
+render sheet, drawn after the decisions, is
+`results/runs/20261023-134925-render-sheet/sheet.png` (seed 0; drawn
+again, it is byte-identical). What was found:
 
 - **Fonts.** 24 files, 15.6 MB, from google/fonts at `e7db6ca` (main on
   2026-10-23). Each download matched the git blob hash GitHub lists for
@@ -1387,7 +1389,8 @@ render sheet is `results/runs/20261023-124738-render-sheet/sheet.png`
   boxes hug the ink, the light and shade of embossed text included.
   Dot-matrix at 7 and 9 rows looks like a coding printer next to ExpDate
   validation dates (`contact_sheet.py --set real-val --n 80 --seed 1`):
-  distinct round dots, mostly dark, some faint.
+  distinct round dots, mostly dark, some faint. Oswald, condensed and
+  bold, stays hard to read at 7 rows.
 - **Dot-matrix at 5 rows garbles** (`2` reads as `Z`, `1` as `!`, Oswald's
   `EXP` as `#KP`). Measured in `experiments/m2-dot-rows/`: at 5 rows a
   bold stem is about one cell wide (median 0.99, at the edge of what the
@@ -1418,14 +1421,17 @@ render sheet is `results/runs/20261023-124738-render-sheet/sheet.png`
 
   | Photo's long side | Mean per block | Median | 95th percentile | Slowest | Dot-matrix mean |
   |---|---:|---:|---:|---:|---:|
-  | 1,600 px | 11.9 ms | 4.8 ms | 50.6 ms | 154 ms | 23.0 ms |
-  | 1,000 px | 5.9 ms | 3.4 ms | 19.1 ms | 58 ms | 10.2 ms |
+  | 1,600 px | 10.7 ms | 4.7 ms | 44.9 ms | 146 ms | 20.2 ms |
+  | 1,000 px | 5.2 ms | 3.2 ms | 17.2 ms | 41 ms | 8.7 ms |
 
-  At 1.4 blocks a photo, that's at most about 17 ms of S6's 0.2 s per
+  At 1.4 blocks a photo, that's at most about 15 ms of S6's 0.2 s per
   photo. Large dot-matrix dates are the slow tail: their dots are drawn at
-  4× with kernels up to 185 px wide (`filter2D`). Measuring each cell's
-  coverage with `cv2.integral` instead of numpy's `cumsum` saved 15%. No
-  boxed token lost all its ink at its final size (3,269 of 3,269).
+  4× with kernels up to 159 px wide (`filter2D`). Measuring each cell's
+  coverage with `cv2.integral` instead of numpy's `cumsum` saved 15%;
+  dropping 5 rows, whose dots were the largest, another 12% of
+  dot-matrix's time. No boxed token lost all its ink at its final size
+  (3,265 of 3,265). Measured with nothing else running: a run beside the
+  dot-rows experiment came out about 40% slower.
 - **A slip:** looking for real dates to compare with, I opened
   `docs/assets/expdate_dates.jpg` before noticing it is made from the test
   split. Nothing was designed from it; the comparison used validation
