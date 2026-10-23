@@ -128,6 +128,33 @@ class ComposeSpec:
 
 
 @dataclass(frozen=True)
+class CameraSpec:
+    """Effects on the whole finished photo, mild on purpose ("Camera
+    effects"). Each is applied to its share of photos."""
+    defocus: float = 0.40
+    defocus_sigma: Range = (0.3, 1.2)           # Gaussian, pixels
+    motion: float = 0.10
+    motion_length: tuple[int, int] = (3, 7)     # a line kernel, pixels
+    noise: float = 0.50
+    noise_sigma: Range = (2.0, 6.0)             # Gaussian, of 255
+    glare: float = 0.15
+    glare_count: tuple[int, int] = (1, 2)
+    glare_size: Range = (0.05, 0.25)            # the ellipse's long radius, of the photo's short side
+    glare_near_block: float = 0.5               # centred near a block, else anywhere
+    uneven: float = 0.30
+    uneven_ramp: Range = (0.10, 0.25)           # brightness up and down by this much across the photo
+    dim: float = 0.10
+    dim_level: Range = (0.5, 0.8)               # brightness x this, plus noise
+    cast: float = 0.30
+    cast_shift: float = 0.08                    # white balance off by up to this per channel
+    jpeg_quality: tuple[int, int] = (70, 95)    # every photo, as it is saved
+    # Fixed in S5:
+    glare_strength: Range = (0.4, 0.9)          # how far towards white at a glare's centre
+    glare_aspect: Range = (0.4, 1.0)            # an ellipse's short radius over its long one
+    uneven_radial: float = 0.5                  # of uneven light, a radial ramp; the rest linear
+
+
+@dataclass(frozen=True)
 class GenSpec:
     """Everything a generated set is drawn with. synth-val's strata (S6)
     are overrides of it."""
@@ -136,6 +163,7 @@ class GenSpec:
     geometry: GeometrySpec = GeometrySpec()
     size: SizeSpec = SizeSpec()
     compose: ComposeSpec = ComposeSpec()
+    camera: CameraSpec = CameraSpec()
     fonts: str = "train"            # fonts.random_family's split; synth-val's: "held-out"
     backgrounds: Shares = (("train_real", 0.5), ("train_synth_clean", 0.5))   # m2 lists
 
@@ -145,6 +173,7 @@ STYLE = StyleSpec()
 GEOMETRY = GeometrySpec()
 SIZE = SizeSpec()
 COMPOSE = ComposeSpec()
+CAMERA = CameraSpec()
 GEN = GenSpec()
 
 # Photo i of a set is drawn from numpy.random.default_rng([seed, i]).

@@ -3,7 +3,7 @@
 
 Photo i of a set comes from numpy.random.default_rng([set_seed, i]) and
 nothing else, so it is the same however the work is split. make_one returns
-the JPEG's bytes, the YOLO label file
+the JPEG's bytes (the save is the camera's last step), the YOLO label file
 and the sidecar line; write_one saves the first two where Ultralytics looks,
 and the caller writes the sidecar.
 
@@ -25,7 +25,7 @@ from PIL import Image
 
 from .. import derived, yolo
 from ..samples import Box, Sample
-from . import compose, fonts, render, text, warp
+from . import camera, compose, fonts, render, text, warp
 from .compose import Backgrounds, Surface
 from .render import Layer
 from .spec import GenSpec
@@ -72,7 +72,7 @@ def image_name(i: int) -> str:
 
 def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clock | None = None) -> Made:
     """Photo i of the set with seed `set_seed`: 1 or 2 blocks drawn onto a
-    background, saved as a JPEG."""
+    background, through the camera, saved as a JPEG."""
     clock = clock or Clock()
     rng = np.random.default_rng([set_seed, i])
     c = spec.compose
@@ -113,14 +113,17 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
             "place": [x, y, layer.width, layer.height],
             "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]])
                        for t, b in zip(block.tokens, drawn.boxes)]})
-    quality = derived.JPEG_QUALITY                    # as the derived sets are saved
+    with clock("camera"):
+        effects = camera.draw(rng, width, height, [tuple(_rect(b["place"])) for b in blocks], spec.camera)
+        photo = camera.apply(photo, effects, rng)
+        quality = int(rng.integers(spec.camera.jpeg_quality[0], spec.camera.jpeg_quality[1] + 1))
     with clock("jpeg"):
         jpeg = encode(photo, quality)
     name = image_name(i)
     sidecar = {"image": name, "i": i, "seed": [set_seed, i], "size": [width, height],
                "background": {"list": bg.list, "image": bg.path.name, "size": [bg.width, bg.height],
                               "boxes": [[b.label, *(round(v, 6) for v in b.xyxy)] for b in bg.boxes]},
-               "blocks": blocks, "skipped": skipped, "jpeg_quality": quality}
+               "blocks": blocks, "skipped": skipped, "camera": effects, "jpeg_quality": quality}
     return Made(name, jpeg, label_text(sidecar), sidecar)
 
 
@@ -171,6 +174,11 @@ def _token(t: Token, box: list[int] | None) -> dict:
     if t.cls == "date":
         out |= {"role": t.role, "format": t.format, "parts": list(t.parts)}
     return out
+
+
+def _rect(place: Sequence[int]) -> tuple[int, int, int, int]:
+    x, y, w, h = place
+    return x, y, x + w, y + h
 
 
 def encode(photo: np.ndarray, quality: int) -> bytes:
@@ -254,4 +262,9 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     row("month-word dates: a day printed", ts.day_words, [d["parts"][2] is not None for _, d in words])
     row("month words with a day: an ordinal", ts.ordinal,
         ["DDth" in d["format"] for _, d in words if d["parts"][2] is not None])
+    cam = spec.camera
+    for name in ("uneven", "dim", "glare", "defocus", "motion", "cast"):
+        row(f"camera: {name}", getattr(cam, name), [name in s["camera"] for s in sidecars])
+    row("camera: noise (and every dim photo)", cam.noise + (1 - cam.noise) * cam.dim,
+        ["noise" in s["camera"] for s in sidecars])
     return rows

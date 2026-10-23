@@ -26,7 +26,7 @@ import cv2
 
 from bestbefore import derived, m2
 from bestbefore.runs import code_sha256, start_run
-from bestbefore.synth import compose, fonts, make, render, text, warp
+from bestbefore.synth import camera, compose, fonts, make, render, text, warp
 from bestbefore.synth.spec import GEN, SET_SEEDS, spec_hash
 
 _worker: dict = {}
@@ -121,7 +121,7 @@ def main() -> None:
         "backgrounds_small_print": {n: len(pool.eligible(n, GEN.compose.min_side_small)) for n, _ in GEN.backgrounds},
         "fonts": {face.file: fonts.SHA256[face.file] for f in fonts.families(GEN.fonts) for face in fonts.faces(f)},
         "git_commit": record["git_commit"], "git_dirty": record["git_dirty"], "run": run_dir.name,
-        "code_sha256": code_sha256(compose, make, render, text, warp),
+        "code_sha256": code_sha256(compose, camera, make, render, text, warp),
         "timing": {**timing(per_photo, wall, args.workers), "backgrounds_loaded_seconds": round(loaded, 1)},
         "shares": make.shares(sidecars, GEN),
     }

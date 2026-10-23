@@ -229,9 +229,12 @@ def test_uneven_density_and_a_scratch_take_ink_away():
 
 @needs_fonts
 def test_the_same_index_gives_the_same_jpeg_bytes(pool):
-    for i in range(3):
-        first, again = make.make_one(i, GEN, pool, 3), make.make_one(i, GEN, pool, 3)
-        assert first.jpeg == again.jpeg and first.labels == again.labels and first.sidecar == again.sidecar
+    every_effect = replace(GEN, camera=replace(GEN.camera, uneven=1.0, dim=1.0, glare=1.0, defocus=1.0,
+                                               motion=1.0, noise=1.0, cast=1.0))
+    for spec in (GEN, every_effect):
+        for i in range(3):
+            first, again = make.make_one(i, spec, pool, 3), make.make_one(i, spec, pool, 3)
+            assert first.jpeg == again.jpeg and first.labels == again.labels and first.sidecar == again.sidecar
     assert make.make_one(1, GEN, pool, 3).jpeg != make.make_one(2, GEN, pool, 3).jpeg
     assert make.make_one(2, GEN, pool, 4).jpeg != make.make_one(2, GEN, pool, 3).jpeg   # another set's seed
 
