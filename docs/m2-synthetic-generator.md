@@ -556,6 +556,7 @@ class Token:
     role: str | None = None          # dates only: "expiry", "mfg" or "target"
     parts: tuple[int, int, int | None] | None = None   # dates only: year, month, day
     format: str | None = None        # dates only, e.g. "DDth Month YYYY"
+    space_before: bool = True        # False: printed against the token before (a range; S4)
 
 @dataclass(frozen=True)
 class Block:
@@ -1246,11 +1247,68 @@ exact box per token.
 - `tests/test_synth_render.py`: every box holds all of its token's ink
   and touches it on all four sides (±1 px); dotify draws dots on a
   character and none on a blank; same seed, same pixels.
+- Details fixed while writing it:
+  - **Text before fonts in the commits** (the plan listed fonts first):
+    the font check needs the characters the text can print
+    (`text.CHARSET`), so the text commit comes first and every commit
+    runs on its own.
+  - **`synth/spec.py` begins in S4**, with `TextSpec` and `StyleSpec`:
+    the shares S4 uses. S5 adds the rest, `GenSpec` and its hash. Every
+    number has one home from the start.
+  - **`Token.space_before`** (default `True`): a range prints
+    `05/2025-04/2027` with no spaces, as two date tokens and a dash.
+  - **Ink is alpha ≥ 0.25** (`render.INK`, the one definition): at least a
+    quarter of a pixel covered. A faint fringe doesn't stretch a box, and
+    the thin strokes of small print still count. It is measured on the
+    drawn alpha, before S5 picks the ink's colour and opacity.
+  - **Each token is a sprite:** its own ink, styled, on a patch of the
+    block. Sprites sit on the 4× grid (positions and sizes multiples of
+    4), so shrinking a sprite gives exactly the pixels that shrinking the
+    whole block would, and a box is the tight rectangle around its
+    sprite's ink at any size.
+  - **Size is the digits' height:** `render(..., size)` takes the height
+    of the digits in final pixels, measured per face as the median top
+    and bottom of the ten digits (Merriweather's `6` and `9` stand out
+    from the rest), so a date is the same size in every font.
+  - **Basic layout, no shaping:** glyph positions don't depend on whether
+    a machine's Pillow has libraqm. No kerning; coding printers don't
+    kern either. Pillow has no letter spacing, so a token is stamped
+    glyph by glyph from bitmaps cached per block; a test compares it with
+    Pillow drawing the whole string.
+  - **Left open by the plan, fixed by rule** (in `spec.py`; nothing looked
+    at the store photos):
+    - the case share applies to month words and ordinal suffixes
+      (`4TH DECEMBER`, `4th December`, `4th december`); the `due`,
+      `prod` and code words print as listed;
+    - numbers are zero-padded (`DD` is `04`), ordinals never (`4th`);
+    - both lines of a pair carry their word (`MFG`, `EXP`): without them
+      the two dates can't be told apart;
+    - a panel's 1 to 3 extra lines (uniform) are each a code or a
+      distractor, half each, put anywhere among the lines; the pair keeps
+      its order;
+    - a range has an expiry word on 70% of lines, as a single date; its
+      two dates record their own format (`MM/YYYY`), the block's kind
+      says it was a range;
+    - a relative block's shelf life is 6, 9, 12, 18, 24 or 36 months, its
+      mfg line first 80% of the time, as a pair's;
+    - every date is any real day of 2018 to 2035, all equally likely; a
+      pair's mfg date is drawn only up to where its expiry still falls
+      in 2035;
+    - solid and label text is bold half the time; dotify and emboss
+      always use the bold instance (dotify as the plan says, emboss so
+      the relief has room);
+    - letter spacing 0 to 0.12 em after every character; every line
+      starts at the same left edge, as a coding printer prints;
+    - label: the sticker's margin 0.3 to 0.6 em, its corners rounded 0 to
+      0.3 em, white or cream;
+    - embossed: the relief is the text blurred by 0.02 to 0.05 em, lit
+      from any direction, raised or pressed half each, its steepest
+      edge at alpha 0.5 to 0.9.
 
 **Check by eye:** the render sheet. Month words legible, dot-matrix that
 looks printed, boxes hugging the ink.
-**Commits:** `feat: font list and fetch script with hashes`,
-`feat: date strings and text blocks for the generator`,
+**Commits:** `feat: date strings and text blocks for the generator`,
+`feat: font list and fetch script with hashes`,
 `feat: text renderer: solid, dot-matrix, embossed and label styles`
 
 ### S5. Generator, part 2: geometry, composing, camera · laptop
