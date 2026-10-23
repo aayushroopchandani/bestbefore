@@ -4,8 +4,9 @@ Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
 `72914` and B `72915` held); S2 done 2026-10-22 (the derived sets, on both
 machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A released,
 expected to start between 2026-10-25 and about 2026-11-09); S4 done
-2026-10-23 (fonts, text and rendering; two questions for the owner before
-S5, in S4's record). Next: S5 (geometry, composing, camera).
+2026-10-23 (fonts, text and rendering; the owner's two questions
+answered the same day: 7 and 9 dot rows, times boxed as `code`). Next:
+S5 (geometry, composing, camera).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -340,11 +341,14 @@ month-word dates with a day use an ordinal (`1st`, `2nd`, `3rd`, `4th` …
 |---|---|
 | `due` (expiry words) | `EXP`, `EXP.`, `EXP:`, `EXP DATE`, `EXPIRY DATE:`, `Best Before`, `BEST BEFORE:`, `BB`, `B.B.`, `USE BY`, `Use before` |
 | `prod` (mfg words) | `MFG`, `MFG:`, `MFD`, `Mfg. Date:`, `MFG DT`, `PKD`, `PKD:`, `Packed on:`, `DOM`, `Date of Mfg.` |
-| `code` (lot and batch) | `LOT A23K7`, `B.No. 2307B`, `BATCH: K2311`, `L 21346` |
-| no box (distractors) | `MRP Rs. 450.00`, `(Incl. of all taxes)`, `Net Wt. 1.2 kg`, `Net Qty 400 g`, `14:32`, `Best Before 12 months from Mfg.` (only `Best Before` is `due`), `1800 123 4567`, `Lic. No. 10012345678901` |
+| `code` (lot, batch and time) | `LOT A23K7`, `B.No. 2307B`, `BATCH: K2311`, `L 21346`, `14:32` |
+| no box (distractors) | `MRP Rs. 450.00`, `(Incl. of all taxes)`, `Net Wt. 1.2 kg`, `Net Qty 400 g`, `Best Before 12 months from Mfg.` (only `Best Before` is `due`), `1800 123 4567`, `Lic. No. 10012345678901` |
 
 Distractors teach "digits are not always a date", which keeps precision
-high next to prices, weights and licence numbers.
+high next to prices, weights and licence numbers. **(changed 2026-10-23,
+S4)** A time like `14:32` is a `code`, not a distractor: ExpDate's own
+photos, real and synthetic, box the time printed beside a date as
+`code`, and they are half of what every arm sees (S4's record).
 
 **Block kinds:**
 
@@ -374,7 +378,7 @@ date by what it says, not by looking different (cause 2).
 
 ```
 mask = the text rendered in a bold font, 4× size
-rows = 5, 7 or 9 dots per character height     (5×7 and 7×9 are printer standards)
+rows = 7 or 9 dots per character height        (5×7 and 7×9 printer fonts are 7 and 9 dots tall)
 pitch = character height / rows
 for every grid point:                          (horizontal pitch × 0.8 to 1.2)
     if the mask covers ≥ 40% of the point's cell: draw a round dot there
@@ -384,7 +388,10 @@ dot radius 0.30 to 0.48 × pitch, position jitter σ = 0.06 × pitch,
 
 It works on any font, so dot-matrix month names come for free. The pixel
 font VT323 gives blocky glyphs close to a real coding printer's; other
-fonts give inkjet-like ones.
+fonts give inkjet-like ones. **(changed 2026-10-23, S4)** The plan said
+5, 7 or 9 rows. At 5 rows a font's strokes are about one cell wide and
+its dates garble (`experiments/m2-dot-rows/`), and the standards named
+are 7 and 9 dots tall, so 5 rows was dropped.
 
 **Rendering at 4×, then shrinking with an area filter**, gives small text
 the soft, anti-aliased look a camera gives it, instead of sharp pixels.
@@ -1387,8 +1394,8 @@ render sheet is `results/runs/20261023-124738-render-sheet/sheet.png`
   40% rule keeps), 5 rows is too coarse for a TrueType glyph's curves,
   and RapidOCR reads 1 of 160 dates at 5 rows against 13 at 7 and 41 at
   9 (155 when drawn solid). The plan's reason for its rows names 7 and 9
-  ("5×7 and 7×9 are printer standards"). **Question 1 for the owner:
-  drop 5 rows (recommended)?** Not changed.
+  ("5×7 and 7×9 are printer standards"). **Decided 2026-10-23
+  (owner): 5 rows dropped**, so `dot_rows` is `(7, 9)`.
 - **Dots lighten as they blur, as the plan's ranges make them.** A dot's
   darkest point is 1 − exp(−r²/2σ²): from 0.31 (radius 0.30, blur 0.35)
   to 0.99 (radius 0.48, blur 0.15) of full ink. Kept as the plan says:
@@ -1400,11 +1407,11 @@ render sheet is `results/runs/20261023-124738-render-sheet/sheet.png`
   (`10:13`, `22:54`) or a short lot code (`L20640`, `A1`), never a word
   like LOT; a `due` or `prod` box holds the key word only (`EXP`, `PROD`,
   `BEFORE` of `BEST BEFORE`, `BY` of `BEST BY`), sometimes with its
-  colon. The plan prints times as distractors with no box, the opposite
-  of ExpDate's photos, which are half of what every arm sees. **Question
-  2 for the owner: box generated times as `code`, as ExpDate does
-  (recommended)?** Phrases like `Best Before` keep one `due` box, as the
-  plan says; M2 scores dates only. Not changed.
+  colon. The plan had times as distractors with no box, the opposite of
+  ExpDate's photos, which are half of what every arm sees. **Decided
+  2026-10-23 (owner): generated times are `code`**, as in ExpDate.
+  Phrases like `Best Before` keep one `due` box, as the plan says; M2
+  scores dates only.
 - **Speed**, on one CPU (OpenCV's own threads off, as in S6's workers):
   1,000 blocks drawn as the spec draws them, print heights from the
   plan's size bands (`render_sheet.py --time 1000 --long-side N`):
