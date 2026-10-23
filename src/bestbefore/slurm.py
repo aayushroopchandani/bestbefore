@@ -1,6 +1,7 @@
 """Slurm, for M2's GPU work queue (scripts/m2_chain.py): which of our jobs
 Slurm still lists, how long this job has left, submitting a replacement,
-and claiming tasks so that two jobs never run the same one."""
+and claiming tasks so that two jobs never run the same one. Also releasing
+held jobs, once the generated data they wait for is checked (S6)."""
 from __future__ import annotations
 
 import math
@@ -42,6 +43,25 @@ def jobs_named(name: str) -> dict[str, str] | None:
     """Our jobs with this name: id -> state (PENDING, RUNNING, ...)."""
     lines = squeue(f"--name={name}", "--format=%i %T")
     return None if lines is None else dict(line.split(maxsplit=1) for line in lines)
+
+
+def held(name: str) -> list[str] | None:
+    """Ids of our jobs with this name that wait held by us (reason
+    JobHeldUser), oldest first; None where squeue can't be asked."""
+    lines = squeue(f"--name={name}", "--states=PENDING", "--format=%i %r")
+    if lines is None:
+        return None
+    jobs = [line.split(maxsplit=1) for line in lines]
+    return sorted((job for job, reason in jobs if reason == "JobHeldUser"), key=int)
+
+
+def release(job: str) -> tuple[bool, str]:
+    """scontrol release one job: whether Slurm took it, and what it said."""
+    try:
+        out = subprocess.run(["scontrol", "release", job], capture_output=True, text=True, timeout=120)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    return out.returncode == 0, (out.stdout + out.stderr).strip()
 
 
 def time_left() -> float:
