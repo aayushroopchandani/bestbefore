@@ -198,7 +198,10 @@ this repo.
   tracked by cgroup (`proctrack/cgroup`), so even one in its own process
   group ends with its job. A job whose node fails is requeued under the
   same id and runs its script again from the top (`JobRequeue=1`).
-  `squeue --me` lists only our own jobs.
+  `squeue --me` lists only our own jobs. While 2 of our jobs run, a waiting
+  one shows reason `QOSMaxJobsPerUserLimit` (seen 2026-10-23).
+  `sacct`'s `MaxRSS` is sampled, so it can be far under the true peak
+  (4.7 GB reported for 24 workers that each peaked near 0.9 GB, M2 S6).
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. **There is
