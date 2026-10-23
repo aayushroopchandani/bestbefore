@@ -6,9 +6,10 @@ machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A released,
 expected to start between 2026-10-25 and about 2026-11-09); S4 done
 2026-10-23 (fonts, text and rendering; the owner's two questions
 answered the same day: 7 and 9 dot rows, times boxed as `code`); S5 done
-2026-10-23 (geometry, composing, camera; the 500-photo sample looked at,
-two findings for the owner: blocks off the pack, faint dates). Next: S6
-(generate at scale).
+2026-10-23 (geometry, composing, camera; the 500-photo sample looked at;
+the owner's decisions on its two findings the same day: a floor on faint
+ink, applied; blocks near the background's dates, checked first and found
+no help, so back with the owner). Next: S6 (generate at scale).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -463,6 +464,15 @@ enlarged later at 1,280 px input.
   background alike.
 - **Ink defects:** opacity 75 to 100%, uneven density, a slight spread,
   and now and then a scratch through a character.
+- **No box round ink that barely shows** (added 2026-10-23, owner, after
+  S5's look check): once a block is laid on, every boxed token's ink must
+  change the photo by at least 0.04, or the block is taken off again and
+  gets a fresh ink; after 3 inks it is skipped and recorded. The change is
+  the colour distance, weighted by the ink's alpha and scaled so that a
+  grey change is its change in luminance (0 to 1): 0.04 is half the
+  smallest low-contrast gap above. Colour counts as well as light: strong
+  blue on dark brown is close in luminance, yet a camera sees it. An
+  embossed block's relief is its only "ink", so one too faint is skipped.
 
 ### Camera effects (`synth/camera.py`)
 
@@ -1592,8 +1602,8 @@ that commit alone. The sample, `gen-sample`: 500 photos from `edfe264`
 (clean tree), seed 3, in `$GENERATED_DIR/m2/gen/` with
 `manifests/gen-sample.json` (run `20261023-201420-m2-generate-gen-sample`);
 its contact sheet is `results/runs/20261023-201527-contact-gen-sample/`.
-Two findings wait for the owner (below); nothing in the plan was changed
-for them. What was found:
+The owner decided on its two findings the same day (below). What was
+found:
 
 - **The sample.** 701 blocks placed; 6 skipped for want of a free place
   (0.8%), 17 placed after shrinking to 80%, none drawn again for lost
@@ -1713,7 +1723,21 @@ for them. What was found:
   time, is often not the pack: a hand or an out-of-focus shelf has a lower
   gradient than printed packaging. So crisp text lands on blurred
   surfaces, a sign of pasting a model could learn instead of the date.
-  The plan's rule stands until the owner decides.
+  **Decided 2026-10-23 (owner): place blocks near the background's
+  labelled dates, which are printed on the pack. Checked before writing
+  it, on the same 72 blocks, and not applied:** nearness to the dates
+  doesn't tell pack from not-pack in these photos. Dates are often
+  printed near a pack's edge, a hand or the floor just beyond, while much
+  of the pack lies far from them. Of the blocks whose centre is within
+  0.2 of the long side of the dates' boxes, 7 of 25 are off the pack (28%,
+  as of all 72); within 0.15, 4 of 15. Three other signals, measured the
+  same way, are weak too: distance from the photo's edges (a centre at
+  least 0.15 of the short side in would keep 42 of the 52 blocks on the
+  pack and 10 of the 20 off it, so about 19% off instead of 28%), colour
+  like the pack round the dates (AUC 0.64, against 0.5 for chance) and
+  the surface's detail. So the plan's rule stands, and the choice is back
+  with the owner: keep it, with a mask of the pack as a Later item, or
+  keep blocks off the photo's edges.
 - **For the owner (2): faint dates.** The same measure on generated and
   real dates, the contrast inside each date box (Otsu's split of its
   luminance: the bright half's mean minus the dark half's, 0 to 255):
@@ -1728,7 +1752,11 @@ for them. What was found:
   third of it falls under 20 (solid 35%, dot-matrix 32%), next to 3% of
   solid and 9% of dot-matrix dates without it. So about 1 generated date
   in 11 is boxed round almost nothing visible, against 1 in 90 real ones.
-  The shares are the plan's and stand until the owner decides.
+  **Decided 2026-10-23 (owner): a fresh ink for any boxed token whose ink
+  barely changes the photo**, keeping every share: the rule in
+  [Placement and blending](#placement-and-blending-synthcomposepy).
+  Measured on the same 500 photos in the record after the decisions,
+  below.
 - **Not checked:** that the cluster draws the same pixels (Pillow,
   FreeType, libjpeg and OpenCV builds; S6 compares the render sheet, and
   can compare a few generated photos too); the speed on the cluster's
