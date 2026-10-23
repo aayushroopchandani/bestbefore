@@ -126,13 +126,13 @@ def render(block: Block, style: str, family: Family, size: float,
                 ink = dotify(ink, baseline + digit_top, dots, rng)
             elif ink is not None and style == "embossed":
                 ink = emboss(ink, **relief)
-            sprites.append(None if ink is None else _aligned(ink, k))
+            sprites.append(None if ink is None else aligned(ink, k))
 
     backing = None
     if style == "label":
         backing, params["label"] = _sticker([s for s in sprites if s], px, spec, rng)
-        backing = _aligned(backing, k)
-    return _placed(sprites, backing, k, params)
+        backing = aligned(backing, k)
+    return assemble(sprites, backing, k, params)
 
 
 def _glyph(font, ch: str) -> _Glyph:
@@ -162,7 +162,7 @@ def _stamp(placed: list[tuple[_Glyph, int]], baseline: int) -> Sprite | None:
     return Sprite(x0, y0, alpha)
 
 
-def _aligned(s: Sprite, k: int) -> Sprite:
+def aligned(s: Sprite, k: int) -> Sprite:
     """The sprite with at least one blank pixel around it, grown to a
     position and size that are multiples of k."""
     h, w = s.alpha.shape
@@ -173,7 +173,7 @@ def _aligned(s: Sprite, k: int) -> Sprite:
                   None if s.tone is None else np.pad(s.tone, pad))
 
 
-def _placed(sprites: list[Sprite | None], backing: Sprite | None, k: int, params: dict) -> Layer:
+def assemble(sprites: list[Sprite | None], backing: Sprite | None, k: int, params: dict) -> Layer:
     """The sprites moved so the block's top-left is (0, 0), on the k grid."""
     every = [s for s in (*sprites, backing) if s is not None]
     if not every:

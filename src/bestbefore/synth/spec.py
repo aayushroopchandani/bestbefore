@@ -2,9 +2,10 @@
 (docs/m2-synthetic-generator.md, "The spec"). Never tuned on the store
 photos, which nothing here was designed from.
 
-S4 writes the parts it uses: the text and the print styles. S5 adds
-geometry, size, composing and camera effects, the GenSpec holding them all,
-and its hash.
+S4 wrote the text and the print styles; S5 adds geometry, size, composing
+and camera effects, and GenSpec, which holds them all. GenSpec's hash goes
+into every manifest and training record, so each model names exactly the
+data it saw. Numbers the plan left open are marked "fixed in S5".
 """
 from __future__ import annotations
 
@@ -61,5 +62,24 @@ class StyleSpec:
     emboss_strength: Range = (0.5, 0.9)   # alpha where the relief is steepest
 
 
+@dataclass(frozen=True)
+class GeometrySpec:
+    """How a block is turned and bent ("Geometry"). Angles in degrees."""
+    orientation: Shares = (("upright", 0.55), ("tilted", 0.15), ("sideways", 0.30))
+    upright_angle: float = 5.0                  # upright: within this either way
+    tilt_angle: Range = (5.0, 35.0)             # tilted: this far, either way
+    sideways_angle: float = 8.0                 # sideways: 90 or 270, then within this either way
+    surface: Shares = (("flat", 0.75), ("cylinder", 0.15), ("bend", 0.10))
+    perspective: float = 0.40                   # blocks seen at an angle
+    # Fixed in S5:
+    cylinder_arc: Range = (40.0, 100.0)         # how much of a can's round the block's width covers
+    cylinder_edge: float = 70.0                 # neither end turns further than this from the camera
+    bend_arc: Range = (20.0, 70.0)              # how much of a circle the bent lines follow
+    perspective_tilt: Range = (10.0, 30.0)      # the block's plane turned from facing the camera
+    perspective_distance: Range = (2.0, 5.0)    # the camera's distance, in block diagonals
+
+
 TEXT = TextSpec()
 STYLE = StyleSpec()
+GEOMETRY = GeometrySpec()
+
