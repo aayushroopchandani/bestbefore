@@ -9,7 +9,8 @@ answered the same day: 7 and 9 dot rows, times boxed as `code`); S5 done
 2026-10-23 (geometry, composing, camera; the 500-photo sample looked at;
 the owner's decisions on its two findings the same day: a floor on faint
 ink, applied; blocks near the background's dates, checked first and found
-no help, so back with the owner). Next: S6 (generate at scale).
+no help, so the plan's placement is kept and a mask of the pack goes to
+Later). Next: S6 (generate at scale).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -1742,7 +1743,14 @@ What was found:
   like the pack round the dates (AUC 0.64, against 0.5 for chance) and
   the surface's detail. So the plan's rule stands, and the choice is back
   with the owner: keep it, with a mask of the pack as a Later item, or
-  keep blocks off the photo's edges.
+  keep blocks off the photo's edges. **Decided 2026-10-23 (owner): keep
+  the plan's placement**, and a mask of the pack goes to Later. An edge
+  margin would only trim the off-pack share (28% to about 19%), at the
+  cost of one on-pack place in five and of every generated date near a
+  photo's edge. Off-pack blocks keep their right boxes, so they teach
+  nothing wrong; at worst they are easy examples. If synth-val scores
+  well above the real hard sets, the generated look is the suspect, and
+  the mask is the fix.
 - **For the owner (2): faint dates.** The same measure on generated and
   real dates, the contrast inside each date box (Otsu's split of its
   luminance: the bright half's mean minus the dark half's, 0 to 255):
@@ -2107,6 +2115,16 @@ results/           m2_detector.md   (committed; runs/ is not)
 - **A realism check:** a small classifier trained to tell generated date
   crops from real ones; the less it can, the better the generator.
 - **More backgrounds** from public pack photos, licences checked.
+- **A mask of the pack, so generated blocks land on it** (from S5's look
+  check). The plainest free place is often not the pack: 20 of 72 blocks
+  on the 50 photos looked at lay mostly on hands, floors, tables, shelves
+  or walls, often as sharp text on a blurred surface. Nearness to the
+  background's dates, distance from the photo's edges, colour and detail
+  all failed to tell pack from not-pack (S5's record), so the mask needs
+  a model: a segmentation model's object masks, say, made once per
+  background and kept beside it, with candidate places drawn inside the
+  mask. Worth it if the M2 results point at the generated look
+  (synth-val well above the real hard sets).
 - **Oriented boxes** (YOLO-OBB) for tilted dates.
 - **A longer budget** if the loss curves are still falling at the end.
 - From M1, still open: YOLO26 or a permissively licensed detector
