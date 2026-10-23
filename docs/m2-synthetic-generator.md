@@ -1832,77 +1832,142 @@ What was found:
   photos in the `val` list only. Loading the background pool takes about
   3 s, once per job.
 
-### S6. Generator, part 3: generate at scale · laptop, then a CPU job array · *releases GPU job B*
+### S6. Generator, part 3: generate at scale · laptop, then one CPU job · *releases GPU job B*
 
 **Goal:** the 50,000 training photos and the 2,100-photo synth-val on the
 cluster, checked, with GPU job B released the moment they're complete.
 
-> **To revise when S6 is written (found in S1).** Each array task counts
-> as one job toward the 5-job cap, and jobs A and B already take 2 of the
-> 5, so the 51-task array below can't be submitted. Recommended instead:
-> one job on `short` using a whole node (48 CPUs, `--workers 48`), still
-> split into the same `--task` ranges inside the job, so any split gives
-> the same photos. At S6's estimate of 0.2 s per photo per CPU, that's
-> about 4 minutes.
->
-> **Also to revise (found in S3).** A GPU job that runs out of ready
-> tasks before S6 submits a held replacement (the chain's rule). So the
-> check job should release every held M2 job
-> (`squeue --me --name=m2 --states=PENDING`), not only `72915`.
->
-> **And (found in S4).** Draw the render sheet on the cluster too
-> (`render_sheet.py`, seed 0) and compare it with the laptop's byte for
-> byte. If the two differ, nothing breaks (every box comes from the ink
-> drawn on the machine that drew it), but the laptop's look checks no
-> longer show the exact pixels trained on; say so in this plan.
+**(changed in S6) One job, not an array and a check job.** The plan had a
+51-task array (4 CPUs each) and a check job waiting on it. Each array
+task counts as one job toward the account's caps of 5 submitted and 2
+running, which every job of ours shares (S1). On 2026-10-23 jobs A and B
+and another project's job took 3 of the 5 and 1 of the 2. So one job does
+everything, in order: it draws the render sheet, makes the 51 tasks with
+one worker process per CPU, checks them, and only then releases the held
+GPU jobs. The tasks keep the plan's photo ranges and each photo its own
+random generator, so the photos are the ones the array would have made.
+The three notes found earlier are part of it:
+
+- (S1) one job on `short`, the `--task` ranges split across workers inside
+  it: 24 CPUs rather than a whole node, which fits beside other jobs on a
+  partly used node and still takes minutes at S5's 55 ms a photo;
+- (S3) the job releases **every** held M2 job (`squeue --me --name=m2`,
+  reason `JobHeldUser`), since the chain may have submitted a held
+  replacement, and nothing if the check fails;
+- (S4) the job draws the render sheet (seed 0) on the cluster, to compare
+  with the laptop's byte for byte, with a few generated photos too.
 
 **Code:**
 
+- `synth/spec.py`: the synth-val strata, each an override of `GenSpec`
+  (rules in the details below), and the held-out fonts.
+- `synth/make.py`: `make_one(..., stratum)` writes the stratum into the
+  sidecar.
+- `synth/batch.py` **(new module)**: the tasks, generating them on many
+  processes, and the check. `scripts/generate.py` only parses arguments,
+  so the tests drive the same code the job runs.
+- `scripts/generate.py`:
+  - `--tasks 0-50` (any list or range): tasks 0 to 49 write `gen` photos
+    `1000·N` to `1000·N + 999`; task 50 writes synth-val. All the tasks
+    asked share one pool of `--workers` processes; each photo has its own
+    random generator, so any split gives the same photos.
+  - `--check`: counts the photos, opens every image, rebuilds every label
+    file from its sidecar line and compares them byte for byte, measures
+    the shares against the spec, then writes the lists (`gen50k`,
+    `gen10k` = photos 0 to 9,999, `synth_val`) and
+    `manifests/{gen,synth-val}.json` with `complete: true`, the spec hash,
+    the git commit and the font hashes. It saves the same numbers as a
+    run record in `results/runs/`, so `pull_cluster_results.sh` brings
+    them to the laptop. It exits with an error, saying why, if anything is
+    missing or wrong.
+  - `--release m2`: after a check that passed, release every held job of
+    that name. A failed check releases nothing.
 - `derived.load_yolo_set(list_path, sidecar=None)` (moved from S2): with
   a sidecar, `target` dates load as `exp` and the stratum becomes the
   sample's `tag`, so the evaluator's expiry recall is synth-val's target
-  recall per stratum. `sets.py`: `synth-val`.
-
-- `synth/spec.py`: the synth-val strata and the held-out fonts.
-- `scripts/generate.py`:
-  - `--task N`: tasks 0 to 49 write `gen` photos `1000·N` to `1000·N + 999`;
-    task 50 writes synth-val. Each task uses `--workers` processes, and
-    each photo its own random generator, so any split gives the same
-    photos.
-  - `--check`: counts the photos, opens every image, parses every label
-    file, checks label lines against the sidecars, measures the shares
-    against the spec, then writes the lists (`gen50k`, `gen10k` = photos
-    0 to 9,999, `synth_val`) and `manifests/{gen,synth-val}.json` with
-    `complete: true`, the spec hash, the git commit and the font hashes.
-    It saves the same numbers as a run record in `results/runs/`, so
-    `pull_cluster_results.sh` brings them to the laptop. It exits with an
-    error if anything is missing.
-- `slurm/m2_generate.sbatch`: an array `0-50`, partition `short`, 4 CPUs,
-  8 GB, 2 hours per task.
-- `slurm/m2_generate_check.sbatch`: runs `generate.py --check`; if it
-  succeeds and `GPU_JOB` is set, `scontrol release "$GPU_JOB"`.
+  recall per stratum. `sets.py`: `gen` and `synth-val`.
+- `slurm.py`: `held(name)` and `release(job)`.
+- `slurm/m2_generate.sbatch`: partition `short`, 24 CPUs, memory from the
+  laptop's measurement (step 1); the render sheet, `--tasks 0-50`,
+  `--check --release m2`. It downloads nothing: compute nodes have no
+  internet, so the fonts are fetched on the login node first, and the
+  check compares each font file's SHA-256 with the pinned one.
+- `scripts/contact_sheet.py --per-tag K`: K photos of each tag, one row
+  per tag, and the targets' crops one row per tag (synth-val's strata).
 - `docs/datasets.md`: a "Generated data (M2)" section: what is generated,
   the spec, counts, sizes, fonts and their licences.
+- `tests/test_synth_strata.py`: each stratum changes one thing from
+  `clean`; synth-val alone draws held-out fonts on validation photos, and
+  the generator asks for fonts by its spec's split; every synth-val photo
+  has one target, which loads as `exp` with its stratum as tag.
+- `tests/test_synth_batch.py`: two different splits give identical files;
+  the check passes a good set and fails a broken one, saying why; held
+  jobs are released only after a check that passed; training pools refuse
+  validation and test photos and the 14 copies.
+- `tests/conftest.py`: a made-up ExpDate (training, synthetic, validation
+  and test photos, label files, lists) in a temporary folder, so both
+  files load backgrounds through the real guards.
+- Details fixed while writing it (nothing looked at the store photos):
+  - **One target per synth-val photo:** one block (`two_blocks` 0), a
+    single line (`kinds` single), its date's role `target`. A block can be
+    skipped (no free place, ink too faint: 1.4% of S5's blocks), which
+    would leave a photo with no target, so a skipped synth-val block is
+    replaced by a freshly drawn one, up to 10 draws
+    (`ComposeSpec.block_tries`; training keeps 1, so its random draws are
+    unchanged).
+  - **The strata change only what the plan lists.** `clean` is the
+    training spec with: one target on a single line, numbers
+    (`month_word` 0), the normal band, upright, flat, solid or label.
+    Everything the plan doesn't name follows the training spec, as it
+    says of camera effects: perspective, ink, ink defects, the expiry
+    word before the date. Where a stratum keeps part of a training share,
+    the kept names keep their training proportions: solid 40 : label 15,
+    cylinder 15 : bend 10. `mixed` is the training spec with one target.
+  - **Validation backgrounds: 164, not 165.** One validation photo is
+    590 px on its long side, and decision 1's rule (at least 640 px)
+    leaves it out, as it does for training. 131 are at least 1,000 px, the
+    small stratum's backgrounds.
+  - **Shares within 3 points, or 3 standard errors where samples are
+    small.** At 50,000 photos 3 standard errors are under 1 point, so this
+    is the plan's 3-point rule. A 300-photo stratum's standard error is up
+    to 2.9 points, so there a 3-point bound would fail by chance about a
+    third of the time. A share the spec fixes at 0 or 1 must match exactly.
+  - **Tasks write their own files.** Each task writes its photos, its
+    label files, its sidecar lines in photo order
+    (`gen/sidecars/tasks/NN.jsonl`) and then a record of how it was made
+    (commit, spec hash, code hashes, timing). The check needs every task's
+    record, the same spec hash in all of them, and then joins the task
+    sidecars into one per set (`gen/sidecars/gen50k.jsonl`,
+    `synth_val.jsonl`).
+  - **The check also re-checks the guards on what was made:** every
+    training photo's background is from `train_real` or
+    `train_synth_clean` and is no validation or test photo and none of the
+    14 copies, every training block's font is a training family, and
+    every synth-val block's a held-out one on a validation background.
+  - **Every file's SHA-256** goes into the check's run record, so the
+    laptop can compare its own photos with the cluster's.
 
 **Steps:**
 
-1. Laptop: `generate.py --set gen-sample --count 1000 --workers 4`,
-   timed, to size the tasks (expected: about 0.2 s per photo per CPU, so
-   a task takes about a minute).
+1. Laptop trial: `generate.py --tasks 0-4,50 --workers 4` (5,000 `gen`
+   photos and all of synth-val), timed, with each worker's peak memory;
+   then `generate.py --check`, which must find `gen` incomplete (tasks 5
+   to 49 missing) and pass synth-val; then
+   `contact_sheet.py --set synth-val --per-tag 8` for the owner.
 2. Commit, push. Cluster, login node: `git pull`,
    `python scripts/fetch_fonts.py`.
-3. Submit, from the login node:
-
-   ```bash
-   ARRAY=$(sbatch --parsable slurm/m2_generate.sbatch)
-   sbatch --dependency=afterok:$ARRAY --export=ALL,GPU_JOB=72915 slurm/m2_generate_check.sbatch
-   ```
+3. Count our jobs (submitted and running), then the owner submits from
+   the login node: `sbatch slurm/m2_generate.sbatch`.
+4. After the job: `scripts/pull_cluster_results.sh`; the manifests; job B
+   no longer held; the render sheet and the photos made on both machines
+   compared byte for byte.
 
 **Check:** the manifests say `complete: true` with 50,000 and 2,100
 photos; the measured shares are within 3 points of the spec; job B shows
 as eligible (`squeue -j 72915` reason no longer `JobHeldUser`).
 **Commits:** `feat: synth-val strata with held-out fonts`,
-`feat: generation job array and completeness check`,
+`feat: generation at scale in one job, with its completeness check`,
+`feat: contact sheet with a row per tag`,
 `docs: generated data in the dataset notes`
 
 ### S7. Scoring and report code · laptop · *while the GPUs run*
@@ -1991,7 +2056,7 @@ code changed), then `docs: m2 experiment results`
 S1 ─► GPU jobs A and B wait, held
 S2 ─► [CPU: derived sets] ──┐
 S3 ─────────────────────────┴─► release A ─► [GPU: stage 1: smoke, speed, base ×3, rot ×3]
-S4 ─► S5 ─► S6 ─► [CPU array: generate] ─► [check] ─► release B ─► [GPU: stage 2: pilot, 1280 ×3, gen, gen-rot, gen10k ×3]
+S4 ─► S5 ─► S6 ─► [CPU job: generate, check, release B] ─► [GPU: stage 2: pilot, 1280 ×3, gen, gen-rot, gen10k ×3]
                                                    S7 (while the GPUs run)
                                                    S8 (once every run is scored) ─► S9
 ```
@@ -2030,7 +2095,7 @@ column is filled in as runs finish.
 | CPU work | Size | Estimate |
 |---|---|---|
 | derived sets | 12,987 photos written | about 15 CPU-minutes (minutes on 16 CPUs) |
-| generation | 52,100 photos | about 3 CPU-hours (minutes of wall time as an array) |
+| generation | 52,100 photos | about 3 CPU-hours (minutes of wall time as an array); S5 measured 55 ms a photo, so about 48 CPU-minutes, in one 24-CPU job (S6) |
 | check | reads all of them | under 10 minutes |
 
 **Storage** on the cluster: generated photos about 12.5 GB, turned copies
@@ -2041,16 +2106,16 @@ about 1.5 GB, synth-val about 0.5 GB, checkpoints under 1 GB. About
 
 ```
 docs/              m2-synthetic-generator.md; datasets.md gains "Generated data (M2)"
-src/bestbefore/    m2.py, derived.py, slurm.py, synth/{spec,fonts,text,render,warp,compose,camera,make}.py;
+src/bestbefore/    m2.py, derived.py, slurm.py, synth/{spec,fonts,text,render,warp,compose,camera,make,batch}.py;
                    changed: config.py, detector.py, detection_eval.py, sets.py, runs.py, yolo.py
 scripts/           derive_sets.py, score_suite.py, m2_chain.py, fetch_fonts.py, render_sheet.py,
                    generate.py, m2_report.py; changed: train_detector.py, eval_detector.py,
                    pull_cluster_results.sh
-slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sbatch,
-                   m2_generate_check.sbatch
+slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sbatch
 experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/, m2-dot-rows/
 tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_fonts.py,
-                   test_synth_render.py, test_synth_warp.py, test_synth_compose.py, test_synth_camera.py;
+                   test_synth_render.py, test_synth_warp.py, test_synth_compose.py, test_synth_camera.py,
+                   test_synth_strata.py, test_synth_batch.py;
                    changed: test_detection_eval.py, test_detector.py
 results/           m2_detector.md   (committed; runs/ is not)
 ```
