@@ -171,3 +171,112 @@ Checked on 2026-10-20 in
 - **Same product, separate photo:** 2 clear validation / train pairs
   (and 1 possible) show different packs of the same product. That's
   normal for photos taken in shops, and they're left in.
+
+---
+
+## Generated data (M2)
+
+Photos made for M2 by drawing dates onto ExpDate photos
+(`docs/m2-synthetic-generator.md`, "The generator"; code in
+`src/bestbefore/synth/`). They are built on ExpDate's photos, so they
+inherit its licence (CC BY 4.0: cite the paper, credit KIST), and like
+ExpDate they are never committed. Nothing in them was designed from a
+store photo.
+
+### What is made
+
+| Set | Photos | Seed | Backgrounds | Fonts | Used for |
+|---|---:|---:|---|---|---|
+| `gen` (list `gen50k`) | 50,000 | 1 | ExpDate training photos, half real (930), half synthetic (7,255), at least 640 px, never a validation or test photo nor the 14 copies | the 16 training families | training (`gen`, `gen-rot`, `gen-rot-1280`) |
+| `gen10k` | 10,000 | | `gen`'s photos 0 to 9,999 (a list, not new photos) | | training (`gen10k`, listed 5 times) |
+| `synth-val` | 2,100 | 2 | the validation photos (164 of 165: one is under 640 px) | the 4 held-out families | validation suite only |
+| `gen-sample` | 500 | 3 | as `gen` | as `gen` | looking at (S5), never training |
+
+Each generated photo is one background with 1 block (60%) or 2 (40%) of
+printed text drawn on it, through one camera: dates in 39 formats and 2
+range formats (a month word on 45% of them, full names and ordinals
+included), the words and codes around them, and distractors with numbers
+that are not dates. Every share and range is in `GenSpec`
+(`synth/spec.py`); its SHA-256 goes into every manifest and training
+record.
+
+**synth-val** has 7 strata of 300 photos, each one block of one line on a
+validation photo, its date the **target**, loaded as `exp` (so the
+evaluator's expiry recall is the target recall), its stratum as the
+photo's tag. `clean` is upright, numeric, normal size, solid or label
+print, flat; `sideways`, `month-word`, `small` (on validation photos of at
+least 1,000 px), `dot-matrix` and `curved` each change one thing from it;
+`mixed` is drawn with the training spec.
+
+### What was made (job `72995`, 2026-10-23)
+
+Checked by `generate.py --check` on the cluster: every image opens whole,
+every label file equals the one rebuilt from its sidecar line, and every
+share the spec sets is within 3 points at 50,000 photos (in fact within
+0.73), or within 3 standard errors in synth-val's 300-photo strata, with
+the shares a stratum fixes exact.
+
+| | `gen` | `synth-val` |
+|---|---:|---:|
+| photos | 50,000 | 2,100 |
+| new dates | 109,628 (2.19 a photo) | 2,100 targets |
+| boxes (with the backgrounds' own): date / due / prod / code | 174,042 / 92,530 / 48,574 / 38,159 | 4,494 / 3,011 / 223 / 1,001 |
+| blocks placed / skipped (no free place, too faint) | 68,480 / 1,219, 344 | 2,100 / 4, 0 |
+| JPEGs | 9.24 GB (185 kB each) | 0.39 GB |
+| sidecar | 82 MB | 2.4 MB |
+| spec SHA-256 | `3fc14178…` (`GenSpec`) | `ba77f1bd…` (the 7 strata) |
+
+The whole run took 6 minutes on 24 CPUs (150 ms a photo per CPU). The
+cluster (x86-64) and the laptop (arm64) draw the same photos up to the
+last bits of floating-point work: 85% of training photos are
+byte-identical, almost all the rest differ by a grey level or two in a
+few pixels, and 0.17% place a block differently. Every box comes from the
+machine that drew it, so the labels are right on each.
+
+### Labels and files
+
+- **Boxes** come from the ink drawn, after every bend and turn: the tight
+  upright rectangle round each token's ink. Classes as ExpDate's YOLO
+  labels: `0 date`, `1 due`, `2 prod`, `3 code`; the background's own boxes
+  follow the generated ones. A date box covers the date with its
+  separators and ordinal, not the `EXP` word (`due`); a range is two dates.
+- **The sidecar**, one JSON line per photo in photo order, records
+  everything drawn: the background, each block's text, style, font, size,
+  geometry, ink and place, each token's text, class and box, and for
+  dates their role (`expiry`, `mfg`, or synth-val's `target`), format and
+  year, month and day (M3 can reuse them).
+
+```
+$GENERATED_DIR/m2/
+├── gen/images/{gen50k,synth_val,gen_sample}/NNNNNN.jpg
+├── gen/labels/{gen50k,synth_val,gen_sample}/NNNNNN.txt
+├── gen/sidecars/{gen50k,synth_val,gen_sample}.jsonl     one line per photo
+├── gen/sidecars/tasks/NN.jsonl, NN.json                 each task's lines and record
+├── lists/{gen50k,gen10k,synth_val}.txt                  absolute paths
+└── manifests/{gen,synth-val}.json                       complete: true once checked
+```
+
+### Fonts
+
+20 families from the Google Fonts repository at commit `e7db6ca`, all
+under the SIL Open Font License 1.1 (Roboto Condensed's own name table
+still says Apache 2.0; either allows this use). 24 files, 15.6 MB, each
+checked against its SHA-256 in `synth/fonts.py`; fetched by
+`scripts/fetch_fonts.py` into `$GENERATED_DIR/fonts/`, never committed.
+
+| Split | Families |
+|---|---|
+| training (16) | Roboto, Open Sans, Lato, Montserrat, Source Sans 3, Noto Sans, Work Sans, Oswald, Roboto Condensed, Barlow Condensed, Noto Serif, Merriweather, Roboto Mono, Source Code Pro, Share Tech Mono, VT323 |
+| synth-val only (4) | IBM Plex Sans, Archivo Narrow, PT Serif, IBM Plex Mono |
+
+### Reproduce
+
+```bash
+python scripts/fetch_fonts.py                          # on the cluster, on the login node
+sbatch slurm/m2_generate.sbatch                        # or, anywhere:
+python scripts/generate.py --tasks 0-50 --workers 24
+python scripts/generate.py --check --workers 24
+```
+
+Photo `i` comes from `numpy.random.default_rng([seed, i])` alone, so any
+split into tasks or processes writes the same files.
