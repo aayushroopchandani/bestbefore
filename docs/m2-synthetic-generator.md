@@ -2108,6 +2108,10 @@ CPUs, 48 GB. What was found:
   23:41:41: it kept its place, behind job A. While `72995` ran, job A's
   reason read `QOSMaxJobsPerUserLimit` (2 of our jobs running); it was
   back to `Resources` after.
+- **The chain sees the data.** `m2_chain.py --dry-run` on the cluster (at
+  `a53c1a9`): the pilot and every generated arm now wait only for the
+  loader decision from stage 1's speed runs, no longer for `gen50k`,
+  `gen10k` or synth-val.
 - **The cluster draws the same pixels, almost** (S4's note). The render
   sheet's PNG file differs, but all 5,164,800 pixels are the same: only
   the PNG compressor differs (zlib-ng 1.3.1 in the laptop's Pillow, zlib
