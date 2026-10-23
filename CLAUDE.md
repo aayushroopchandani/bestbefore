@@ -205,9 +205,19 @@ this repo.
   no scratch filesystem** and `$SCRATCH` is unset; no purge policy was
   found. Millions of full-size damaged photos (M4) would not fit: make
   them on the fly, or store small crops (a million 30 KB crops is 30 GB).
+  **Opening files is slow** (measured 2026-10-23, M2 S6): one process
+  opening 16,700 small files took 7 minutes on the login node, about
+  25 ms each; on 32 threads it took 8 s. Writing a 185 kB JPEG from a job
+  took 15 to 40 ms on average, with stalls of up to 17 s.
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
   model weights on the login node before submitting a job.
+- **CPUs:** compute nodes are Intel Xeon Gold 6442Y (x86-64); the laptop
+  is arm64. With the same library versions, floating-point results still
+  differ in their last bits, so generated photos match the laptop's
+  byte for byte only mostly (85% in M2 S6; the rest within a few grey
+  levels). A busy 24-CPU job ran the generator about 1.6 times slower per
+  photo than the laptop's cores.
 - **Python:** modules `Python/3.11.11` (same minor version as the laptop),
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
   use it. The module provides `python3`, not `python`, and the venv only
