@@ -197,6 +197,15 @@ def test_every_printed_character_is_in_the_charset():
     assert set("0123456789/-.:, ") <= printed      # the charset isn't vacuous
 
 
+def test_a_time_is_a_code_box_and_a_real_time():
+    """Times are `code`, as ExpDate's photos box them (decided in S4)."""
+    tokens = [t for b in _blocks(10_000, seed=6) for t in b.tokens]
+    times = [t for t in tokens if re.fullmatch(r"\d\d:\d\d", t.text)]
+    assert times and all(t.cls == "code" for t in times)
+    assert all(int(t.text[:2]) < 24 and int(t.text[3:]) < 60 for t in times)
+    assert not any(re.search(r"\d:\d", t.text) for t in tokens if t.cls is None)
+
+
 def _case(token: T.Token) -> str:
     letters = "".join(c for c in token.text if c.isalpha())
     return "upper" if letters.isupper() else "lower" if letters.islower() else "title"

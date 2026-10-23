@@ -50,12 +50,18 @@ DUE = ("EXP", "EXP.", "EXP:", "EXP DATE", "EXPIRY DATE:", "Best Before", "BEST B
        "BB", "B.B.", "USE BY", "Use before")
 PROD = ("MFG", "MFG:", "MFD", "Mfg. Date:", "MFG DT", "PKD", "PKD:", "Packed on:", "DOM",
         "Date of Mfg.")
-# Lot and batch codes, each a word and a value: A is a capital letter, 9 a digit.
-CODES = (("LOT ", "A99A9"), ("B.No. ", "9999A"), ("BATCH: ", "A9999"), ("L ", "99999"))
+# Lot and batch codes, and the time a coding printer prints beside a date:
+# each gets a `code` box, as ExpDate's photos box them.
+CODES = ("LOT {lot}", "B.No. {batch}", "BATCH: {batch_no}", "L {lot_no}", "{hh}:{mm}")
 # Text with numbers that is not a date, and gets no box.
 DISTRACTORS = ("MRP Rs. {price}.00", "(Incl. of all taxes)", "Net Wt. {kg} kg",
-               "Net Qty {grams} g", "{hh}:{mm}", "1800 {ddd} {dddd}", "Lic. No. {licence}")
+               "Net Qty {grams} g", "1800 {ddd} {dddd}", "Lic. No. {licence}")
+# How each {field} is drawn; in a pattern, A is a capital letter and 9 a digit.
 _FILL = {
+    "lot": lambda r: _pattern(r, "A99A9"),
+    "batch": lambda r: _pattern(r, "9999A"),
+    "batch_no": lambda r: _pattern(r, "A9999"),
+    "lot_no": lambda r: _pattern(r, "99999"),
     "price": lambda r: str(r.integers(20, 2501)),
     "kg": lambda r: f"{r.integers(1, 201) / 10:.1f}",
     "grams": lambda r: str(r.integers(5, 101) * 10),
@@ -205,16 +211,23 @@ def random_format(rng: np.random.Generator, spec: TextSpec = TEXT) -> str:
 
 # --- Other tokens -------------------------------------------------------------
 
+def _pattern(rng: np.random.Generator, pattern: str) -> str:
+    return "".join(choice(rng, string.ascii_uppercase) if c == "A" else str(rng.integers(10))
+                   for c in pattern)
+
+
+def _filled(rng: np.random.Generator, template: str) -> str:
+    """The template with each of its {fields} drawn."""
+    fields = {name for _, name, _, _ in string.Formatter().parse(template) if name}
+    return template.format_map({name: _FILL[name](rng) for name in sorted(fields)})
+
+
 def code(rng: np.random.Generator) -> str:
-    word, pattern = choice(rng, CODES)
-    return word + "".join(choice(rng, string.ascii_uppercase) if c == "A"
-                          else str(rng.integers(10)) for c in pattern)
+    return _filled(rng, choice(rng, CODES))
 
 
 def distractor(rng: np.random.Generator) -> str:
-    template = choice(rng, DISTRACTORS)
-    fields = {name for _, name, _, _ in string.Formatter().parse(template) if name}
-    return template.format_map({name: _FILL[name](rng) for name in sorted(fields)})
+    return _filled(rng, choice(rng, DISTRACTORS))
 
 
 # --- Blocks -------------------------------------------------------------------
@@ -291,5 +304,5 @@ CHARSET = frozenset(
     string.digits + string.ascii_uppercase + " "                    # numbers, codes' letters
     + "".join(n + n.upper() + n.lower() for n in MONTH_NAMES)
     + "stndrhSTNDRH"                                                # ordinal suffixes
-    + "".join(_literal(f) for f in (*FAMILY_OF, *RANGES, *DISTRACTORS, RELATIVE))
-    + "".join(DUE + PROD + (RELATIVE_DUE,) + tuple(w for w, _ in CODES)))
+    + "".join(_literal(f) for f in (*FAMILY_OF, *RANGES, *CODES, *DISTRACTORS, RELATIVE))
+    + "".join(DUE + PROD + (RELATIVE_DUE,)))
