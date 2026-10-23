@@ -26,6 +26,10 @@ download = ["gdown"]
 # the newest CUDA the cluster's GPU driver (570) supports; on the cluster,
 # install torch and torchvision from the cu128 index first (docs/m1-date-detector.md, A1).
 train = ["ultralytics==8.4.177", "torch==2.11.0", "torchvision==0.26.0"]
+# The M2 generator (src/bestbefore/synth): fonttools reads the fonts' tables
+# (axes, characters, licences). OpenCV comes with the train extra
+# (Ultralytics), so generation runs in the training environment.
+synth = ["fonttools"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
