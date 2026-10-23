@@ -36,6 +36,8 @@ REUSED_VAL_COPIES = frozenset({
 
 # $GENERATED_DIR/m2/
 #   derived/images/<set>/, derived/labels/<set>/   turned copies and grids
+#   gen/images/<list>/, gen/labels/<list>/         generated photos (scripts/generate.py)
+#   gen/sidecars/<list>.jsonl                      one line per generated photo, in photo order
 #   lists/<name>.txt                               image lists, absolute paths
 #   manifests/<name>.json                          what made each part, and counts
 def root() -> Path:
@@ -44,6 +46,19 @@ def root() -> Path:
 
 def derived_dir() -> Path:
     return root() / "derived"
+
+
+def gen_dir() -> Path:
+    return root() / "gen"
+
+
+def sidecar_path(name: str) -> Path:
+    return gen_dir() / "sidecars" / f"{name}.jsonl"
+
+
+# Generated sets, by set name: their list (and folder) names. gen-sample is
+# S5's 500 photos to look at; S6 adds the training photos and synth-val.
+GENERATED_SETS = {"gen-sample": "gen_sample"}
 
 
 def list_path(name: str) -> Path:

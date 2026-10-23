@@ -9,10 +9,13 @@ data it saw. Numbers the plan left open are marked "fixed in S5".
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 
 Shares = tuple[tuple[str, float], ...]     # (name, share) pairs that sum to 1
 Range = tuple[float, float]                # drawn uniformly
+RGB = tuple[int, int, int]
 
 
 @dataclass(frozen=True)
@@ -79,7 +82,77 @@ class GeometrySpec:
     perspective_distance: Range = (2.0, 5.0)    # the camera's distance, in block diagonals
 
 
+@dataclass(frozen=True)
+class SizeSpec:
+    """How tall a block's digits print, over the photo's long side ("Size"),
+    drawn log-uniformly within a band."""
+    bands: Shares = (("normal", 0.70), ("small", 0.30))
+    normal: Range = (0.015, 0.045)
+    small: Range = (0.006, 0.015)
+
+
+@dataclass(frozen=True)
+class ComposeSpec:
+    """Backgrounds, a free place, the ink and how it is laid on
+    ("Placement and blending")."""
+    two_blocks: float = 0.40          # photos with 2 blocks; the rest have 1
+    min_side: int = 640               # a background's long side, at least
+    min_side_small: int = 1000        # ... when a block is small print
+    max_side: int = 1600              # backgrounds are shrunk to at most this
+    candidates: int = 20              # free places to choose from
+    tries: int = 30                   # places tried before the block shrinks
+    plainest: float = 0.70            # take the plainest free place; else a random one
+    shrink: float = 0.80              # a block with no free place shrinks once, then is skipped
+    margin: float = 0.5               # clear of other boxes and blocks by this many lines
+    dark_inks: tuple[RGB, ...] = ((24, 24, 27), (30, 45, 110), (90, 55, 30), (120, 25, 32))
+    #                              black,        dark blue,     brown,        dark red   (RGB fixed in S5)
+    light_inks: tuple[RGB, ...] = ((246, 246, 242), (238, 228, 196), (196, 199, 205), (242, 208, 64))
+    #                               white,           cream,           silver,          yellow
+    colourful: float = 0.15           # a saturated ink instead
+    low_contrast: float = 0.20        # ink luminance only `low_contrast_gap` from the surface's
+    low_contrast_gap: Range = (0.08, 0.15)    # in luminance 0..1, as blended
+    opacity: Range = (0.75, 1.0)
+    # Fixed in S5:
+    light_surface: float = 0.5        # a surface at least this light (mean luminance 0..1) takes dark ink
+    colourful_saturation: Range = (0.6, 1.0)
+    colourful_dark: Range = (0.35, 0.70)      # HSV value of a colourful ink on a light surface
+    colourful_light: Range = (0.75, 1.0)      # ... on a dark one
+    shading_window: float = 0.05      # the light on the surface: its brightest within this share of the long side,
+    shading_sigma: float = 0.02       #   then blurred over this share (dark print narrower than the window is print)
+    shading_floor: float = 0.6        # light ink and stickers darken with the light down to this share
+    density: Range = (0.0, 0.4)       # uneven density: up to this much lighter in places, about a character apart
+    spread: Range = (0.0, 0.4)        # sigma in final pixels; solid and dot-matrix (a label stays crisp)
+    scratch: float = 0.10             # inked blocks with a scratch through one boxed token
+    scratch_width: Range = (0.5, 1.0)     # final pixels
+    redraws: int = 3                  # draws of a block before it is skipped for a boxed token with no ink
+
+
+@dataclass(frozen=True)
+class GenSpec:
+    """Everything a generated set is drawn with. synth-val's strata (S6)
+    are overrides of it."""
+    text: TextSpec = TextSpec()
+    style: StyleSpec = StyleSpec()
+    geometry: GeometrySpec = GeometrySpec()
+    size: SizeSpec = SizeSpec()
+    compose: ComposeSpec = ComposeSpec()
+    fonts: str = "train"            # fonts.random_family's split; synth-val's: "held-out"
+    backgrounds: Shares = (("train_real", 0.5), ("train_synth_clean", 0.5))   # m2 lists
+
+
 TEXT = TextSpec()
 STYLE = StyleSpec()
 GEOMETRY = GeometrySpec()
+SIZE = SizeSpec()
+COMPOSE = ComposeSpec()
+GEN = GenSpec()
 
+# Photo i of a set is drawn from numpy.random.default_rng([seed, i]).
+SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3}
+
+
+def spec_hash(spec: GenSpec) -> str:
+    """SHA-256 of the spec as JSON: what a manifest and a training record
+    name, so each model says exactly what it saw."""
+    text = json.dumps(asdict(spec), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()

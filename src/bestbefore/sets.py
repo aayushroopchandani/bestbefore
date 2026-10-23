@@ -11,9 +11,11 @@ from .samples import Sample
 # of real-train (seed 0). Its val.txt is the one record of which they are.
 # real-val-rot, real-val-small: the same photos turned 90 or 270 degrees,
 # and in 2 x 2 grids (M2's hard validation sets, scripts/derive_sets.py).
+# gen-sample: generated photos to look at (scripts/generate.py).
 # store: the retailer's photos, test only (store.py).
 DERIVED = m2.DERIVED_SETS
-NAMES = (*expdate.SPLITS, "real-val", *DERIVED, "store")
+GENERATED = m2.GENERATED_SETS
+NAMES = (*expdate.SPLITS, "real-val", *DERIVED, *GENERATED, "store")
 
 
 def load_set(name: str) -> list[Sample]:
@@ -24,6 +26,8 @@ def load_set(name: str) -> list[Sample]:
         return [s for s in expdate.load_split("real-train") if s.id in ids]
     if name in DERIVED:
         return derived.load_yolo_set(m2.list_path(DERIVED[name]))
+    if name in GENERATED:
+        return derived.load_yolo_set(m2.list_path(GENERATED[name]))
     if name == "store":
         return store.load_samples()
     raise ValueError(f"unknown set {name!r}; one of {', '.join(NAMES)}")
