@@ -10,7 +10,9 @@ answered the same day: 7 and 9 dot rows, times boxed as `code`); S5 done
 the owner's decisions on its two findings the same day: a floor on faint
 ink, applied; blocks near the background's dates, checked first and found
 no help, so the plan's placement is kept and a mask of the pack goes to
-Later). Next: S6 (generate at scale).
+Later); S6 done 2026-10-23 (the 50,000 training photos and synth-val made
+and checked on the cluster in one CPU job, `72995`, which released job B).
+Next: S7 (scoring and report code).
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -2058,6 +2060,94 @@ none skipped. What was found:
   files), and the check exits with code 1 while a set is incomplete, so
   the job stops before releasing anything.
 
+**On the cluster, done 2026-10-23.** Job **`72995`**, submitted from the
+login node at `54c6b1d` (clean tree) once the owner said to; before it,
+our jobs were 3 of 5 submitted and 1 of 2 running. `short`, `cn2`, 24
+CPUs, 48 GB. What was found:
+
+- **It ran 6 min 5 s** (23:35:36 to 23:41:41), 1 h 44 min of CPU time,
+  and wrote 9.5 GB. In order: the render sheet; the backgrounds, loaded
+  in 2.9 s on 32 threads; the 52,100 photos in 328 s; the check in 25 s;
+  the release.
+- **Speed:** 150 ms a photo per worker (median 113, 95th percentile 268).
+  By stage: writing 41.0 ms, drawing 37.9, camera 35.1, background 16.0,
+  JPEG 10.4, blending 5.3, surface 3.4, placing 0.5. With all 24 CPUs busy
+  the cluster draws about 1.6 times slower than the laptop's four workers
+  (37.9 against 24.2 ms), and writing to the shared filesystem costs 41 ms
+  a photo against under 1 ms on the laptop's SSD. 6 photos took over 2 s,
+  the slowest 17.3 s: stalls in writing (that task's writes averaged
+  430 ms a photo, the fastest task's 15 ms).
+- **Memory:** each worker peaked at 900 MB (its own `ru_maxrss`), the main
+  process at 197 MB; Slurm's `MaxRSS` for the job, which it samples, says
+  4.7 GB. So 48 GB was ample; about 24 GB would have done.
+- **The check passed:** `gen` 50,000 photos and synth-val 2,100, both
+  `complete: true` with no problem: every image opened whole, every label
+  file equals the one rebuilt from its sidecar line, every background and
+  font is from its own set's lists and split, and every font file matches
+  its pinned SHA-256. The lists hold 50,000 (`gen50k`), 10,000 (`gen10k`,
+  the first 10,000 of them) and 2,100 (`synth_val`) photos. The manifests
+  name the spec hashes `3fc14178…` (`GenSpec`) and `ba77f1bd…` (the
+  strata), the commit and the code hashes.
+- **The shares at 50,000 photos are all within 0.73 points of the spec**
+  (36 rows): the largest gaps are upright blocks +0.73, a day on
+  month-word dates −0.65, sideways −0.62, an ordinal −0.41. In synth-val
+  every share a stratum fixes at 0 or 1 is exact, and the rest are within
+  3 standard errors (the largest gap 5.4 points, a day on `mixed`'s 143
+  month-word dates).
+- **What was made:** 68,480 blocks placed of 70,043 drawn: 1,219 (1.7%)
+  skipped for want of a free place, 344 (0.5%) as too faint. 3,503 got a
+  fresh ink, 2,294 shrank to find a place, 12 were drawn again. 109,628
+  new dates (2.19 a photo); boxes with the backgrounds' own: date 174,042,
+  due 92,530, prod 48,574, code 38,159.
+- **Size:** the photos take 9.24 GB (`gen`, 185 kB each) and 0.39 GB
+  (synth-val), the label files 0.2 GB, the sidecars 82 MB and 2.4 MB (each
+  twice: per task and joined). About 9.9 GB, under the plan's 13 GB.
+- **Job B released.** The job released `72915`, the only held M2 job (the
+  chain had made no replacement). Afterwards `72915` waits with reason
+  `Priority`, its submit time still 2026-10-22 20:41:43 and eligible from
+  23:41:41: it kept its place, behind job A. While `72995` ran, job A's
+  reason read `QOSMaxJobsPerUserLimit` (2 of our jobs running); it was
+  back to `Resources` after.
+- **The cluster draws the same pixels, almost** (S4's note). The render
+  sheet's PNG file differs, but all 5,164,800 pixels are the same: only
+  the PNG compressor differs (zlib-ng 1.3.1 in the laptop's Pillow, zlib
+  1.2.11 in the cluster's). Of the 7,100 photos both machines made, 4,263
+  of 5,000 `gen` and 1,977 of 2,100 synth-val JPEGs are byte-identical, as
+  are 4,992 of 5,000 and all 2,100 label files; 12 of 7,100 sidecar lines
+  differ. The library versions are the same on both (Pillow 12.3.0,
+  FreeType 2.14.3, libjpeg-turbo 3.1.4.1, OpenCV 5.0.0, numpy 2.4.6), but
+  the laptop is arm64 and the cluster x86-64, and floating-point work
+  (OpenCV's and numpy's vector code, each compiler's) differs in its last
+  bits. In 80 photos that differ, sampled, the median photo has 0.006% of
+  its pixels changed, by at most 2 grey levels (synth-val's worst photo:
+  0.03% of pixels, by up to 7). 12 photos
+  (0.17%) drew something else: in 8 a block lands elsewhere or a warped
+  patch is 1 px other in size (two near-equally plain places swap, or a
+  bound rounds the other way), and in 4 the camera's noise used a
+  different count of random numbers (numpy's normal sampler rejects some
+  draws with the platform's own maths library), so the JPEG quality drawn
+  after it differs. **So the laptop's look checks show the exact pixels
+  trained on for 85% of photos, and for nearly all the rest pixels within
+  2 grey levels.** No box is affected: each comes from the ink drawn on
+  the machine that drew it, and the cluster's check rebuilt all 52,100
+  label files from its own sidecars. "Same bytes however the work is
+  split" holds on one machine (the tests, the laptop's two trials), not
+  across the two.
+- **Not checked:** the cluster's photos by eye (the laptop's sheet shows
+  synth-val as the laptop made it, which differs from the cluster's in
+  123 photos by at most 7 grey levels, and in no label); the true peak
+  memory of the 24 workers together (Slurm samples; each worker's own
+  peak was 900 MB); whether a cold filesystem cache loads the backgrounds
+  as fast elsewhere (2.9 s on `cn2`; the login node's 7.8 s came after its
+  own first read); when job B starts (the queue's turn).
+- **For S7 and S8:** S8's device check re-scores synth-val on the laptop.
+  To score the same photos the GPU scored, first copy the cluster's
+  `gen/images/synth_val/`, `gen/labels/synth_val/` and
+  `gen/sidecars/synth_val.jsonl` over the laptop's, then run
+  `generate.py --check` there (its manifest records the files' hashes).
+  `pull_cluster_results.sh` already brings the generation runs' JSON
+  home; its last line still lists only `-m1-` runs (S7).
+
 ### S7. Scoring and report code · laptop · *while the GPUs run*
 
 **Goal:** everything S8 and S9 run, written and tested before the results
@@ -2183,8 +2273,8 @@ column is filled in as runs finish.
 | CPU work | Size | Estimate |
 |---|---|---|
 | derived sets | 12,987 photos written | about 15 CPU-minutes (minutes on 16 CPUs) |
-| generation | 52,100 photos | about 3 CPU-hours (minutes of wall time as an array); S5 measured 55 ms a photo, so about 48 CPU-minutes, in one 24-CPU job (S6) |
-| check | reads all of them | under 10 minutes |
+| generation | 52,100 photos | about 3 CPU-hours (minutes of wall time as an array); S5 measured 55 ms a photo, so about 48 CPU-minutes, in one 24-CPU job (S6). **Measured:** 2.2 CPU-hours (150 ms a photo with all 24 CPUs busy and writes to the shared filesystem), 6 minutes in job `72995` |
+| check | reads all of them | under 10 minutes; **measured:** 25 s on 24 CPUs |
 
 **Storage** on the cluster: generated photos about 12.5 GB, turned copies
 about 1.5 GB, synth-val about 0.5 GB, checkpoints under 1 GB. About
