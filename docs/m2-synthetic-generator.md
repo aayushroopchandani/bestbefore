@@ -2187,9 +2187,81 @@ exist, against M1's runs and validation only.
   `suite.json` and the generation check records.
 - Tests: the tables on made-up results; `eval_detector` picks the right
   weights and threshold for each milestone.
+- Details fixed while writing it:
+  - **(changed) The tables have their own module, `m2_results.py`**, not
+    `m2.py`. `m2.py` is what the chain imports on the cluster (layout,
+    arms, recipe, rules, records); the tables read the frozen store labels
+    and the private store predictions, which only the laptop has. The
+    rules stay in `m2.py`, and `m2_results.py` only applies them.
+  - **The chain's decisions move into `m2.py`, unchanged:** `m2.decisions()`
+    (with `suite_of`, `speed_of` and `arm_suites`), which the chain's
+    `decide()` now calls. Each `summarise.py` works a decision out again
+    with that same function and compares it, field by field, with
+    `m2-decisions.json`: it agrees, the chain hasn't recorded it yet, or a
+    warning (and exit code 1) when they differ or the chain has decided
+    something the laptop's records can't. `m2.eligible()` is split out of
+    `decide_detector` (the same rule), so the tables can mark the
+    eligible arms. The chain running on the cluster keeps the code it
+    loaded; the move takes effect for a job started after a `git pull`, and
+    the cluster needs no pull for S8.
+  - **`results.csv` comes home** with the other small files: the pull
+    script copies each M2 run's `results.csv` from
+    `~/bestbefore-data/checkpoints/m2/<run>/` into the run's own folder in
+    `results/runs/` (the folder names are the same), and `m2.results_csv()`
+    reads it there, else beside the weights. The loader rule and the
+    timings need it.
+  - **Run names in `eval_detector.py`:** a name starting `m2-` is an M2 run
+    (`m2-base-s0`); any other is M1's, as before (`m1-n640` is accepted
+    too). The output file, the scored-once guard and the private store
+    predictions work the same for both: `results/runs/<run>/<set>.json`,
+    refused on `store` and `real-test` without `--again`, per-photo boxes
+    in `data/store/runs/<stamp>-detector-store-<name>/`.
+  - **M2's private store predictions are kept exact.** M1 rounded each box
+    to 5 decimals and its confidence to 4. With M2's unrounded threshold, a
+    confidence within 0.00005 of it could land on the wrong side, and the
+    causes would then disagree with `store.json`. M1's stay as they were.
+  - **The dataset file for M2's mAP on `real-test` or `real-val`** names
+    `train_real` as its train entry: validating never reads it, and an
+    arm's own lists (turned copies, generated photos) aren't on the laptop.
+  - **A cell is the mean over the seeds in, of n, with the range**
+    (`178.3/187 (176–181)`; mAP, precision and false boxes the same with
+    decimals). A `seeds` column says how many of the 3 are in; `not yet`
+    marks none, and `–` a number the record doesn't hold (M1's
+    `real-test.json` has no "boxed at any confidence").
+  - **Store by cause** uses each run's private predictions and the frozen
+    labels, with `analyse.py`'s rules: a month word when the format has
+    `MON` in any case, a full name when it has `Month` (otherwise an
+    abbreviation), numeric expiries by print height cut at 1.5% and 2.5%.
+    Sideways expiries are one group whatever their format; other-face
+    photos and derived expiries (no box) are left out. One greedy matching
+    at every confidence gives both "found at the threshold" and "boxed at
+    any confidence", since a prediction's match depends only on the more
+    confident ones (a test checks this against matching at each level, on
+    300 random photos). Each run's causes must add up to its `store.json`,
+    or the table says so. M1's rows come from M1's existing predictions;
+    nothing is scored again.
+  - **The side questions as code:** `m2.more_photos_help()` (data size: more
+    than 1 point on the hard sets). Input size and rotation have no
+    numeric rule in the plan, so their tables come without a verdict;
+    whether 1,280 px is used is the M2 detector rule's call.
+  - **`m2_report.py --out`** (default `results/m2_detector.md`), so S7 can
+    check the report on partial results without writing a half-filled
+    deliverable into `results/`. Its runs table gives images per second
+    over epochs 2 to the last but one (start-up and the final validation
+    left out) and the GPU hours so far.
+  - **One command line for every `summarise.py`** (`m2_results.summarise`):
+    print; `--write` between the README's markers (M1's
+    `replace_results`); `--runs-dir`.
+  - `tests/test_m2_results.py` and `tests/test_eval_detector.py`: each new
+    module and script has its own test file.
 
-**Commits:** `feat: m2 scoring by arm, tag and cause, and the report script`,
-then `feat: m2 experiment folders`
+**Commits:** `docs: m2 plan, S7 details fixed while writing it`,
+`refactor: the chain's decisions move into m2.py, for the summaries to apply too`,
+`feat: pull script brings m2 runs' results.csv and lists m2 runs`,
+`feat: eval_detector scores m2 runs with last.pt and the suite's threshold`,
+`feat: m2 scoring by arm, tag and cause, and the report script`,
+`feat: m2 experiment folders`,
+`docs: m2 loader speed test, filled from job A's runs`
 
 ### S8. Score the store photos and ExpDate test · laptop · *after every run is scored*
 
@@ -2288,7 +2360,7 @@ about 1.5 GB, synth-val about 0.5 GB, checkpoints under 1 GB. About
 
 ```
 docs/              m2-synthetic-generator.md; datasets.md gains "Generated data (M2)"
-src/bestbefore/    m2.py, derived.py, slurm.py, synth/{spec,fonts,text,render,warp,compose,camera,make,batch}.py;
+src/bestbefore/    m2.py, m2_results.py, derived.py, slurm.py, synth/{spec,fonts,text,render,warp,compose,camera,make,batch}.py;
                    changed: config.py, detector.py, detection_eval.py, sets.py, runs.py, yolo.py
 scripts/           derive_sets.py, score_suite.py, m2_chain.py, fetch_fonts.py, render_sheet.py,
                    generate.py, m2_report.py; changed: train_detector.py, eval_detector.py,
@@ -2297,7 +2369,7 @@ slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sba
 experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/, m2-dot-rows/
 tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_fonts.py,
                    test_synth_render.py, test_synth_warp.py, test_synth_compose.py, test_synth_camera.py,
-                   test_synth_strata.py, test_synth_batch.py;
+                   test_synth_strata.py, test_synth_batch.py, test_m2_results.py, test_eval_detector.py;
                    changed: test_detection_eval.py, test_detector.py
 results/           m2_detector.md   (committed; runs/ is not)
 ```
