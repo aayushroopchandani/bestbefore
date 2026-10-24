@@ -2324,6 +2324,11 @@ Nothing was scored on the store photos or ExpDate test. What was found:
     GB/s for `-b` and `-c` minutes later (the job log), from the node's
     file cache. It cost `speed-a` about 1.5 minutes of setup, not its
     timed epoch.
+  - **A RAM cache can make training non-deterministic:** Ultralytics
+    warned so when `speed-c` filled one, suggesting `cache='disk'`
+    instead (the job log). With `a` chosen no arm uses a RAM cache, so
+    the recipe's `deterministic=True` holds; a later run that turns the
+    cache on should weigh it.
 - **`base-s0`** started at 12:16 and was at epoch 92 of 200 at 13:12; over
   its first 70 epochs it trained 358 images per second, so it should finish
   about 14:15, the plan's 2 hours.
@@ -2381,7 +2386,17 @@ ExpDate test, each exactly once.
    `rsync -a bbhpc:bestbefore-data/checkpoints/m2/<run>/weights/last.pt …`.
 3. **Device check:** re-score the M2 detector's suite on the laptop's CPU.
    Its numbers must match the GPU's to within a date or two (M1 D2 saw
-   one date move, from half precision).
+   one date move, from half precision). **(noted in S7)** `score_suite.py`
+   writes `results/runs/<run>/suite.json` in place. Run as it is on the
+   laptop, it would replace the GPU's `suite.json`, and with it the
+   threshold that step 4 scores the store photos at and that the chain's
+   M2 detector decision recorded: every `summarise.py` would then warn
+   that the threshold differs, and the next `pull_cluster_results.sh`
+   would copy the cluster's file back without a word. So the device check
+   must write its suite elsewhere (an `--out` option for
+   `score_suite.py`, say) and compare, leaving the GPU's `suite.json` as
+   the run's record. Nothing is changed for it yet: it is S8's to fix,
+   before this step.
 4. **Store photos**, all 18 runs, once each:
    `python scripts/eval_detector.py --set store --runs <all 18>` (about 30
    minutes on the CPU; the 1280 runs are slowest).
