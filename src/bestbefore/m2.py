@@ -341,17 +341,27 @@ def map50_date(suites: Sequence[dict], sets: Sequence[str]) -> float:
     return float(np.mean([s[name]["map50"]["date"] for s in suites for name in sets]))
 
 
+def at_least(value: float, floor: float) -> bool:
+    return value >= floor - 1e-9       # float noise must not break a tie
+
+
+def eligible(suites: dict[str, list[dict]]) -> list[str]:
+    """The candidates among `suites` whose mean mAP@0.5 for dates on
+    real-val is no more than NOISE under base's: the guard against getting
+    worse."""
+    floor = map50_date(suites["base"], ("real-val",)) - NOISE
+    return [a for a in CANDIDATES
+            if a in suites and at_least(map50_date(suites[a], ("real-val",)), floor)]
+
+
 def decide_detector(suites: dict[str, list[dict]]) -> str:
     """Eligible: mean mAP@0.5 for dates on real-val no more than NOISE
     under base's. Among them, the highest mean mAP@0.5 over the HARD sets;
     any candidate within NOISE of it goes to the cheapest."""
-    def at_least(value: float, floor: float) -> bool:
-        return value >= floor - 1e-9       # float noise must not break a tie
+    ok = eligible(suites)
+    best = max(map50_date(suites[a], HARD) for a in ok)
+    return next(a for a in ok if at_least(map50_date(suites[a], HARD), best - NOISE))
 
-    floor = map50_date(suites["base"], ("real-val",)) - NOISE
-    eligible = [a for a in CANDIDATES if at_least(map50_date(suites[a], ("real-val",)), floor)]
-    best = max(map50_date(suites[a], HARD) for a in eligible)
-    return next(a for a in eligible if at_least(map50_date(suites[a], HARD), best - NOISE))
 
 
 # --- Run records ----------------------------------------------------------
@@ -376,3 +386,64 @@ def read_json(path: Path) -> dict | None:
         return json.loads(path.read_text())
     except FileNotFoundError:
         return None
+
+
+def suite_of(run: str, root: Path | None = None) -> dict | None:
+    """A finished run's suite.json; None until it is scored."""
+    run_dir = finished_run(run, root)
+    return read_json(run_dir / "suite.json") if run_dir else None
+
+
+def arm_suites(arms: Sequence[str], root: Path | None = None) -> dict[str, list[dict | None]]:
+    """Each arm's suite.json for every seed, in SEEDS order; None where a
+    seed isn't scored yet."""
+    return {arm: [suite_of(f"{arm}-s{s}", root) for s in SEEDS] for arm in arms}
+
+
+def results_csv(run_dir: Path) -> Path:
+    """A run's results.csv, Ultralytics' log with one row per epoch: in its
+    run folder once scripts/pull_cluster_results.sh has brought it to the
+    laptop, else beside its weights (on the cluster)."""
+    pulled = run_dir / "results.csv"
+    if pulled.exists():
+        return pulled
+    return Path(read_json(run_dir / "run.json")["applied"]["save_dir"]) / "results.csv"
+
+
+def speed_of(run: str, root: Path | None = None) -> float | None:
+    """Images per second in epoch 2 of a finished speed run."""
+    run_dir = finished_run(run, root)
+    if run_dir is None:
+        return None
+    applied = read_json(run_dir / "run.json")["applied"]
+    seconds = epoch_seconds(results_csv(run_dir))
+    return round(applied["train_images"] / seconds, 1) if seconds else None
+
+
+def decisions_path(root: Path | None = None) -> Path:
+    """Where the chain records its decisions."""
+    return (root or runs.RUNS_DIR) / "m2-decisions.json"
+
+
+def decisions(root: Path | None = None) -> dict:
+    """Every decision whose inputs are complete: the loader, the pilot gate
+    and the M2 detector. The chain writes them to
+    results/runs/m2-decisions.json; experiments/m2-*/summarise.py works
+    them out again with this same function and compares."""
+    out = {}
+    speed = {k: speed_of(f"speed-{k}", root) for k in LOADERS}
+    if None not in speed.values():
+        choice = loader_choice(speed)
+        out["loader"] = {"images_per_second": speed, "choice": choice, **LOADERS[choice]}
+    pilot = suite_of("pilot", root)
+    if pilot is not None and "missing" not in pilot["synth-val"]:
+        out["pilot"] = {"synth_val_any_conf": pilot["synth-val"]["any_conf"]["expiry_recall"],
+                        "passes": pilot_passes(pilot)}
+    suites = arm_suites(CANDIDATES, root)
+    if all(s is not None for seeds in suites.values() for s in seeds):
+        arm = decide_detector(suites)
+        out["m2_detector"] = {
+            "arm": arm, "run": f"{arm}-s0", "threshold": suites[arm][0]["threshold"],
+            "real_val_map50": {a: round(map50_date(suites[a], ("real-val",)), 4) for a in suites},
+            "hard_map50": {a: round(map50_date(suites[a], HARD), 4) for a in suites}}
+    return out

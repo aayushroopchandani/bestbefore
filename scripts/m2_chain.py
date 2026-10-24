@@ -69,7 +69,7 @@ def failures_dir() -> Path:
 
 
 def decisions_path() -> Path:
-    return runs.RUNS_DIR / "m2-decisions.json"
+    return m2.decisions_path()
 
 
 def log(message: str) -> None:
@@ -198,39 +198,9 @@ def pick(current: dict[Task, State], time_left: float, skip: set[Task] = frozens
 
 # --- Decisions (m2.py's rules, applied as soon as their inputs are complete) ---
 
-def suite_of(run: str) -> dict | None:
-    run_dir = m2.finished_run(run)
-    return m2.read_json(run_dir / "suite.json") if run_dir else None
-
-
-def speed_of(run: str) -> float | None:
-    """Images per second in epoch 2 of a finished speed run."""
-    run_dir = m2.finished_run(run)
-    if run_dir is None:
-        return None
-    applied = m2.read_json(run_dir / "run.json")["applied"]
-    seconds = m2.epoch_seconds(Path(applied["save_dir"]) / "results.csv")
-    return round(applied["train_images"] / seconds, 1) if seconds else None
-
-
 def decide() -> dict:
-    decisions = {}
-    speed = {k: speed_of(f"speed-{k}") for k in m2.LOADERS}
-    if None not in speed.values():
-        choice = m2.loader_choice(speed)
-        decisions["loader"] = {"images_per_second": speed, "choice": choice, **m2.LOADERS[choice]}
-    pilot = suite_of("pilot")
-    if pilot is not None and "missing" not in pilot["synth-val"]:
-        decisions["pilot"] = {"synth_val_any_conf": pilot["synth-val"]["any_conf"]["expiry_recall"],
-                              "passes": m2.pilot_passes(pilot)}
-    suites = {arm: [suite_of(f"{arm}-s{s}") for s in m2.SEEDS] for arm in m2.CANDIDATES}
-    if all(s is not None for seeds in suites.values() for s in seeds):
-        arm = m2.decide_detector(suites)
-        decisions["m2_detector"] = {
-            "arm": arm, "run": f"{arm}-s0", "threshold": suites[arm][0]["threshold"],
-            "real_val_map50": {a: round(m2.map50_date(suites[a], ("real-val",)), 4) for a in suites},
-            "hard_map50": {a: round(m2.map50_date(suites[a], m2.HARD), 4) for a in suites}}
-    return decisions
+    """m2.decisions(), the same function experiments/m2-*/summarise.py re-check with."""
+    return m2.decisions()
 
 
 def save(decisions: dict) -> None:
