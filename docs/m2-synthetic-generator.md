@@ -11,8 +11,10 @@ the owner's decisions on its two findings the same day: a floor on faint
 ink, applied; blocks near the background's dates, checked first and found
 no help, so the plan's placement is kept and a mask of the pack goes to
 Later); S6 done 2026-10-23 (the 50,000 training photos and synth-val made
-and checked on the cluster in one CPU job, `72995`, which released job B).
-Next: S7 (scoring and report code).
+and checked on the cluster in one CPU job, `72995`, which released job B);
+job A started 2026-10-24 at 12:00 and chose its loader (8 workers); S7
+done 2026-10-24 (the scoring, tables and report code, checked on M1's runs,
+validation and job A's first records). Next: S8, once every run is scored.
 The learnings guide for M2 (`learnings/m2.md`) is written separately,
 later.
 
@@ -2263,6 +2265,98 @@ exist, against M1's runs and validation only.
 `feat: m2 experiment folders`,
 `docs: m2 loader speed test, filled from job A's runs`
 
+**Done 2026-10-24.** Code from `02045bf` to `b8e2148`; 497 tests pass (36
+new: `test_m2_results.py` 31, `test_eval_detector.py` 5), and each
+commit's tests pass in a checkout of that commit alone, with none skipped.
+Nothing was scored on the store photos or ExpDate test. What was found:
+
+- **M1 doesn't change.** `eval_detector.py --set real-val --runs n640`, the
+  device check (validation, so allowed): the old script, the new one and
+  the record stored on 2026-10-21 agree in every field but `scored` (184
+  of 187 dates at 0.728, mAP@0.5 0.991). The stored record was put back
+  afterwards, so M1's files are as they were. `scripts/m1_report.py`
+  writes `results/m1_detector.md` byte for byte (`git diff` empty), and
+  `experiments/m1-store-misses/analyse.py` is untouched.
+- **The M2 path on real data, validation only.** `eval_detector.py --set
+  real-val --runs m2-smoke-laptop` (S3's laptop smoke run, the only M2
+  weights on the laptop) gives exactly what that run's own `suite.json`
+  says for real-val: found at IoU 0.5 and 0.3, boxed at any confidence,
+  mAP@0.5 and @0.5:0.95, cut at its threshold of 0.99790275… unrounded
+  (the record's display copy says 0.9979). The files it wrote were
+  removed afterwards.
+- **The cause split reproduces M1's analysis.** On M1's three seeds' kept
+  store predictions it gives `analyse.py`'s numbers: numeric expiries
+  printed 2.5% and up 11.3 of 13 found (87%; boxed 92%), 1.5 to 2.5% 8.7 of
+  19 (46%; 91%), under 1.5% 1 of 8 (12%; 54%), month words 0.7 of 26 (3%;
+  44%), sideways 0 of 15; and each seed's causes add up to its
+  `store.json`. It also splits M1's month words: **full names 0 of 19 on
+  every seed** (boxed at any confidence 7.3 of 19, mean), abbreviations
+  0.7 of 7 (boxed 4 of 7). This is M1's store result read another way;
+  nothing in M2 changes for it.
+- **Job A's first results** (pulled at 12:53): job A started 2026-10-24
+  at 12:00 on `cn5` (an H100 NVL) at `a53c1a9`. The smoke run trained 1
+  epoch on 256 photos in 2.2 minutes and was scored on all four sets,
+  synth-val included, in 2.4 minutes (threshold 0.094; after one epoch on
+  real photos only, 1 of 187 real-val dates, which means nothing). Then
+  the speed test, `experiments/m2-loader-speed/`:
+
+  | Run | Workers | RAM cache | Epoch 2 | Images/s | Train minutes |
+  |---|---:|---|---:|---:|---:|
+  | `m2-speed-a` | 8 | no | 35.1 s | 364.0 | 4.3 |
+  | `m2-speed-b` | 24 | no | 35.1 s | 364.0 | 2.8 |
+  | `m2-speed-c` | 24 | filled (11.2 of 57.6 GB allowed) | 34.5 s | 370.3 | 3.0 |
+
+  - **The loader rule was applied correctly:** `c` is the fastest; `a`'s
+    364.0 is 98.3% of it, within 10%, and `a` is the simplest, so `a` (8
+    workers, no cache). The chain recorded that; the laptop gets the same
+    from the pulled `results.csv` files through the moved
+    `m2.decisions()`, in `summarise.py` and in the chain's dry run.
+  - **The loader doesn't limit a 640 px run here:** the three are within
+    1.7%, and 24 workers ran at the 8-worker speed. M1's hint that loading
+    set the pace doesn't hold for `yolo11n` at 640 px on this node.
+  - **Only the first run read its photos cold:** Ultralytics warned of
+    slow image access for `speed-a` (7.6 MB/s) but measured about 2.8
+    GB/s for `-b` and `-c` minutes later (the job log), from the node's
+    file cache. It cost `speed-a` about 1.5 minutes of setup, not its
+    timed epoch.
+- **`base-s0`** started at 12:16 and was at epoch 92 of 200 at 13:12; over
+  its first 70 epochs it trained 358 images per second, so it should finish
+  about 14:15, the plan's 2 hours.
+- **Job B waits for the run cap, and job A doesn't need it.** `squeue`
+  gives job B reason `QOSMaxJobsPerUserLimit`: our other project's job
+  `72982` holds the second run slot until 2026-10-27 03:49 at the latest.
+  Stage 2's data is ready, so after stage 1 job A goes on to the pilot and
+  stage 2. At the measured speed, every remaining run (about 40
+  GPU-hours, the 1,280 px runs at M1's speed) fits in the 71 hours job A
+  had left at 13:12.
+- **The tables on real records.** Every `summarise.py` and
+  `m2_report.py --out` ran on the pulled records without an error or a
+  warning: `m2-loader-speed` filled, the others "not yet" except M1's store
+  rows.
+- **The tests catch what they should.** 19 deliberate bugs, one at a time,
+  all caught: M2 scored with `best.pt`, its threshold rounded, the
+  scored-once guard for M1 only, M2's store predictions rounded, `m1-`
+  names not understood, a median for the mean, full names and
+  abbreviations swapped, band edges inclusive, sideways not kept apart,
+  the threshold ignored in the causes, other-face photos counted, the
+  chain check always agreeing, eligibility marked on partial arms, a
+  missing number shown as "not yet", no `all` column, the causes' check
+  off, data size decided on exactly 1 point, the pulled `results.csv`
+  ignored, and `eligible` needing every candidate.
+- **The GPU driver is 560.35.05**, on `cn5` (job A) as on `cn6` (M1's job
+  `72789`), not the 570.86 in `CLAUDE.md`; `torch 2.11.0+cu128` trains on
+  it. Corrected there.
+- **Not checked:** the tables and the report on a real M2 suite (none of
+  the 15 candidate runs was scored yet; `base-s0` was training); `eval_detector.py`
+  on the store photos and ExpDate test (S8, on purpose), so M2's store
+  path only on made-up predictions; the moved decisions on the cluster,
+  which runs `a53c1a9` until its next pull (the laptop's dry run gives the
+  chain's loader record from the pulled files); whether 8 workers keep up
+  on the generated arms and at 1,280 px (the report's runs table will show
+  it); and the S6 session's uncommitted `experiments/m2-generated-look/`
+  (S5's on-pack labels, 72 blocks: it counts 21 off the pack where S5's
+  record says 20), left for the owner.
+
 ### S8. Score the store photos and ExpDate test · laptop · *after every run is scored*
 
 **Goal:** every arm judged on the store photos, and the M2 detector on
@@ -2338,7 +2432,7 @@ column is filled in as runs finish.
 
 | Work | Runs | Each | GPU hours at M1's speed | Measured |
 |---|---:|---|---:|---|
-| smoke + speed test | 4 | 3 to 5 min | 0.3 | |
+| smoke + speed test | 4 | 3 to 5 min | 0.3 | 12.3 min training (smoke 2.2, speed 4.3, 2.8, 3.0) and 2.4 min scoring the smoke, job A on 2026-10-24 (S7) |
 | `base`, `rot` (stage 1) | 6 | 2.0 h | 12 | |
 | pilot | 1 | 15 min | 0.25 | |
 | `gen`, `gen-rot`, `gen10k` | 9 | 2.0 h | 18 | |
