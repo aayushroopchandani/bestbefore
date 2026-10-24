@@ -363,6 +363,13 @@ def decide_detector(suites: dict[str, list[dict]]) -> str:
     return next(a for a in ok if at_least(map50_date(suites[a], HARD), best - NOISE))
 
 
+def more_photos_help(gen: Sequence[dict], gen10k: Sequence[dict]) -> bool:
+    """The data-size question (decision 14): `gen` beats `gen10k` by more
+    than NOISE in mean mAP@0.5 for dates over the HARD sets. Then more
+    distinct generated photos help, and 200,000 becomes a Later candidate;
+    otherwise 50,000 is already enough."""
+    return not at_least(map50_date(gen10k, HARD) + NOISE, map50_date(gen, HARD))
+
 
 # --- Run records ----------------------------------------------------------
 
