@@ -1727,9 +1727,11 @@ What was found:
   taken for shadow and a wide shadow still is. These are numbers S5
   fixed, not the plan's shares.
 - **For the owner (1): blocks off the pack.** On the 50 photos of the
-  sheet, with each generated block outlined, 20 of 72 blocks lie mostly
+  sheet, with each generated block outlined, 21 of 72 blocks lie mostly
   off the pack: on hands, floors, tables, shelves and walls, mostly near
-  the photo's edges. The plainest of 20 free places, taken 70% of the
+  the photo's edges. **(corrected 2026-10-24, S7)** First recorded as 20;
+  recounted from the labels, now in `experiments/m2-generated-look/`, and
+  the edge margin's counts below with them. The plainest of 20 free places, taken 70% of the
   time, is often not the pack: a hand or an out-of-focus shelf has a lower
   gradient than printed packaging. So crisp text lands on blurred
   surfaces, a sign of pasting a model could learn instead of the date.
@@ -1740,16 +1742,19 @@ What was found:
   printed near a pack's edge, a hand or the floor just beyond, while much
   of the pack lies far from them. Of the blocks whose centre is within
   0.2 of the long side of the dates' boxes, 7 of 25 are off the pack (28%,
-  as of all 72); within 0.15, 4 of 15. Three other signals, measured the
-  same way, are weak too: distance from the photo's edges (a centre at
-  least 0.15 of the short side in would keep 42 of the 52 blocks on the
-  pack and 10 of the 20 off it, so about 19% off instead of 28%), colour
+  about as of all 72); within 0.15, 4 of 15. Three other signals, measured
+  the same way, are weak too: distance from the photo's edges (a centre at
+  least 0.15 of the short side in would keep 41 of the 51 blocks on the
+  pack and 10 of the 21 off it, so about 20% off instead of 29%), colour
   like the pack round the dates (AUC 0.64, against 0.5 for chance) and
-  the surface's detail. So the plan's rule stands, and the choice is back
+  the surface's detail. (The code for nearness, colour and detail wasn't
+  kept, and these three numbers can't be rebuilt from the record's
+  wording; the experiment's own reading of nearness gives 6 of 22 off
+  within 0.2, 27%, the same conclusion.) So the plan's rule stands, and the choice is back
   with the owner: keep it, with a mask of the pack as a Later item, or
   keep blocks off the photo's edges. **Decided 2026-10-23 (owner): keep
   the plan's placement**, and a mask of the pack goes to Later. An edge
-  margin would only trim the off-pack share (28% to about 19%), at the
+  margin would only trim the off-pack share (29% to about 20%), at the
   cost of one on-pack place in five and of every generated date near a
   photo's edge. Off-pack blocks keep their right boxes, so they teach
   nothing wrong; at worst they are easy examples. If synth-val scores
@@ -2353,9 +2358,17 @@ Nothing was scored on the store photos or ExpDate test. What was found:
   which runs `a53c1a9` until its next pull (the laptop's dry run gives the
   chain's loader record from the pulled files); whether 8 workers keep up
   on the generated arms and at 1,280 px (the report's runs table will show
-  it); and the S6 session's uncommitted `experiments/m2-generated-look/`
-  (S5's on-pack labels, 72 blocks: it counts 21 off the pack where S5's
-  record says 20), left for the owner.
+  it).
+- **After S7, as the owner asked:** S5's on-pack labels, left uncommitted
+  by the S6 session, are committed as `experiments/m2-generated-look/`
+  with a README and `recount.py`, which checks every block's place against
+  today's gen-sample sidecar (all 72 match, on the contact sheet's 50
+  photos). They count 21 of 72 blocks off the pack, not the 20 S5
+  recorded, so S5's record is corrected, the edge margin's counts with it
+  (41 of 51 on, 10 of 21 off). No record says how the 20 was counted, or
+  whether on the sample made before the faint-ink decision. S5's nearness,
+  colour and detail numbers can't be rebuilt (their code wasn't kept);
+  the placement decision stands.
 
 ### S8. Score the store photos and ExpDate test · laptop · *after every run is scored*
 
@@ -2529,7 +2542,7 @@ results/           m2_detector.md   (committed; runs/ is not)
   crops from real ones; the less it can, the better the generator.
 - **More backgrounds** from public pack photos, licences checked.
 - **A mask of the pack, so generated blocks land on it** (from S5's look
-  check). The plainest free place is often not the pack: 20 of 72 blocks
+  check). The plainest free place is often not the pack: 21 of 72 blocks
   on the 50 photos looked at lay mostly on hands, floors, tables, shelves
   or walls, often as sharp text on a blurred surface. Nearness to the
   background's dates, distance from the photo's edges, colour and detail
