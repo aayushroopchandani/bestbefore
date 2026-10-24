@@ -211,7 +211,10 @@ this repo.
   **Opening files is slow** (measured 2026-10-23, M2 S6): one process
   opening 16,700 small files took 7 minutes on the login node, about
   25 ms each; on 32 threads it took 8 s. Writing a 185 kB JPEG from a job
-  took 15 to 40 ms on average, with stalls of up to 17 s.
+  took 15 to 40 ms on average, with stalls of up to 17 s. A GPU node's
+  file cache makes a second read fast: Ultralytics read `base`'s training
+  photos at 7.6 MB/s cold on `cn5`, and at about 2.8 GB/s in the next run
+  minutes later (2026-10-24, M2 S7).
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
   model weights on the login node before submitting a job.
@@ -226,9 +229,11 @@ this repo.
   use it. The module provides `python3`, not `python`, and the venv only
   runs after `module load Python/3.11.11` (it needs the module's
   `libpython3.11.so`).
-- **GPU driver:** 570.86, so CUDA 12.8 at most. Install PyTorch from the
-  `cu128` index (`torch==2.11.0+cu128`); the default PyPI build needs
-  CUDA 13 and won't see the GPUs.
+- **GPU driver:** 560.35.05 on both GPU nodes (`nvidia-smi` in M1's job on
+  `cn6`, 2026-10-15, and M2's on `cn5`, 2026-10-24; the 570.86 first
+  written here was seen on neither). Install PyTorch from the `cu128`
+  index (`torch==2.11.0+cu128`), which trains on this driver in both
+  jobs; the default PyPI build needs CUDA 13 and won't see the GPUs.
 
 Conventions:
 
