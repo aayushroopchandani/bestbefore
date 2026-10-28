@@ -95,7 +95,10 @@ part of this permission. Until then they were test-only.
   trains on it. From then on it can't judge a model.
 - **A new set of store photos is the test set:** labelled and frozen
   (hashed, like v1) **before** any training on store photos. Never train
-  on it, never tune on it.
+  on it, never tune on it. This is **store set v2**: 99 photos in
+  `testset2/`, photo list frozen 2026-10-28, labels still to do
+  (`docs/m0-data-and-test-set.md`, Part D). The Scanify repo doesn't
+  ignore `testset2/`; only this laptop's `.git/info/exclude` there does.
 - Results on v1 from M0 to M2 were measured before any store training and
   stay as recorded.
 
@@ -112,7 +115,7 @@ Paths come from environment variables in `.env` (gitignored):
 | Variable | Points to |
 |---|---|
 | `EXPDATE_DIR` | the unpacked ExpDate download |
-| `STORE_PHOTOS_DIR` | the folder holding `samples1/`, `samples2/`, `samples3/` |
+| `STORE_PHOTOS_DIR` | the folder holding `samples1/`, `samples2/`, `samples3/` (store set v1) and `testset2/` (v2) |
 | `SCANIFY_DIR` | the Scanify repo, for baseline B |
 
 ### Date formats on the store packs

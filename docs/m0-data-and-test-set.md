@@ -706,6 +706,10 @@ data/        expdate/, store/           (never committed)
 
 Planned 2026-10-28. Not a milestone: a second store test set, labelled
 and frozen like v1 (B1 to B3), before anything trains on store photos.
+Status: **D1 to D4 done** (2026-10-28): the photo list is frozen
+(99 photos, `8be1f9e9…`) and Label Studio is ready. D5 and D6, labelling
+and freezing the labels, are the owner's. The record is at the end of
+this part.
 
 **Why.** The retailer's owner has allowed training on the store photos
 (`CLAUDE.md`, 2026-10-28). v1 becomes training data from the first
@@ -840,6 +844,96 @@ Paste the printed hash into `TEST_SET_V2_SHA256`, and commit it with
 `results/store_test_set_v2.md`.
 
 **Commit:** `feat: freeze store test set v2`
+
+### What Part D found (2026-10-28)
+
+No v2 photo was opened, viewed or decoded, and no model was run on one.
+Only their bytes were read, for the hashes and the file-type header.
+
+**D1, the photos.**
+
+- 99 files, all JPEG by their header: 92 end in `.jpeg` and 7 in `.jpg`,
+  all lower case. Nothing was converted or renamed.
+- No two are byte-identical, and none is byte-identical to a v1 photo
+  (0 of 99). The Desktop copy matches `testset2/` byte for byte, file for
+  file.
+- **Scanify's git didn't ignore `testset2/`**: it showed as untracked
+  there, so a `git add -A` in Scanify would have staged all 99 photos,
+  and Scanify has a GitHub remote. `testset2/` is now in Scanify's
+  `.git/info/exclude`, and `git check-ignore` confirms it. This only holds
+  on this laptop: another clone of Scanify wouldn't ignore it.
+
+**D2, the code.**
+
+- v1 is unchanged. The named folders `samples1` to `samples3` list the
+  same 99 photos as the old `samples*` glob and as the frozen file.
+  `labels(store.V1)` returns exactly what `labels()` returned.
+  `data/store/test_set.json` still hashes to `7b9a4043…`.
+- M0's baseline table and store stats, M1's and M2's reports rebuild byte
+  for byte, before and after the change. So does v1's
+  `results/store_test_set.md`, rebuilt from its frozen file by the new
+  freeze script. `experiments/m1-store-misses/analyse.py` prints the same
+  output before and after.
+- v1's import, rerun into a scratch file, reproduces `labels.json` byte
+  for byte, with all 7 checks passing. The freeze script refuses v1
+  (already frozen, no photo list).
+- Added beyond the plan: loading a frozen set also checks that the file
+  names that set (`version`), so one set's file can't be read as
+  another's.
+- Tests: 500 before, 519 after, all passing.
+
+**D3, the photo list.** Frozen 2026-10-28: 99 photos, all in
+`testset2/`, SHA-256 of `data/store/v2/photos.json` `8be1f9e9cb25…`. Its
+hashes match a `shasum` run made before any code was written.
+
+**D4, Label Studio.** Label Studio 1.23.2, in `~/.venvs/label-studio`.
+v1's project, read from Label Studio's database without changing it:
+
+- its interface is B1's XML exactly, apart from whitespace
+- it has three Local files storages, one per folder, with the filter
+  `.*\.jpe?g$`, every file a task, and no recursive scan
+
+The server listens on `127.0.0.1:8080` only: the laptop's network address
+gets no answer.
+
+To set up v2's project:
+
+1. Start the server: `label-studio` in the Claude app's preview, or B1's
+   command run from the repo folder. Open <http://localhost:8080> and log
+   in with the account used for v1.
+2. *Create Project*, named `Store test set v2`. Under *Labeling Setup →
+   Custom template → Code*, paste B1's XML, then *Save*. Import no data.
+3. *Settings → Cloud Storage → Add Source Storage*:
+   - storage type *Local files*
+   - title `testset2`
+   - absolute local path: the value of `$STORE_PHOTOS_DIR` in `.env`,
+     followed by `/testset2`
+   - file filter regex `.*\.jpe?g$`
+   - *Treat every bucket object as a source file* on, recursive scan off
+   - *Check Connection*, *Add Storage*, then *Sync Storage*
+
+   The project must show **99 tasks**. If it doesn't, stop.
+4. Label every photo by B1's rules, then *Submit* each. Leave v1's
+   project alone. A v1 photo in the v2 export fails check 1 anyway.
+5. *Export → JSON-MIN*, then move the download to
+   `data/store/v2/label_studio_export.json`. Then run D6.
+
+Don't edit, rotate or re-save a photo in `testset2/`: macOS Preview's
+rotate rewrites the file. Any change to a photo fails the photo-list
+check at import and at freezing.
+
+**Not checked:**
+
+- Nothing about what the v2 photos show: their tags, whether a date is
+  visible, their sizes, how many carry an EXIF rotation flag. Labelling
+  and import check 5 will show these.
+- Whether the same pack appears in both v1 and v2 (see Later).
+- v2's Label Studio project isn't created yet, because that needs the
+  owner's login. So the 99-task sync hasn't been seen, and the steps
+  above haven't been run for v2.
+- v2's import and label freeze have run only on made-up data in the
+  tests, not on a real export.
+- `results/m0_expdate_stats.md` wasn't rebuilt. It reads no store code.
 
 ### Later
 
