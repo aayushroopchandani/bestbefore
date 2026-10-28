@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -9,6 +10,11 @@ from bestbefore.samples import Expiry
 LABEL = {"expiry": "2027-08", "derived": False, "mfg": None, "format": "MM/YYYY",
          "tag": "clean", "unreadable": False, "note": "",
          "boxes": [{"label": "expiry", "xyxy": [0.1, 0.5, 0.4, 0.55]}]}
+
+
+# Two made-up sets side by side in one photo folder, as v1 and v2 are.
+OLD = store.StoreSet("v8", ("samples9",), Path("unused"), None)
+NEW = store.StoreSet("v9", ("testset9",), Path("unused"), None)
 
 
 @pytest.fixture
@@ -34,7 +40,30 @@ def test_parse_date():
 
 
 def test_photos_on_disk(root):
-    assert store.photos_on_disk(root) == ["samples9/a.jpg"]
+    assert store.photos_on_disk(OLD, root) == ["samples9/a.jpg"]
+
+
+def test_each_set_lists_only_its_own_photos(root):
+    (root / "testset9").mkdir()
+    Image.new("RGB", (40, 20)).save(root / "testset9" / "b.jpeg")
+    Image.new("RGB", (40, 20)).save(root / "testset9" / "c.jpg")
+    assert store.photos_on_disk(OLD, root) == ["samples9/a.jpg"]
+    assert store.photos_on_disk(NEW, root) == ["testset9/b.jpeg", "testset9/c.jpg"]
+
+
+def test_a_missing_folder_is_an_error(root):
+    with pytest.raises(FileNotFoundError, match="v9: no folder testset9"):
+        store.photos_on_disk(NEW, root)
+
+
+def test_v1_is_as_it_was_frozen():
+    """v1's folders, files and hash, exactly as before there was a v2."""
+    assert store.V1.folders == ("samples1", "samples2", "samples3")
+    assert store.V1.labels_path == store.LABELS_PATH == store.DATA_DIR / "labels.json"
+    assert store.V1.test_set_path == store.TEST_SET_PATH == store.DATA_DIR / "test_set.json"
+    assert store.V1.export_path == store.DATA_DIR / "label_studio_export.json"
+    assert store.V1.test_set_sha256 == store.TEST_SET_SHA256 == (
+        "7b9a4043886c9f4fcb37cba339962261acaef19e2993f7fba365a75f49b588f4")
 
 
 def test_to_samples(root):
@@ -63,6 +92,20 @@ def test_a_changed_photo_is_caught(root, frozen):
     Image.new("RGB", (40, 20), "white").save(root / "samples9" / "a.jpg")
     with pytest.raises(RuntimeError, match="1 store photos have changed"):
         store.read_test_set(path, root, expected=digest)
+
+
+def test_labels_of_a_set_not_frozen_yet(tmp_path, capsys):
+    unfrozen = store.StoreSet("v9", ("testset9",), tmp_path, None)
+    unfrozen.labels_path.write_text(json.dumps({"testset9/b.jpeg": LABEL}))
+    assert store.labels(unfrozen) == {"testset9/b.jpeg": LABEL}
+    assert "v9 isn't frozen yet" in capsys.readouterr().err
+
+
+def test_labels_of_a_frozen_set(root, frozen, monkeypatch):
+    monkeypatch.setenv("STORE_PHOTOS_DIR", str(root))
+    path, digest = frozen
+    frozen_set = store.StoreSet("v8", ("samples9",), path.parent, digest)
+    assert store.labels(frozen_set) == {"samples9/a.jpg": {**LABEL, "sha256": store.sha256(root / "samples9" / "a.jpg")}}
 
 
 def test_tag_counts():

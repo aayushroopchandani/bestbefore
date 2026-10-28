@@ -451,7 +451,7 @@ def cause_rows(arms: Sequence[str], store_root: Path | None = None) -> dict[str,
     kept = {row: [private_predictions(n, store_root) for n in ns] for row, ns in names.items()}
     if all(k is None for ks in kept.values() for k in ks):
         return {row: [None] * len(ks) for row, ks in kept.items()}
-    labels, photos = store.labels(), store_photos_dir()
+    labels, photos = store.labels(store.V1), store_photos_dir()
     sizes = {p: upright_size(photos / p) for p in labels}
     return {row: [None if k is None else store_causes(labels, sizes, k[1], k[0]) for k in ks]
             for row, ks in kept.items()}

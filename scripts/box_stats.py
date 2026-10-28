@@ -76,7 +76,7 @@ def table(sets: dict[str, dict[str, str]]) -> str:
 
 
 def store_tables() -> str:
-    labels = store.labels()
+    labels = store.labels(store.V1)
     formats = Counter(lab["format"] for lab in labels.values() if lab["expiry"])
     format_rows = [{"expiry format, as printed": f"`{f}`", "photos": f"{n}"}
                    for f, n in formats.most_common()]

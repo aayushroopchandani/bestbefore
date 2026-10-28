@@ -50,7 +50,7 @@ def main() -> None:
     root = store_photos_dir()
     counts = defaultdict(lambda: {"n": 0, "found": 0, "boxed": 0})
     formats = defaultdict(lambda: {"month as a word": 0, "numbers only": 0})
-    for photo, label in store.labels().items():
+    for photo, label in store.labels(store.V1).items():
         if label["tag"] in ("other-face", "sideways"):
             continue
         truths = [b for b in label["boxes"] if b["label"] in DATE_LABELS]

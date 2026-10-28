@@ -1,5 +1,10 @@
-"""The store test set: the retailer's photos, labelled by hand
-(docs/m0-data-and-test-set.md, Part B).
+"""The store test sets: the retailer's photos, labelled by hand
+(docs/m0-data-and-test-set.md, Part B for v1).
+
+Each set is a `StoreSet`: its photo folders under `$STORE_PHOTOS_DIR`,
+where its files live and the hashes they were frozen with. Anything that
+lists or loads store photos takes one, so it always says which set it
+means. v1 (`V1`) is the test set M0 to M2 were measured on.
 
 The photos and their labels belong to the retailer. They stay in
 `$STORE_PHOTOS_DIR` and `data/store/` (gitignored); only counts and the
@@ -28,6 +33,7 @@ import hashlib
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import REPO_ROOT, store_photos_dir
@@ -49,6 +55,32 @@ BOX_LABELS = ("expiry", "mfg", "other_date")
 # v1, frozen 2026-10-21. A new version replaces it: results/store_test_set.md.
 TEST_SET_SHA256: str | None = "7b9a4043886c9f4fcb37cba339962261acaef19e2993f7fba365a75f49b588f4"
 
+
+@dataclass(frozen=True)
+class StoreSet:
+    """One store test set: its photo folders under `$STORE_PHOTOS_DIR`, the
+    folder holding its files, and the hash its test-set file was frozen with."""
+    version: str
+    folders: tuple[str, ...]
+    data_dir: Path
+    test_set_sha256: str | None
+
+    @property
+    def export_path(self) -> Path:
+        return self.data_dir / "label_studio_export.json"
+
+    @property
+    def labels_path(self) -> Path:
+        return self.data_dir / "labels.json"
+
+    @property
+    def test_set_path(self) -> Path:
+        return self.data_dir / "test_set.json"
+
+
+# v1's files are the ones above, as they were before there was a v2.
+V1 = StoreSet("v1", ("samples1", "samples2", "samples3"), DATA_DIR, TEST_SET_SHA256)
+
 _DATE = re.compile(r"(\d{4})-(\d{2})(?:-(\d{2}))?")
 
 
@@ -61,10 +93,15 @@ def parse_date(text: str) -> Expiry:
     return Expiry(int(year), int(month), int(day) if day else None)
 
 
-def photos_on_disk(root: Path | None = None) -> list[str]:
-    """Every store photo, as a path relative to `root`, sorted."""
+def photos_on_disk(store_set: StoreSet, root: Path | None = None) -> list[str]:
+    """Every photo in one set's folders, as a path relative to `root`, sorted."""
     root = root or store_photos_dir()
-    return sorted(p.relative_to(root).as_posix() for p in root.glob("samples*/*")
+    missing = [f for f in store_set.folders if not (root / f).is_dir()]
+    if missing:
+        raise FileNotFoundError(f"store test set {store_set.version}: no folder "
+                                f"{', '.join(missing)} in {root}")
+    return sorted(p.relative_to(root).as_posix()
+                  for folder in store_set.folders for p in (root / folder).iterdir()
                   if p.suffix.lower() in (".jpg", ".jpeg"))
 
 
@@ -123,17 +160,17 @@ def read_labels(path: Path = LABELS_PATH) -> dict[str, dict]:
     return json.loads(path.read_text())
 
 
-def labels() -> dict[str, dict]:
-    """The frozen test set's labels. Before B3 freezes them, labels.json."""
-    if TEST_SET_SHA256 is None:
-        print(f"note: the store test set isn't frozen yet; reading {LABELS_PATH}",
-              file=sys.stderr)
-        return read_labels()
-    return read_test_set()["photos"]
+def labels(store_set: StoreSet) -> dict[str, dict]:
+    """One set's frozen labels. Before they're frozen (B3), its labels.json."""
+    if store_set.test_set_sha256 is None:
+        print(f"note: store test set {store_set.version} isn't frozen yet; "
+              f"reading {store_set.labels_path}", file=sys.stderr)
+        return read_labels(store_set.labels_path)
+    return read_test_set(store_set.test_set_path, expected=store_set.test_set_sha256)["photos"]
 
 
-def load_samples() -> list[Sample]:
-    return to_samples(labels())
+def load_samples(store_set: StoreSet) -> list[Sample]:
+    return to_samples(labels(store_set))
 
 
 def tag_counts(labels: dict[str, dict]) -> list[dict[str, str]]:

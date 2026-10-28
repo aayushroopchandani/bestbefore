@@ -14,7 +14,8 @@ from .samples import Sample
 # gen-sample, gen, synth-val: generated photos (scripts/generate.py), read
 # with their sidecars, so synth-val's targets load as exp and its strata as
 # tags.
-# store: the retailer's photos, test only (store.py).
+# store: store test set v1 (store.V1), the retailer's photos that M0 to
+# M2 were tested on.
 DERIVED = m2.DERIVED_SETS
 GENERATED = m2.GENERATED_SETS
 NAMES = (*expdate.SPLITS, "real-val", *DERIVED, *GENERATED, "store")
@@ -31,7 +32,7 @@ def load_set(name: str) -> list[Sample]:
     if name in GENERATED:
         return derived.load_yolo_set(m2.list_path(GENERATED[name]), m2.sidecar_path(GENERATED[name]))
     if name == "store":
-        return store.load_samples()
+        return store.load_samples(store.V1)
     raise ValueError(f"unknown set {name!r}; one of {', '.join(NAMES)}")
 
 

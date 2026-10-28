@@ -37,7 +37,7 @@ def main() -> None:
 
     tasks = json.loads(args.export.read_text())
     root = store_photos_dir()
-    on_disk = store.photos_on_disk(root)
+    on_disk = store.photos_on_disk(store.V1, root)
     labels = imp.from_export(tasks)
     upright = {p: upright_size(root / p) for p in labels.keys() & set(on_disk)}
     truth = imp.read_scanify_truth(scanify_dir() / imp.SCANIFY_TRUTH)
