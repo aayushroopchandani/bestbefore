@@ -29,7 +29,8 @@ def expdate_dir() -> Path:
 
 
 def store_photos_dir() -> Path:
-    """The folder holding samples1/, samples2/ and samples3/."""
+    """The folder holding the store photos: samples1/ to samples3/ (store
+    test set v1) and testset2/ (v2)."""
     return _path("STORE_PHOTOS_DIR")
 
 

@@ -121,12 +121,14 @@ def check_export(tasks: list[dict]) -> list[str]:
     return problems
 
 
-def check_photos(labelled: list[str], on_disk: list[str]) -> list[str]:
-    """Check 1: every photo labelled exactly once, and nothing else."""
+def check_photos(labelled: list[str], on_disk: list[str],
+                 where: str = "$STORE_PHOTOS_DIR") -> list[str]:
+    """Check 1: every photo labelled exactly once, and nothing else. `where`
+    names the list `on_disk` came from, for the message."""
     counts = Counter(labelled)
     return ([f"{p}: labelled {n} times" for p, n in sorted(counts.items()) if n > 1]
             + [f"{p}: not labelled" for p in sorted(set(on_disk) - set(counts))]
-            + [f"{p}: labelled, but not in $STORE_PHOTOS_DIR"
+            + [f"{p}: labelled, but not in {where}"
                for p in sorted(set(counts) - set(on_disk))])
 
 

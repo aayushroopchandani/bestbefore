@@ -1,3 +1,6 @@
+import json
+from dataclasses import replace
+
 import pytest
 
 from bestbefore import store_import as imp
@@ -146,3 +149,66 @@ def test_apply_print_rule():
         "d.jpg": "dot-matrix", "e.jpg": "small-print"}
     assert moved == {"clean -> small-print": 2, "small-print -> clean": 1}
     assert labels["a.jpg"]["tag"] == "clean"        # the input is left alone
+
+
+# The import script's checks, on a made-up set like v2 in a fake photo folder.
+
+@pytest.fixture
+def v9(tmp_path):
+    from PIL import Image
+    from bestbefore import store
+    root = tmp_path / "photos"
+    (root / "testset9").mkdir(parents=True)
+    Image.new("RGB", (400, 800)).save(root / "testset9" / "pack a.jpeg")
+    Image.new("RGB", (600, 400)).save(root / "testset9" / "pack b.jpg")
+    unfrozen = store.StoreSet("v9", ("testset9",), tmp_path / "data", None, photo_list=True)
+    unfrozen.photos_path.parent.mkdir()
+    unfrozen.photos_path.write_text(json.dumps(store.freeze_photos(unfrozen, "2026-10-28", root)))
+    listed = replace(unfrozen, photos_sha256=store.sha256(unfrozen.photos_path))
+    export = [{**task, "image": task["image"].replace("samples9", "testset9")} for task in EXPORT]
+    export[0]["image"] = export[0]["image"].replace(".jpg", ".jpeg")
+    return listed, root, export
+
+
+def test_v2_checks_pass_without_scanify(load_script, v9):
+    script = load_script("import_store_labels")
+    listed, root, export = v9
+    checks, labels, upright = script.run_checks(listed, export, root)
+    assert all(problems == [] for problems in checks.values())
+    assert not any(name.startswith("4.") for name in checks)
+    assert sorted(labels) == ["testset9/pack a.jpeg", "testset9/pack b.jpg"]
+
+
+def test_a_v1_photo_in_a_v2_export_fails_check_1(load_script, v9):
+    script = load_script("import_store_labels")
+    listed, root, export = v9
+    checks, _, _ = script.run_checks(listed, export + [EXPORT[1]], root)
+    assert checks["1. all 2 photos labelled once, no extras"] == [
+        "samples9/pack b.jpg: labelled, but not in store test set v9's frozen photo list"]
+
+
+def test_v2_import_stops_when_a_photo_changed(load_script, v9):
+    from PIL import Image
+    script = load_script("import_store_labels")
+    listed, root, export = v9
+    Image.new("RGB", (600, 400), "white").save(root / "testset9" / "pack b.jpg")
+    with pytest.raises(RuntimeError, match="changed: testset9/pack b.jpg"):
+        script.run_checks(listed, export, root)
+
+
+def test_v1_checks_include_scanify(load_script, tmp_path, monkeypatch):
+    from PIL import Image
+    from bestbefore import store
+    script = load_script("import_store_labels")
+    root = tmp_path / "photos"
+    (root / "samples9").mkdir(parents=True)
+    Image.new("RGB", (400, 800)).save(root / "samples9" / "pack a.jpg")
+    Image.new("RGB", (600, 400)).save(root / "samples9" / "pack b.jpg")
+    truth = tmp_path / "scanify" / imp.SCANIFY_TRUTH
+    truth.parent.mkdir(parents=True)
+    truth.write_text("EXPIRY_GROUND_TRUTH = {}\n")
+    monkeypatch.setenv("SCANIFY_DIR", str(tmp_path / "scanify"))
+    old = store.StoreSet("v8", ("samples9",), tmp_path / "data", None, scanify_check=True)
+    checks, _, _ = script.run_checks(old, EXPORT, root)
+    assert "4. the 0 expiries in Scanify's ground truth match" in checks
+    assert all(problems == [] for problems in checks.values())
