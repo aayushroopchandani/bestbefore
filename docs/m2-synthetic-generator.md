@@ -14,9 +14,11 @@ Later); S6 done 2026-10-23 (the 50,000 training photos and synth-val made
 and checked on the cluster in one CPU job, `72995`, which released job B);
 job A started 2026-10-24 at 12:00 and chose its loader (8 workers); S7
 done 2026-10-24 (the scoring, tables and report code, checked on M1's runs,
-validation and job A's first records). Next: S8, once every run is scored.
-The learnings guide for M2 (`learnings/m2.md`) is written separately,
-later.
+validation and job A's first records); job A trained and scored every run
+by 2026-10-26; S8 done 2026-10-28 (every run scored once on the store
+photos, the M2 detector, `gen-rot-1280` seed 0, once on ExpDate test).
+Next: S9, the report. The learnings guide for M2 (`learnings/m2.md`) is
+written separately, later.
 
 **Goal.** Teach the date detector the dates M1 never learned: sideways,
 month written as a word, and small. A generator draws such dates onto real
@@ -2430,6 +2432,160 @@ Details fixed while writing it (2026-10-28):
 **Commits:** `feat: M2 scored on the store photos and ExpDate test` (if
 code changed), then `docs: m2 experiment results`
 
+**Done 2026-10-28.** Code `d82dfc5` and `fb5aeaa` (`score_suite.py --out`
+and the laptop's weights; 500 tests pass, 3 new in
+`tests/test_score_suite.py`, and 7 deliberate bugs in the script are all
+caught). Every score below is from `fb5aeaa`, clean tree, on the laptop's
+CPU. What was found:
+
+- **The cluster had finished.** `squeue --me` showed no M2 job. Job A
+  (`72914`) ran 2026-10-24 12:00 to 2026-10-26 04:59 on `cn5` (40 h 59 min)
+  and trained every run; job B (`72915`) started on `cn5` as A ended and
+  exited after 4 s with nothing left. Every run has exactly one attempt:
+  none was cut off, failed or restarted.
+- **The pull** changed nothing it shouldn't: its dry run showed only new
+  files, plus `m2-decisions.json` and `base-s0`'s `run.json` and
+  `results.csv`, which were mid-training at S7's pull.
+- **The decisions agree.** The chain recorded the loader (`a`), the pilot
+  gate (passed: 0.972 of synth-val's targets boxed at any confidence,
+  against the 0.5 needed) and **the M2 detector, `gen-rot-1280`, seed 0,
+  threshold 0.342413991689682**. Every `summarise.py` works all three out
+  again and agrees (exit 0, no warning). Every candidate passed the guard
+  (`real-val` mAP@0.5 0.990 to 0.995, `base` 0.994); on the hard sets
+  `gen-rot-1280` leads at 0.989, then `gen-rot` 0.956, `rot` 0.881, `gen`
+  0.817, `base` 0.560.
+- **The weights:** the 18 `last.pt` (5.49 to 5.59 MB) took 4 s to copy;
+  each one's SHA-256 equals the cluster's, and no two are the same.
+- **Before the first store score:** every run finished, its `suite.json`
+  scored on the cluster at `a53c1a9` (clean) with a float threshold and no
+  set missing; no `store.json` or `real-test.json` anywhere; the store
+  test set v1 loads with its hash check (99 photos, 87 with an expiry;
+  clean 33, dot-matrix 21, small-print 17, sideways 16, other-face 12).
+- **synth-val as the GPU scored it.** Copying the cluster's replaced
+  exactly the 123 photos S6 found to differ, and no label file;
+  `generate.py --check` then passed synth-val (complete, 0 problems; `gen`
+  fails, as the laptop holds only S6's 5,000-photo trial), and all 2,100
+  photos and labels match the cluster check record's SHA-256. The real
+  sets' 742 files (371 photos and their labels) are identical on both
+  machines. One slip: the copy also put a second copy of task 50's
+  sidecar into `gen/sidecars/`, removed at once after `cmp` showed it
+  identical to `tasks/50.jsonl`.
+- **The device check passes** (`score_suite.py --run gen-rot-1280-s0
+  --device cpu --out …/device-check-cpu`, 15.8 minutes). The laptop's F2
+  threshold is 0.342073, the GPU's 0.342414. On all three real sets every
+  count is the same (found at IoU 0.5 and 0.3, boxed at any confidence),
+  and mAP@0.5 within 0.0001. On synth-val one date of 4,494 moved: a
+  `curved` target found at IoU 0.5 on the GPU is found at IoU 0.3 here,
+  and still boxed at IoU 0.5 at some confidence, so only its surest box
+  shifted. The GPU's `suite.json` is byte for byte as before (SHA-256
+  `354d5cfe…`): it stays the run's record, its threshold the one used.
+- **The store photos, all 18 runs, once each: 3.5 minutes** (212.9 s; the
+  plan guessed 30). Each `store.json` records `fb5aeaa`, clean, CPU, and
+  its threshold from the GPU's `suite.json`, unrounded; the 18 per-photo
+  prediction folders are in `data/store/runs/`, none in `results/`. **A
+  first try scored nothing:** zsh doesn't split an unquoted variable, so
+  the 18 names reached `eval_detector.py` as one, and it stopped at its
+  first lookup, before loading a model or a photo. No file was written
+  (checked), so the second call is every run's first and only score.
+- **ExpDate test, the M2 detector's 3 seeds, once each: 12.9 minutes.**
+
+  | Detector (3 seeds) | Expiry found | Boxed at any confidence | All dates found | Precision | mAP@0.5 date |
+  |---|---:|---:|---:|---:|---:|
+  | M1 (`n640`) | 646/665 (637–651) | – | 707.3/733 (697–713) | 0.982 | 0.993 |
+  | `gen-rot-1280` | 662.7/665 (662–663) | 664.7/665 | 730.7/733 (730–731) | 0.986 | 0.995 |
+
+  Seed 0, the M2 detector, finds 662 of 665 expiry dates (M1's seed 0:
+  637). Ultralytics' own recall at the threshold agrees with ours within
+  0.0013. M2 got no worse where M1 was already good.
+- **The store photos by failure tag**, expiry dates found at each run's
+  threshold (mean of 3 seeds, range):
+
+  | Detector | sideways | dot-matrix | small-print | clean | all | boxed at any confidence | precision |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | M1 (`n640`) | 0/15 | 14.7/20 (12–17) | 0/15 | 7/31 (6–8) | 21.7/81 (18–25) | 45/81 | 0.939 |
+  | `base` | 0/15 | 17.7/20 (17–19) | 0/15 | 9.3/31 (8–10) | 27/81 (25–29) | 43/81 | 0.763 |
+  | `rot` | 1/15 | 17.3/20 (17–18) | 0/15 | 8/31 | 26.3/81 (26–27) | 45.7/81 | 0.728 |
+  | `gen` | 0.7/15 (0–1) | 18.7/20 (18–19) | 0.7/15 (0–1) | 18.3/31 (18–19) | 38.3/81 (37–40) | 52.7/81 | 0.682 |
+  | `gen-rot` | 0.3/15 (0–1) | 17.3/20 (16–18) | 0/15 | 16/31 (15–17) | 33.7/81 (33–35) | 55/81 | 0.868 |
+  | `gen10k` | 0.3/15 (0–1) | 18/20 (17–19) | 0.3/15 (0–1) | 18.3/31 (17–19) | 37/81 (34–39) | 49/81 | 0.777 |
+  | `gen-rot-1280` | 2.7/15 (2–3) | 19/20 | 5.3/15 (2–9) | 19/31 (15–23) | 46/81 (39–53) | 70.3/81 | 0.910 |
+
+  (Precision is over all 199 store dates.) **By cause**, the same way:
+
+  | Detector | full month name | abbreviation | numbers under 1.5% | 1.5 to 2.5% | 2.5% and up | sideways |
+  |---|---:|---:|---:|---:|---:|---:|
+  | M1 (`n640`) | 0/19 | 0.7/7 (0–1) | 1/8 | 8.7/19 (5–11) | 11.3/13 (11–12) | 0/15 |
+  | `base` | 1/19 (0–2) | 2/7 | 1/8 | 11/19 (10–13) | 12/13 | 0/15 |
+  | `rot` | 0/19 | 2/7 | 1/8 | 10.7/19 (10–12) | 11.7/13 (11–12) | 1/15 |
+  | `gen` | 6.7/19 (6–7) | 1.3/7 (1–2) | 1.7/8 (1–2) | 16/19 | 12/13 | 0.7/15 (0–1) |
+  | `gen-rot` | 5.7/19 (5–6) | 1/7 | 1/8 | 13.7/19 (13–15) | 12/13 | 0.3/15 (0–1) |
+  | `gen10k` | 7.3/19 (7–8) | 1/7 | 1.3/8 (1–2) | 15.3/19 (14–17) | 11.7/13 (11–12) | 0.3/15 (0–1) |
+  | `gen-rot-1280` | 10/19 (6–15) | 3/7 (2–4) | 3/8 (2–4) | 15.3/19 (14–16) | 12/13 | 2.7/15 (2–3) |
+
+  For all 21 runs (M1's 3 included) the causes add up to `store.json`.
+  The experiments' READMEs hold the rest (boxed at any confidence by tag
+  and cause, the suite); `gen10k`'s and `gen-rot-1280`'s cause tables
+  appear only in S9's report, which builds the store block over all six
+  arms.
+- **What the store photos show** (read in full in the READMEs'
+  "What it means"):
+  - Every M2 arm finds more store expiries than M1, and the M2 detector's
+    arm the most: 46 of 81 against 21.7, from 39 to 53 over its seeds.
+  - The generated dates are what helps: `gen` against `base` doubles
+    clean expiries (18.3 against 9.3 of 31) and lifts full month names
+    from 1 to 6.7 of 19. Turned copies add nothing there (`rot` 26.3,
+    `base` 27).
+  - Only the 1,280 px input moves small print (5.3 of 15, boxed 13 of 15;
+    every 640 px arm 0 to 0.7).
+- **Where M2 doesn't beat M1, plainly:**
+  - **Sideways dates:** at most 1 of 15 for every 640 px arm and 2.7 for
+    `gen-rot-1280`, though `rot` finds 98% of `real-val-rot` and `gen`
+    296 of 300 synth-val sideways targets. Neither turned ExpDate photos
+    nor generated sideways dates look like the store's sideways dates to
+    the model: a realism gap of the kind the plan warned of, and one that
+    real turned print shows as much as generated print.
+  - **Precision:** every arm keeps more false boxes than M1 (0.682 to
+    0.910 against 0.939; 0.11 to 0.45 false boxes a photo against 0.03).
+    That is the price of the F2 threshold (decision 11), most for `gen`,
+    whose thresholds are 0.07 to 0.15.
+  - **Large numeric dates** (2.5% and up) stay where M1 was (11.7 to 12
+    of 13, M1 11.3), as expected: M1 already found them.
+  - `base` boxes no more store expiries at any confidence than M1 (43
+    against 45): its gain is all in where the threshold cuts.
+- **Expected against measured** (the table written before any run):
+  sideways "up a lot" for `rot` holds on `real-val-rot` and fails on the
+  store photos; month words "up a lot" for `gen` holds on synth-val (296
+  of 300) and partly on the store (full names 0 to 6.7 of 19,
+  abbreviations 0.7 to 1.3 of 7), so the generated look carries over in
+  part; small print "up" for the generated arms holds only at 1,280 px;
+  ExpDate validation "as M1" holds for every arm.
+- **The threshold still cuts many store dates.** Every arm boxes far more
+  expiries at some confidence than it keeps (the M2 detector's arm 70.3
+  against 46). Choosing the threshold for recall on real hard validation
+  photos lowered it, but not to where the store's dates are. Cause 4 is
+  only partly closed.
+- **The side questions, by the rules written before the runs:** data size,
+  `gen` leads `gen10k` by 1.63 points on the hard sets (over the rule's
+  1), so more distinct photos help and 200,000 is a Later candidate (the
+  store photos show 38.3 against 37, within noise). Input size,
+  `gen-rot-1280` finds 181.3 of 186 `real-val-small` dates against 160.3,
+  for 1.7 times the GPU time (203 against 120 minutes a run).
+- **On the cluster**, beyond reading: the file list for the real sets'
+  `sha256sum` was put in the login node's `/tmp` and deleted in the same
+  command. Nothing else was written there; no job was submitted, changed
+  or cancelled.
+- **Not checked:**
+  - why the store's sideways dates are missed (Later; the owner can look
+    at the 15 locally);
+  - the store results by eye (the owner, locally);
+  - the device check on a 640 px run (only the M2 detector was re-scored;
+    every 640 px run's store score on the CPU rests on that one agreement);
+  - ExpDate test for any arm but the M2 detector, on purpose (decision 17);
+  - the runs table and `results/m2_detector.md` (S9).
+- **For S9:** `m2_report.py` builds every table from the records now on the
+  laptop; the plan's status, compute budget's measured column, and the
+  README's M2 section and month-word line are S9's.
+
 ### S9. Report · laptop
 
 **Goal:** M2's deliverable, `results/m2_detector.md`, and the README.
@@ -2561,7 +2717,18 @@ results/           m2_detector.md   (committed; runs/ is not)
 - **Tiled inference** for very small dates, if 1280 px isn't enough.
 - **A fresh set of store photos** (a new store visit, labelled and frozen
   as v2) for a test that M2's design never saw.
-- **200,000 generated photos**, if `gen` clearly beats `gen10k`.
+- **200,000 generated photos**, if `gen` clearly beats `gen10k`. **(S8)**
+  By the rule it does, by 1.63 points of mAP on the hard sets, mostly on
+  `real-val-rot`; the store photos show no difference (38.3 against 37
+  of 81).
+- **Why the store's sideways dates are missed** (from S8): every 640 px
+  arm finds at most 1 of the 15 and `gen-rot-1280` 2.7, though `rot` finds
+  98% of `real-val-rot`. An analysis like `experiments/m1-store-misses/`
+  for those 15 (size, print style, format, whether the pack or only its
+  print is turned, what else is in the photo), from the labels and, for
+  the look, by the owner on the laptop; then generated or turned data
+  built from the causes it finds (never copied from a store photo, as in
+  M2), judged on a fresh store set.
 - **Superscript ordinals** (`19ᵗʰ`), **upside-down packs** (180°), and
   **Hindi** label words.
 - **A time or lot code on the date's own line** (`EXP 11/2027 14:32`,
