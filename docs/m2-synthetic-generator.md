@@ -2601,7 +2601,37 @@ CPU. What was found:
   photos (ExpDate backgrounds, credited).
 - This plan: status, measured times, decisions as they came out, Later.
 
-**Commit:** `docs: M2 results`
+Details fixed while writing it (2026-10-28):
+
+- **The report says what it shows, from the records.** As S7 left it,
+  `m2_report.py` writes tables only, and its headline has the 3-seed means
+  but neither the M2 detector itself (seed 0) nor the store photos'
+  precision. A finding typed into the report by hand could drift from the
+  records, so the script gains both: a headline with seed 0's own row and
+  the store's boxed-at-any-confidence count, precision and false boxes a
+  photo; and a section "What it shows", whose every number is read from
+  the records, on where M2 beats M1, where it doesn't, and the table
+  written before any run ("What we expect") against what was measured.
+  The verdicts in that table (held, partly, failed) are judgments,
+  written in the script beside the numbers they rest on.
+- **The README's numbers come from the report**, never from this plan or
+  the experiments' READMEs, and the README says plainly that the M2
+  detector, seed 0 by the rule declared in advance, keeps the fewest
+  store expiries of its arm's three seeds.
+- **The README's store-photo lines follow `CLAUDE.md`'s permission of
+  2026-10-28:** test-only through M0 to M2, then allowed for training and
+  for AI tools, still never committed or published. Its "test only" label
+  in the judging diagram goes too.
+- **No figure of generated photos.** It is optional here and would need
+  new figure code; the README stays with ExpDate's figures.
+- **(changed) Commits, one logical change each** (the slice said one
+  commit): this plan's details, the report script, the report, the
+  README, then this plan closed.
+
+**Commits:** `docs: m2 plan, S9 details fixed while writing it`,
+`feat: m2 report's headline adds seed 0 and the store's precision, and a section on what it shows`,
+`docs: m2 results report`, `docs: readme for m2`,
+`docs: m2 plan done: S9's record, measured compute, Later`
 
 ---
 
