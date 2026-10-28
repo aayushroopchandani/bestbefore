@@ -610,8 +610,9 @@ def runs_table(root: Path | None = None) -> str:
             "epochs": str(record["epochs_run"]), "train minutes": str(record["train_minutes"]),
             "images/s": f"{speed:.0f}" if speed else "–",
             "threshold": f"{suite['threshold']:.3f}" if suite else "–"})
-    total = (f"GPU time so far: {train / 60:.1f} h training (setup and final validation "
-             f"included), {score / 60:.1f} h scoring.")
+    done = all(row["state"] in ("scored", "finished") for row in rows)
+    total = (f"GPU time{'' if done else ' so far'}: {train / 60:.1f} h training (setup and "
+             f"final validation included), {score / 60:.2f} h scoring.")
     return paragraphs(markdown_table(rows, left=("run", "state")), total)
 
 
