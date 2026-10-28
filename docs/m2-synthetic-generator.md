@@ -2404,6 +2404,29 @@ ExpDate test, each exactly once.
 6. `python experiments/m2-*/summarise.py --write`, and the store-by-cause
    tables.
 
+Details fixed while writing it (2026-10-28):
+
+- **`score_suite.py --out DIR`** writes `suite.json`, and the dataset files
+  in `suite/`, into DIR instead of the run's folder. The default, which the
+  chain uses, is unchanged. With `--out` it also prints the run's own
+  `suite.json` beside the new one, set by set, so the device check is one
+  command: `score_suite.py --run gen-rot-1280-s0 --device cpu --out
+  results/runs/<run>/device-check-cpu`. The GPU's `suite.json` stays the
+  run's record, and its threshold is the one the store photos and ExpDate
+  test are cut at.
+- **(found in S8) `score_suite.py` also has to find the laptop's weights.**
+  It read them from the path in `run.json`, which for a cluster run is the
+  cluster's (`/home/…/bestbefore-data/checkpoints/m2/<run>/weights/last.pt`),
+  so on the laptop it would fail. It now uses that path where it exists, as
+  on the cluster, and otherwise the copy `eval_detector.py` reads,
+  `$CHECKPOINT_DIR/m2/<run>/weights/last.pt`; the suite records which.
+- **synth-val as the GPU scored it** (S6's note): the cluster's
+  `gen/images/synth_val/`, `gen/labels/synth_val/`, the joined sidecar and
+  task 50's sidecar and record are copied over the laptop's, then
+  `generate.py --check`, and the photos' SHA-256 compared with the
+  cluster's check record. The real sets' photos are compared by SHA-256 on
+  both machines too.
+
 **Commits:** `feat: M2 scored on the store photos and ExpDate test` (if
 code changed), then `docs: m2 experiment results`
 
