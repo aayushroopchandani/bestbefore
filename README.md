@@ -100,7 +100,7 @@ what actually makes reading fail, rather than a proxy like blur.
 
 ```mermaid
 flowchart LR
-    STORE["Store photos<br/>private, test only"] --> FROZEN["Labelled and frozen<br/>expiry, tight boxes, failure tag"]
+    STORE["Store photos<br/>private, never published"] --> FROZEN["Labelled and frozen<br/>expiry, tight boxes, failure tag"]
     FROZEN --> EVAL["Evaluation"]
     A["Baseline A<br/>RapidOCR + date regex"] --> EVAL
     B["Baseline B<br/>Scanify's rule-based reader"] --> EVAL
@@ -142,8 +142,8 @@ Every model has to beat both of these on the same photos:
 ```mermaid
 flowchart LR
     M0["M0<br/>Data and test set"] --> M1["M1<br/>Date detector"]
-    M1 --> M2["M2<br/>Synthetic generator"]:::now
-    M2 --> M3["M3<br/>Date reader"]
+    M1 --> M2["M2<br/>Synthetic generator"]
+    M2 --> M3["M3<br/>Date reader"]:::now
     M3 --> M4["M4<br/>Readability checker"]
     M4 --> M5["M5<br/>On the phone"]
     classDef now stroke-width:3px
@@ -153,8 +153,8 @@ flowchart LR
 |---|---|---|---|
 | M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | **done** |
 | M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | **done** |
-| M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | next |
-| M3 | Date reader | end-to-end date accuracy vs baselines A and B, by tag | planned |
+| M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | **done** |
+| M3 | Date reader | end-to-end date accuracy vs baselines A and B, by tag | next |
 | M4 | Readability checker | AUROC on held-out copies; SmartDoc-QA and SPAQ agreement; store photos | planned |
 | M5 | On the phone | size, latency per frame, accuracy kept after quantising | planned |
 
@@ -249,8 +249,10 @@ The gap is the finding. ExpDate's dates are numeric, upright and fairly
 large, and the detector learned exactly that:
 
 - **Sideways dates:** none in ExpDate, none found.
-- **Month written as a word** (`December 2026`): 6% of ExpDate's dates,
-  26 of the 66 upright store expiries, and the detector finds 3% of them.
+- **Month written as a word** (`December 2026`): 6% of ExpDate's real
+  dates and 48% of its synthetic ones, all three-letter abbreviations
+  (`DEC`), against 26 of the 66 upright store expiries, most of them full
+  names. The detector finds 3% of the store's.
 - **Print size:** numeric store dates are found 87% of the time when
   printed at ExpDate's size, 12% when under 1.5% of the photo.
 
@@ -259,6 +261,76 @@ small, and a larger input (or tiles) for small print, judged on the store
 photos by tag. Full report:
 [`results/m1_detector.md`](results/m1_detector.md); the analysis of the
 misses: [`experiments/m1-store-misses`](experiments/m1-store-misses/README.md).
+
+### M2 result: generated dates double the store expiries found, but not the sideways ones
+
+The same small YOLO, retrained on six kinds of training data, each with
+the same budget of 2.56 million training images and three seeds: M1's
+data (`base`); plus ExpDate's photos turned 90° or 270° (`rot`); plus
+50,000 photos with generated dates drawn onto ExpDate's training photos
+(`gen`); both (`gen-rot`); both at a 1,280 px input (`gen-rot-1280`); and
+10,000 generated photos instead of 50,000 (`gen10k`). The generator draws
+dates in solid, dot-matrix, label and embossed print, in Indian formats
+with the month as a word or a number, small, sideways, tilted and on
+curved surfaces, then adds blur, noise, glare and uneven light. Every box
+comes from the ink it drew. A rule written before any run chose the M2
+detector on validation photos: `gen-rot-1280`, seed 0. ExpDate test and
+the store photos were each scored once, afterwards.
+
+| Expiry dates | ExpDate test, found | Store photos, found | Store, boxed at any confidence | Store precision |
+|---|---:|---:|---:|---:|
+| the M1 detector (seed 0) | 637 of 665 | 18 of 81 | 43 | 0.950 |
+| M1, mean of 3 seeds | 646 | 21.7 | 45 | 0.939 |
+| the M2 detector (seed 0) | 662 of 665 | 39 of 81 | 69 | 0.902 |
+| M2 (`gen-rot-1280`), mean of 3 seeds | 662.7 | 46 (39 to 53) | 70.3 | 0.910 |
+
+By store failure tag (mean of 3 seeds), M1 then M2: sideways 0 then 2.7
+of 15, dot-matrix 14.7 then 19 of 20, small print 0 then 5.3 of 15, clean
+7 then 19 of 31.
+
+What it shows:
+
+- **The generated dates are what helps.** With them (`gen` against
+  `base`), clean store expiries go from 9.3 to 18.3 of 31, and full month
+  names (`December 2026`) from 1 to 6.7 of 19. ExpDate's photos turned
+  add nothing on the store photos (`rot` 26.3 of 81, `base` 27).
+- **Small print moved only at 1,280 px:** 5.3 of 15 small-print expiries,
+  against 0 to 0.7 for every 640 px arm.
+- **Nothing was lost on ExpDate:** the M2 detector finds 662 of 665 test
+  expiries (M1's: 637), and every arm keeps a validation mAP@0.5 for
+  dates of 0.990 to 0.995.
+- **The M2 detector is its arm's weakest seed on the store photos:** 39
+  of 81, where its arm's seeds range from 39 to 53. The seed was fixed
+  before any run, so it stays; the spread says the store set is too small
+  to tell seeds apart.
+
+Where it doesn't beat M1:
+
+- **Sideways dates are almost unsolved:** 2.7 of 15 store expiries,
+  though ExpDate's validation photos turned sideways are found almost
+  every time (`rot`: 183.7 of 187). Neither turned ExpDate photos nor
+  generated sideways dates look like the store's sideways dates to the
+  model; why is the next thing to find out.
+- **More false boxes:** precision 0.910 against M1's 0.939, and 0.11
+  false boxes a photo against 0.03. That is the price of a threshold
+  chosen for recall.
+- **The threshold still cuts many store dates:** 70.3 expiries get a box
+  at some confidence, 46 are kept.
+- **Predictions written before any run:** turned photos lifting sideways
+  dates "a lot" (`rot`) and generated plus turned ones lifting them "the
+  most" (`gen-rot`) both failed on the store photos. Month words "up a
+  lot" held on generated validation photos (296.3 of 300 for `gen`) but
+  only partly on the store (6.7 of 19 full names). Small print "up" with
+  the generated photos held only at 1,280 px. "No loss on ExpDate" held
+  for every arm.
+
+The store set is small (15 sideways and 15 small-print expiries), and
+M1's store result chose what M2 aimed at, so these store numbers are a
+somewhat optimistic estimate for a new store. Full report, with every
+arm by tag and by cause:
+[`results/m2_detector.md`](results/m2_detector.md); the plan and every
+slice's record:
+[`docs/m2-synthetic-generator.md`](docs/m2-synthetic-generator.md).
 
 ---
 
@@ -295,14 +367,21 @@ ExpDate is not redistributed here; `scripts/download_expdate.py` fetches
 it from the authors' release and checks it against recorded SHA-256
 hashes.
 
-### Store photos (testing only)
+### Store photos (private)
 
 99 photos taken in the retailer's stores (87 with the expiry in frame),
 labelled with the expiry, a tight box around every date, and a failure
-tag. **They are never
-committed, never trained on and never published.** Only aggregate numbers
-appear in this repository, and the test set is frozen by its hash so it
-can't change between experiments.
+tag. **They are never committed and never published:** only aggregate
+numbers appear in this repository, never a photo, a photo's name or a
+picture drawn from one.
+
+From M0 to M2 they were for testing only, frozen by their hash so they
+couldn't change between experiments, and every store number above was
+measured before any training on them. On 2026-10-28 the retailer's owner
+allowed them to be used for training and to be shown to AI tools for
+analysis; publishing them is still not allowed. Once a milestone trains
+on them, a new set of store photos, labelled and frozen before that
+training, becomes the test set.
 
 ### For testing the readability checker
 
@@ -360,6 +439,27 @@ python scripts/eval_detector.py --set store --runs n640 n640-seed1 n640-seed2
 python scripts/m1_report.py                   # writes results/m1_detector.md
 ```
 
+Generate, train and score M2. The derived sets, the 52,100 generated
+photos and the 18 training runs are made on the cluster by Slurm jobs
+(steps in
+[`docs/m2-synthetic-generator.md`](docs/m2-synthetic-generator.md), S1 to
+S6): `slurm/m2_derive.sbatch`, `slurm/m2_generate.sbatch`, then two
+`slurm/m2_gpu.sbatch` jobs that share one work queue
+(`scripts/m2_chain.py`), train every run and score each on the
+validation suite. Back on the laptop, with each run's `last.pt` copied
+into `$CHECKPOINT_DIR/m2/<run>/weights/`:
+
+```bash
+pip install -e ".[train,synth]"
+python scripts/fetch_fonts.py                 # the generator's 20 fonts, checked by SHA-256
+python scripts/render_sheet.py                # every print style, to look at
+scripts/pull_cluster_results.sh               # run records, suites, the chain's decisions
+python scripts/eval_detector.py --set store --runs m2-{base,rot,gen,gen-rot,gen10k,gen-rot-1280}-s{0,1,2}
+python scripts/eval_detector.py --set real-test --runs m2-gen-rot-1280-s{0,1,2}
+python experiments/m2-ablation/summarise.py   # and the other m2-* experiments
+python scripts/m2_report.py                   # writes results/m2_detector.md
+```
+
 Every script run writes a record (settings, git commit, seed, library
 versions, and for the baselines a hash of the reader's code) to
 `results/runs/`, so any number can be traced and reproduced. Runs on the
@@ -396,6 +496,10 @@ bestbefore/
   from cluster setup to the final evaluation
 - [`docs/learnings/m1.md`](docs/learnings/m1.md): the cluster, Slurm,
   fine-tuning, precision, recall and mAP, explained simply
+- [`docs/m2-synthetic-generator.md`](docs/m2-synthetic-generator.md): the
+  M2 plan: the generator, the ablation and every slice's record
+- [`results/m2_detector.md`](results/m2_detector.md): the M2 ablation's
+  results, from the validation suite to the store photos
 
 ---
 
@@ -410,3 +514,9 @@ Science and Technology (KIST), released under
 > convolutional networks.* Expert Systems with Applications, 203, 117310.
 
 Dataset page: <https://felizang.github.io/expdate/index_expdate.html>
+
+M2's generated photos are drawn onto ExpDate's training photos, so they
+are ExpDate derivatives and are not redistributed either. The
+generator's 20 font families are under the SIL Open Font License,
+fetched from the Google Fonts repository at a pinned commit and checked
+by SHA-256; they aren't redistributed here.
