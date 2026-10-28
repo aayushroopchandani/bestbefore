@@ -79,11 +79,25 @@ convolutional networks.* Expert Systems with Applications, 203, 117310.
 - **SPAQ**: 11,125 photos from 66 phones with human sharpness ratings.
   Tests whether the checker responds to focus at all.
 
-### Private: store photos, for testing only
+### Private: store photos
 
-About 99 photos taken in the retailer's stores. **They belong to the
-retailer: never commit them, never train on them, never publish them.**
-Only aggregate numbers leave the machine.
+About 99 photos (**store set v1**) taken in the retailer's stores. **They
+belong to the retailer: never commit them, never publish them** (no
+GitHub, no README figures, no public dataset). Anything committed holds
+aggregate numbers only, never a photo or a photo name.
+
+**Permission from the retailer's owner, 2026-10-28:** the store photos may
+be used to **train** models and may be **shown to AI tools** (such as
+Claude) for analysis; the products on them are public. Publishing is not
+part of this permission. Until then they were test-only.
+
+- **Store set v1 becomes training data** from the first milestone that
+  trains on it. From then on it can't judge a model.
+- **A new set of store photos is the test set:** labelled and frozen
+  (hashed, like v1) **before** any training on store photos. Never train
+  on it, never tune on it.
+- Results on v1 from M0 to M2 were measured before any store training and
+  stay as recorded.
 
 - 44 have a known expiry (Scanify `backend/tests/ground_truth.py`). The
   rest (`samples1/`, `samples3/`) still need expiry labels. That is M0.
@@ -144,7 +158,8 @@ Plan each milestone as a sliced doc in `docs/` before writing its code.
 - **Checker:** AUROC for "will be read right". Also report the agreement
   with OCR accuracy on SmartDoc-QA and with sharpness ratings on SPAQ.
 - Always report **per failure tag**. Never train on, or tune
-  hyperparameters against, the store photos or any test split.
+  hyperparameters against, any test split: the frozen store test set
+  (v1 until store training starts, the new set after) or ExpDate test.
 
 ## Lessons already measured (don't re-learn them)
 
