@@ -6,6 +6,8 @@ Planned 2026-10-13. Status: **M0 done** (2026-10-21). Part A on
 On the store photos, baseline B reads 60 of 87 expiries right (2 wrong)
 and A 49 (12 wrong); on ExpDate test, A reads 502 of 655 and B 57.
 The ideas behind each step, explained simply: [`learnings/m0.md`](learnings/m0.md).
+**Store test set v2** (planned 2026-10-28), the test set once store
+photos are trained on: [Part D](#store-test-set-v2-part-d), below.
 
 **Goal.** Get the public data into a shape a detector can train on, turn the
 store photos into a labelled test set that never changes again, and measure
@@ -440,7 +442,10 @@ so no store photo ends up anywhere a results folder gets copied.
   tag, with expiry, month-only, derived, unreadable).
 - After this point, a label changes only as a new version (`v2`), with a
   line in `results/store_test_set.md` saying what changed and why, and
-  every baseline is rerun.
+  every baseline is rerun. *(Changed on 2026-10-28: `v2` is now a
+  different set of photos, the test set once store photos are trained on
+  (Part D). A label fix to a frozen set becomes a revision of that set:
+  see Part D's Later.)*
 
 **Done 2026-10-21.** v1 is frozen, with hash `7b9a4043…`. The script
 refuses to overwrite a frozen version, and a new one needs `--why`.
@@ -694,6 +699,165 @@ data/        expdate/, store/           (never committed)
   direction, not precise rates.
 - **Scanify keeps changing.** Its git commit is recorded in every B run;
   rerun B if it moves.
+
+---
+
+## Store test set v2 (Part D)
+
+Planned 2026-10-28. Not a milestone: a second store test set, labelled
+and frozen like v1 (B1 to B3), before anything trains on store photos.
+
+**Why.** The retailer's owner has allowed training on the store photos
+(`CLAUDE.md`, 2026-10-28). v1 becomes training data from the first
+milestone that trains on it, so from then on it can't judge a model. v2,
+new photos from the same stores, takes over as the test set. Results on
+v1 from M0 to M2 stay as recorded.
+
+**Why it lives here.** v2 follows B1 to B3 as written (the labelling
+rules, the interface, the import checks, the freeze), so it sits next to
+them instead of copying them into a new doc. And it isn't a milestone,
+which is what a new sliced doc in `docs/` is for.
+
+**Done when.** v2's photo list is frozen with its hash committed, the
+code imports and freezes v2 next to v1, and Label Studio has a v2 project
+ready to label. Labelling (D5) and freezing the labels (D6) follow, by
+the owner.
+
+### Decisions
+
+1. **v1 doesn't change.** Its folders, its files in `data/store/`, its
+   hash `TEST_SET_SHA256`, `read_test_set()` and the set name `store` stay
+   as they are. M0, M1 and M2's tables must still rebuild byte for byte.
+2. **v1 and v2 never mix.** Each set is a record in `store.py`
+   (`store.V1`, `store.V2`): its folders under `$STORE_PHOTOS_DIR`, its
+   files and its hashes. Everything that lists or loads store photos takes
+   the record, so it says which set it means. v1's folders are named
+   (`samples1` to `samples3`) instead of globbed as `samples*`.
+3. **v2's photos are frozen twice.** First the photo list, each photo's
+   SHA-256 (D3), before any labelling: that fixes which photos are the test
+   set before anything trains on store photos. Then the labels (D6), as in
+   B3. The import and the label freeze both check the list again, so a
+   photo added, removed or changed in between is caught.
+4. **(departure from B3)** B3 said a label change after freezing becomes
+   "v2". v2 is now a different set of photos with its own files, and the
+   freeze script's `--version` names the set. A label fix to a frozen set
+   becomes a revision of it (Later).
+5. **No pre-filled fields.** v1's text fields were pre-filled from
+   Scanify's ground truth. v2 has no ground truth, and pre-filling from a
+   model would mean running one on the test set, so every field is typed
+   by hand. Check 4 (agreement with Scanify) is for v1 only.
+
+### Slices
+
+#### D1. The photos
+
+- v2 lives in `$STORE_PHOTOS_DIR/testset2/`, where the owner put it (a
+  second copy is on the owner's Desktop). It stays there: no third copy,
+  and its name doesn't match `samples*`, so nothing written for v1 can
+  pick it up.
+- It holds both `.jpeg` and `.jpg` files. Check that they're all JPEGs
+  from their headers, and convert nothing: the two endings are the same
+  format, re-encoding would change the pixels and the hashes, and both the
+  code and Label Studio's filter accept either ending.
+- Check for byte-identical copies, within v2 and against v1.
+- `$STORE_PHOTOS_DIR` is also the Scanify repo, which has a GitHub
+  remote and ignores only `samples1/` to `samples3/`. Add `testset2/` to
+  its `.git/info/exclude`: ignored on this machine, and no tracked file
+  in Scanify changes.
+
+#### D2. v1 and v2 side by side in the code
+
+- `store.py`: a `StoreSet` record per set. `V1`: `samples1` to `samples3`,
+  the files in `data/store/` exactly as today, `TEST_SET_SHA256`. `V2`:
+  `testset2`, its files in `data/store/v2/`, `PHOTOS_V2_SHA256` and
+  `TEST_SET_V2_SHA256`. `photos_on_disk`, `labels` and `load_samples`
+  take the set; every M0 to M2 caller passes `store.V1`.
+- v2's photo list: `freeze_photos()` writes it; `read_photo_list()`
+  checks the list file against its hash, and that the folder holds
+  exactly the listed photos, unchanged. `read_frozen(set)` loads a
+  frozen set, and for v2 also checks that its photos are the list's.
+- `import_store_labels.py --version v1|v2` (v1 by default, so B2's
+  command is unchanged) reads and writes that set's files. Checks 1 to 3,
+  5 and 6 are as for v1, and the small-print rule is unchanged. Check 4
+  is for v1 only. For v2, check 1 compares with the frozen list, so a v1
+  photo in a v2 export fails it.
+- `freeze_store_test_set.py --version v1|v2 [--photos]`: `--photos`
+  freezes the photo list (D3); without it, the labels (D6), only when they
+  cover exactly the frozen list. v2's summary is
+  `results/store_test_set_v2.md`; v1's is left as it is. A frozen file is
+  never overwritten, as before.
+- Tests, with made-up file names: two sets in one fake folder each list
+  only their own photos; the list check catches a photo added, removed or
+  changed and a changed list file; a v1 photo in a v2 export fails
+  check 1; `V1` keeps today's folders, paths and hash.
+
+**Check:** the tests pass; M0, M1 and M2's tables and v1's summary
+rebuild byte for byte; rerunning v1's import into a scratch file
+reproduces `labels.json` byte for byte. D2's code comes before D3
+because D3 runs it; nothing trains on store photos in between.
+
+**Commits:** `refactor: store photos listed and loaded by set, v1's
+folders named`, then `feat: import and freeze store test set v2, its
+photo list first`
+
+#### D3. Freeze the photo list
+
+```bash
+python scripts/freeze_store_test_set.py --version v2 --photos
+```
+
+This writes `data/store/v2/photos.json` (never committed): every
+photo's path and SHA-256. Its hash goes into `PHOTOS_V2_SHA256`, and
+`results/store_test_set_v2.md` gets the count and the hash, nothing
+else.
+
+**Commit:** `feat: freeze store test set v2's photo list`
+
+#### D4. The Label Studio project
+
+The same install and the same local server as v1 (B1: 127.0.0.1 only,
+`label-studio` in `.claude/launch.json`), with a new project that has
+v1's interface and one source storage, `testset2`, with v1's settings.
+The exact steps are in D's record.
+
+#### D5. Label (by hand, no commit)
+
+B1's rules, as written. There is no retyping step, as v2 has no Scanify
+labels to compare with. Export as JSON-MIN to
+`data/store/v2/label_studio_export.json`.
+
+#### D6. Import, check and freeze the labels
+
+```bash
+python scripts/import_store_labels.py --version v2
+```
+
+```bash
+python scripts/freeze_store_test_set.py --version v2
+```
+
+Paste the printed hash into `TEST_SET_V2_SHA256`, and commit it with
+`results/store_test_set_v2.md`.
+
+**Commit:** `feat: freeze store test set v2`
+
+### Later
+
+- **`store-v2` as a `--set` name**, when M3 first scores a model on v2.
+  It's left out until then on purpose: `eval_detector.py` keeps store
+  predictions private and scores a test set once only for the sets it
+  names (`SCORED_ONCE`), so the name has to arrive together with that
+  guard. Its runs go to `data/store/v2/runs/`.
+- B2's by-eye contact sheet for v2 needs that set name too. Until then,
+  review the boxes in Label Studio.
+- **A label fix to a frozen set as a revision** (e.g. `v2.1`), with its
+  own file and a history line, keeping the original.
+- **The same pack in both sets.** Only byte-identical copies are checked.
+  A pack photographed for both v1 and v2 would let training on v1 leak
+  into v2's results. Check this by eye while labelling, before v1 is
+  trained on.
+- **How v1 enters training** (M3): its photos and labels as a training
+  list, with v2 never in one.
 
 ## Later
 
