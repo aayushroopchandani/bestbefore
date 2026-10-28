@@ -1,6 +1,6 @@
 # M2: Synthetic generator
 
-Planned 2026-10-21. Status: **in progress**: S1 done 2026-10-22 (GPU jobs A
+Planned 2026-10-21. Status: **done 2026-10-28**: S1 done 2026-10-22 (GPU jobs A
 `72914` and B `72915` held); S2 done 2026-10-22 (the derived sets, on both
 machines); S3 done 2026-10-22 (the M2 recipe and the chain; job A released,
 expected to start between 2026-10-25 and about 2026-11-09); S4 done
@@ -16,9 +16,10 @@ job A started 2026-10-24 at 12:00 and chose its loader (8 workers); S7
 done 2026-10-24 (the scoring, tables and report code, checked on M1's runs,
 validation and job A's first records); job A trained and scored every run
 by 2026-10-26; S8 done 2026-10-28 (every run scored once on the store
-photos, the M2 detector, `gen-rot-1280` seed 0, once on ExpDate test).
-Next: S9, the report. The learnings guide for M2 (`learnings/m2.md`) is
-written separately, later.
+photos, the M2 detector, `gen-rot-1280` seed 0, once on ExpDate test);
+S9 done 2026-10-28 (`results/m2_detector.md` written by its script, the
+README, this plan closed). Nothing in M2's results changes from here. The
+learnings guide for M2 (`learnings/m2.md`) is written separately, later.
 
 **Goal.** Teach the date detector the dates M1 never learned: sideways,
 month written as a word, and small. A generator draws such dates onto real
@@ -2633,6 +2634,62 @@ Details fixed while writing it (2026-10-28):
 `docs: m2 results report`, `docs: readme for m2`,
 `docs: m2 plan done: S9's record, measured compute, Later`
 
+**Done 2026-10-28.** Code `346a29e`, report `8aff5f3`, README `3bc813a`;
+500 tests pass, and every `experiments/m2-*/summarise.py` runs without a
+warning. Nothing was scored again: the report reads the records S8 left.
+What was found:
+
+- **The report is the records'.** `python scripts/m2_report.py`, run
+  twice, wrote the same `results/m2_detector.md` byte for byte (SHA-256
+  `94fe1b60…`). Below its two new sections every table is as S8's records
+  give it: the only other changes are the store section's note on the
+  permission of 2026-10-28 and "GPU time" without "so far" once every run
+  is in. It names no store photo (searched for file names).
+- **The headline, as the report gives it:** the M2 detector (`m2-gen-rot-1280-s0`)
+  finds 662 of 665 ExpDate test expiries (the M1 detector 637) and 39 of
+  81 store expiries (the M1 detector 18); its arm's 3 seeds 46 (39 to 53)
+  against M1's 21.7 (18 to 25). On the store photos it boxes 69 at some
+  confidence, at precision 0.902 (M1's detector 43, 0.950).
+- **The M2 detector is its arm's weakest seed on the store photos**: 39
+  of 81, against a range up to 53, as `m2-input-size` found (it also has
+  the arm's lowest threshold). The seed was declared before any run, so
+  nothing changes; the report and the README say it next to the 3-seed
+  mean.
+- **The predictions, written before any run, against the measurements**
+  (the report's table): held for `base`'s sideways, `gen-rot-1280`'s small
+  print and ExpDate validation for every arm; partly for month words (up
+  on the store photos, far below synth-val); failed on the store photos
+  for sideways (`rot`, `gen`, `gen-rot`), for small print at 640 px, and
+  for `base`'s small print (the threshold didn't lift it). Better than
+  expected: `gen-rot-1280`'s full month names (10 of 19 against
+  `gen-rot`'s 5.7).
+- **The README** carries M2's headline, what it shows and where it
+  doesn't beat M1. Every number in its M2 section (55) appears in the
+  report (checked by a script). The month-word line now says 6% of
+  ExpDate's real dates and 48% of its synthetic ones, all three-letter,
+  from this plan's count in "What M1 tells us" (an M1 fact, not in the
+  report). The store photos' lines follow `CLAUDE.md`'s permission of
+  2026-10-28, and the judging diagram no longer says "test only".
+- **Measured compute**, summed from every run's record: in the [compute
+  budget](#compute-budget). Job A (`72914`) did all of stage 1 and stage
+  2 alone, 40.5 GPU-hours of training in 40 h 59 min; job B (`72915`)
+  started as A ended and found nothing left, so the two jobs never ran
+  together. S7 saw B wait on the 2-job cap while another project's job
+  held our second run slot; when that slot freed isn't recorded. The
+  plan's 21 hours on 2 GPUs assumed the two would run together.
+- **(corrected) The generation job's CPU time.** The budget table gave
+  2.2 CPU-hours for job `72995`, where S6's record gives 1 h 44 min of
+  CPU time. The 2.2 hours is 150 ms a photo per worker × 52,100 photos,
+  which counts the workers' waits on writes to the shared filesystem,
+  not CPU time. The table now gives both (owner's go-ahead, 2026-10-28).
+- **Found after S8:** `scripts/store_gallery.py` (`8dde73b`), written for
+  the owner to look at the M2 detector's boxes on every store photo by
+  eye. It writes only to `data/store/runs/`, and nothing in this plan's
+  numbers comes from it.
+- **Not checked:** the README's Mermaid diagrams as GitHub renders them;
+  anything beyond the records (no run scored again); the learnings guide
+  (written separately). Nothing is pushed.
+
 ---
 
 ## Order and sessions
@@ -2664,44 +2721,58 @@ speed (about 29 GPU-hours).
 ## Compute budget
 
 Estimates scaled from M1's measured speed (354 images/s at 640 px, 216
-at 1280 px). The speed test may halve the 640 px times; the measured
-column is filled in as runs finish.
+at 1280 px). The speed test may halve the 640 px times. **(S9)** The
+measured column is summed from every run's `run.json` and `suite.json`;
+the per-run times and speeds are in the runs table of
+`results/m2_detector.md`. The 640 px runs trained at 359 to 369 images
+a second, the 1,280 px runs at 211: M1's speeds, so the speed test
+halved nothing, as it found (`experiments/m2-loader-speed/`).
 
 | Work | Runs | Each | GPU hours at M1's speed | Measured |
 |---|---:|---|---:|---|
 | smoke + speed test | 4 | 3 to 5 min | 0.3 | 12.3 min training (smoke 2.2, speed 4.3, 2.8, 3.0) and 2.4 min scoring the smoke, job A on 2026-10-24 (S7) |
-| `base`, `rot` (stage 1) | 6 | 2.0 h | 12 | |
-| pilot | 1 | 15 min | 0.25 | |
-| `gen`, `gen-rot`, `gen10k` | 9 | 2.0 h | 18 | |
-| `gen-rot-1280` | 3 | 3.3 h | 10 | |
-| suite scoring | 19 | about 3 min | 1 | |
-| **total** | | | **about 42** (about 21 h on 2 GPUs) | |
+| `base`, `rot` (stage 1) | 6 | 2.0 h | 12 | 118.8 to 120.1 min each, 11.9 h |
+| pilot | 1 | 15 min | 0.25 | 17.5 min |
+| `gen`, `gen-rot`, `gen10k` | 9 | 2.0 h | 18 | 117.5 to 120.0 min each, 17.9 h |
+| `gen-rot-1280` | 3 | 3.3 h | 10 | 201.8 to 204.3 min each, 10.2 h |
+| suite scoring | 19 | about 3 min | 1 | 20 suites (the smoke's and the pilot's too), 0.7 to 2.5 min each, 26 min in all |
+| **total** | | | **about 42** (about 21 h on 2 GPUs) | **40.5 h training, 0.44 h scoring**, all in job A (`72914`) on one H100, 40 h 59 min from start to end; job B (`72915`) found nothing left (S8) |
 
 | CPU work | Size | Estimate |
 |---|---|---|
-| derived sets | 12,987 photos written | about 15 CPU-minutes (minutes on 16 CPUs) |
-| generation | 52,100 photos | about 3 CPU-hours (minutes of wall time as an array); S5 measured 55 ms a photo, so about 48 CPU-minutes, in one 24-CPU job (S6). **Measured:** 2.2 CPU-hours (150 ms a photo with all 24 CPUs busy and writes to the shared filesystem), 6 minutes in job `72995` |
+| derived sets | 12,987 photos written | about 15 CPU-minutes (minutes on 16 CPUs); **measured:** 2.5 minutes on 16 CPUs, job `72917` (S2) |
+| generation | 52,100 photos | about 3 CPU-hours (minutes of wall time as an array); S5 measured 55 ms a photo, so about 48 CPU-minutes, in one 24-CPU job (S6). **Measured:** 1.7 CPU-hours (1 h 44 min, Slurm's CPU time) in 6 minutes of job `72995`; at 150 ms a photo per worker, waits on writes to the shared filesystem included, its 24 workers were busy 2.2 hours (corrected in S9: this cell gave 2.2 CPU-hours) |
 | check | reads all of them | under 10 minutes; **measured:** 25 s on 24 CPUs |
+| **(S8) on the laptop's CPU** | | **measured:** the device check (the M2 detector's suite) 15.8 min; the store photos, all 18 runs, 3.5 min (the plan guessed 30); ExpDate test, the M2 detector's 3 seeds, 12.9 min |
 
 **Storage** on the cluster: generated photos about 12.5 GB, turned copies
 about 1.5 GB, synth-val about 0.5 GB, checkpoints under 1 GB. About
-15 GB, against 950 GB of quota (65 GB used).
+15 GB, against 950 GB of quota (65 GB used). **Measured:** the generated
+photos, labels and sidecars 9.9 GB (S6), the derived sets 2.8 GB (S2);
+the checkpoint folders weren't measured (each `last.pt` is 5.5 MB, S8).
 
 ## Files at the end of M2
+
+As built (checked with `git diff --name-status` over M2's commits in S9;
+the plan's list lacked `m2-generated-look/`, `store_gallery.py`,
+`test_score_suite.py`, `conftest.py`, and the changed `contact_sheet.py`
+and `test_config_and_runs.py`):
 
 ```
 docs/              m2-synthetic-generator.md; datasets.md gains "Generated data (M2)"
 src/bestbefore/    m2.py, m2_results.py, derived.py, slurm.py, synth/{spec,fonts,text,render,warp,compose,camera,make,batch}.py;
                    changed: config.py, detector.py, detection_eval.py, sets.py, runs.py, yolo.py
 scripts/           derive_sets.py, score_suite.py, m2_chain.py, fetch_fonts.py, render_sheet.py,
-                   generate.py, m2_report.py; changed: train_detector.py, eval_detector.py,
-                   pull_cluster_results.sh
+                   generate.py, m2_report.py, store_gallery.py; changed: train_detector.py,
+                   eval_detector.py, contact_sheet.py, pull_cluster_results.sh
 slurm/             m2_gpu.sbatch, m2_chain.sh, m2_derive.sbatch, m2_generate.sbatch
-experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/, m2-dot-rows/
-tests/             test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py, test_synth_fonts.py,
-                   test_synth_render.py, test_synth_warp.py, test_synth_compose.py, test_synth_camera.py,
-                   test_synth_strata.py, test_synth_batch.py, test_m2_results.py, test_eval_detector.py;
-                   changed: test_detection_eval.py, test_detector.py
+experiments/       m2-loader-speed/, m2-ablation/, m2-data-size/, m2-input-size/, m2-dot-rows/,
+                   m2-generated-look/
+tests/             conftest.py, test_derived.py, test_m2_rules.py, test_slurm.py, test_synth_text.py,
+                   test_synth_fonts.py, test_synth_render.py, test_synth_warp.py, test_synth_compose.py,
+                   test_synth_camera.py, test_synth_strata.py, test_synth_batch.py, test_m2_results.py,
+                   test_eval_detector.py, test_score_suite.py;
+                   changed: test_detection_eval.py, test_detector.py, test_config_and_runs.py
 results/           m2_detector.md   (committed; runs/ is not)
 ```
 
@@ -2745,8 +2816,29 @@ results/           m2_detector.md   (committed; runs/ is not)
 ## Later
 
 - **Tiled inference** for very small dates, if 1280 px isn't enough.
+  **(S9)** At 1,280 px the M2 detector's arm boxes 13 of 15 store
+  small-print expiries at some confidence but keeps 5.3: resolution now
+  mostly sees them, and the threshold cuts them (next item). Tiles are
+  worth trying only if a better threshold doesn't close that.
+- **A threshold set on store-like photos** (from S8 and S9). The F2
+  threshold, chosen on real hard validation photos, still cuts many store
+  dates: the M2 detector's arm boxes 70.3 of 81 store expiries at some
+  confidence and keeps 46, and its seeds keep 39 to 53 while boxing 69 to
+  72, so they differ mostly in how sure they are on store photos. Once
+  store set v1 is training data (allowed since 2026-10-28), part of it
+  could be a validation split to choose the threshold on; never the new
+  frozen test set.
+- **Precision against M1's** (from S8): every arm keeps more false boxes
+  (the M2 detector's arm 0.910 against 0.939; 0.11 false boxes a photo
+  against 0.03). Whether that costs anything depends on the reader: if
+  M3's reader can say "no date here" for a box, false boxes cost only
+  time. Worth measuring in M3 before trading recall back for precision.
 - **A fresh set of store photos** (a new store visit, labelled and frozen
-  as v2) for a test that M2's design never saw.
+  as v2) for a test that M2's design never saw. **(S9)** Now needed in
+  any case: `CLAUDE.md` makes a new store set, labelled and frozen before
+  any training on store photos, the test set from the first milestone
+  that trains on v1. Scored with the M2 detector too, it would give M2's
+  clean store estimate.
 - **200,000 generated photos**, if `gen` clearly beats `gen10k`. **(S8)**
   By the rule it does, by 1.63 points of mAP on the hard sets, mostly on
   `real-val-rot`; the store photos show no difference (38.3 against 37
@@ -2785,7 +2877,17 @@ results/           m2_detector.md   (committed; runs/ is not)
   a model: a segmentation model's object masks, say, made once per
   background and kept beside it, with candidate places drawn inside the
   mask. Worth it if the M2 results point at the generated look
-  (synth-val well above the real hard sets).
+  (synth-val well above the real hard sets). **(S9)** On validation they
+  don't for the M2 detector's arm (mAP@0.5 0.994 on synth-val, 0.988 and
+  0.986 on the real hard sets), but they do on the store photos: `gen`
+  finds 296.3 of 300 synth-val month-word targets and 6.7 of 19 store
+  full month names, and 296 of 300 synth-val sideways targets against
+  0.7 of 15 store sideways expiries. Why the store's dates differ is the
+  question to answer first (the sideways item above).
+- **The device check on a 640 px run** (S8's "not checked"): only the
+  M2 detector was re-scored on the laptop's CPU, so the 640 px runs'
+  store scores rest on that one agreement. One 640 px suite on the CPU
+  would close it.
 - **Oriented boxes** (YOLO-OBB) for tilted dates.
 - **A longer budget** if the loss curves are still falling at the end.
 - From M1, still open: YOLO26 or a permissively licensed detector
