@@ -484,7 +484,7 @@ bestbefore/
 ## Documentation
 
 - [`docs/m0-data-and-test-set.md`](docs/m0-data-and-test-set.md): the M0
-  plan, slice by slice
+  plan slice by slice
 - [`docs/datasets.md`](docs/datasets.md): what is actually in ExpDate
 - [`results/m0_baselines.md`](results/m0_baselines.md): the baseline
   table, with the runs it came from
