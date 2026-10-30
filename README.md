@@ -23,7 +23,7 @@ During an internship at a pet-supplies retailer, I built **Scanify**, a
 stock-taking app. The retailer's inventory system has no expiry dates, so
 staff photograph each pack and the app reads two things from the photo:
 the barcode (`zxing-cpp`) and the printed expiry date (`RapidOCR`
-followed by a hand-written, rule-based date parser).
+followed by a hand-written, rule-based date parser). Later this model will be used.
 
 Measured on the store photos, the rules got a long way, then hit a wall:
 
