@@ -918,6 +918,30 @@ To set up v2's project:
 5. *Export → JSON-MIN*, then move the download to
    `data/store/v2/label_studio_export.json`. Then run D6.
 
+**Done 2026-10-30**, after the owner logged in. The project is
+`Store test set v2`, with 99 tasks. Each was checked against Label
+Studio's database, read-only:
+
+- the interface matches v1's element for element and attribute for
+  attribute
+- the storage has v1's settings (filter `.*\.jpe?g$`, one task per file,
+  no recursive scan)
+- the 99 tasks are exactly the frozen photo list
+- v1's project still has its 99 tasks
+
+Label Studio 1.23.2 differs from the steps above in three ways:
+
+- *Add Source Storage* opens a four-step wizard.
+- *Treat every bucket object as a source file* is now the import method
+  *Files - Automatically creates a task for each storage object*.
+- The path field comes pre-filled with the document root, so typing
+  into it inserts in the middle: replace the whole value.
+
+Tasks store the photo under the key `$undefined$`, as v1's do. Label
+Studio fills it from the interface's `$image` when it shows a task, and
+v1's export came out with `image`. No v2 photo was shown to Claude: the
+setup used page text only after the storage was added.
+
 Don't edit, rotate or re-save a photo in `testset2/`: macOS Preview's
 rotate rewrites the file. Any change to a photo fails the photo-list
 check at import and at freezing.
