@@ -23,7 +23,7 @@ During an internship at a pet-supplies retailer, I built **Scanify**, a
 stock-taking app. The retailer's inventory system has no expiry dates, so
 staff photograph each pack and the app reads two things from the photo:
 the barcode (`zxing-cpp`) and the printed expiry date (`RapidOCR`
-followed by a hand-written, rule-based date parser).
+followed by a hand-written, rule-based date parser). Later this model will be used.
 
 Measured on the store photos, the rules got a long way, then hit a wall:
 
@@ -484,7 +484,7 @@ bestbefore/
 ## Documentation
 
 - [`docs/m0-data-and-test-set.md`](docs/m0-data-and-test-set.md): the M0
-  plan, slice by slice
+  plan slice by slice
 - [`docs/datasets.md`](docs/datasets.md): what is actually in ExpDate
 - [`results/m0_baselines.md`](results/m0_baselines.md): the baseline
   table, with the runs it came from
