@@ -2,6 +2,7 @@
 
     python scripts/score_suite.py --run base-s0
     python scripts/score_suite.py --run smoke-laptop --device cpu
+    python scripts/score_suite.py --milestone m2b --run s1280-s0     # M2b's step 1, on M2's suite
     python scripts/score_suite.py --run gen-rot-1280-s0 --device cpu \\
         --out results/runs/<id>-m2-gen-rot-1280-s0/device-check-cpu     # S8's device check
 
@@ -14,6 +15,10 @@ real sets pooled (decision 11), and per set the dates found at IoU 0.5 and
 photo and Ultralytics' mAP per class. Each set's dataset file is kept in
 suite/<set>.yaml. scripts/m2_chain.py counts a run as scored once its
 suite.json exists, so it is written whole or not at all.
+
+--milestone m2b scores an M2b run, results/runs/<id>-m2b-<run>/, on the
+same suite (docs/m2b-store-and-size.md, S2): its step-1 runs are scored on
+M2's suite as soon as they finish, by scripts/m2b_chain.py.
 
 --out writes suite.json and suite/ into another folder and leaves the
 run's own suite.json, its record, as it is: that one's threshold is what
@@ -30,7 +35,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from bestbefore import detector, m2, tables
+from bestbefore import detector, m2, m2b, tables
 from bestbefore.config import checkpoint_dir
 from bestbefore.runs import git_state, write_json
 
@@ -55,11 +60,12 @@ def table(suite: dict) -> str:
     return tables.markdown_table(rows, left=("set",))
 
 
-def weights(run_dir: Path, record: dict) -> Path:
+def weights(run_dir: Path, record: dict, milestone: str = "m2") -> Path:
     """The run's last.pt: where run.json says, if it is there (the cluster),
-    else the copy eval_detector.py reads (the laptop)."""
+    else the copy eval_detector.py reads (the laptop), in the milestone's
+    folder of $CHECKPOINT_DIR."""
     recorded = Path(record["checkpoint"])
-    return recorded if recorded.exists() else checkpoint_dir() / "m2" / run_dir.name / "weights" / "last.pt"
+    return recorded if recorded.exists() else checkpoint_dir() / milestone / run_dir.name / "weights" / "last.pt"
 
 
 # What the comparison shows per set: (label, level, count), at each suite's own threshold.
@@ -104,20 +110,22 @@ def compare(record: dict, here: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--run", required=True, help="run name, e.g. base-s0 or smoke-laptop")
+    parser.add_argument("--milestone", choices=("m2", "m2b"), default="m2",
+                        help="whose run: M2's (the default) or M2b's")
     parser.add_argument("--device", default=None, help="e.g. 0 or cpu; default: auto")
     parser.add_argument("--out", type=Path, default=None,
                         help="write suite.json here, not in the run's folder (S8's device check)")
     args = parser.parse_args()
 
-    run_dir = m2.finished_run(args.run)
+    run_dir = (m2b if args.milestone == "m2b" else m2).finished_run(args.run)
     if run_dir is None:
-        raise SystemExit(f"no finished run m2-{args.run} in results/runs")
+        raise SystemExit(f"no finished run {args.milestone}-{args.run} in results/runs")
     out_dir = args.out or run_dir
     if args.out is not None and out_dir.resolve() == run_dir.resolve():
         raise SystemExit(f"--out {out_dir} is the run's own folder, whose suite.json is its record")
     out_dir.mkdir(parents=True, exist_ok=True)
     record = json.loads((run_dir / "run.json").read_text())
-    checkpoint = weights(run_dir, record)
+    checkpoint = weights(run_dir, record, args.milestone)
     started = time.time()
     suite = detector.score_suite(checkpoint, record["config"]["imgsz"], out_dir, args.device)
     suite["scored"] = {"device": args.device, **git_state(),

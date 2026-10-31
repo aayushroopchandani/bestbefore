@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import m2, runs
-from .config import checkpoint_dir, generated_dir
+from .config import checkpoint_dir, generated_dir, store_train_dir
 from .runs import read_json
 from .store import sha256
 
@@ -31,6 +31,39 @@ def list_path(name: str) -> Path:
 
 def manifest_path(name: str) -> Path:
     return root() / "manifests" / f"{name}.json"
+
+
+# --- What step 2 waits for, made in S4 to S9 ---------------------------------------
+
+# M2b's own lists for step 2's replay (S9), and the manifest that vouches for each.
+STEP2_LISTS = ("gen_v2", "real_rot180", "synth_rot180")
+MANIFEST_OF = {"gen_v2": "gen-v2", "real_rot180": "derived", "synth_rot180": "derived"}
+MADE_BY = {"gen-v2": "S9's generation", "derived": "S9's derive_sets.py --only rot180"}
+
+
+def list_missing(name: str) -> str | None:
+    """Why one of M2b's lists can't be used yet, or None, as m2.list_missing:
+    its file must exist and its manifest vouch for it (derived.json by
+    naming it, gen-v2.json by saying complete)."""
+    manifest = MANIFEST_OF[name]
+    if not list_path(name).exists():
+        return f"not made yet ({MADE_BY[manifest]})"
+    record = read_json(manifest_path(manifest)) or {}
+    vouched = (name in record.get("sets", {}) if manifest == "derived"
+               else record.get("complete") is True)
+    return None if vouched else f"not yet vouched for by m2b/manifests/{manifest}.json ({MADE_BY[manifest]})"
+
+
+def store_export_missing() -> str | None:
+    """Why store set v1's training export can't be used yet, or None: S6
+    writes it into $STORE_TRAIN_DIR, with a manifest."""
+    try:
+        folder = store_train_dir()
+    except RuntimeError:
+        return "store set v1's export ($STORE_TRAIN_DIR unset; S6)"
+    if not (folder / "manifest.json").exists():
+        return "store set v1's export ($STORE_TRAIN_DIR/manifest.json; S6)"
+    return None
 
 
 # --- Model size (decisions 1 and 2) -------------------------------------------

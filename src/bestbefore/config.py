@@ -47,3 +47,9 @@ def checkpoint_dir() -> Path:
 def generated_dir() -> Path:
     """Where M2's derived and generated photos go (never into git)."""
     return _path("GENERATED_DIR")
+
+
+def store_train_dir() -> Path:
+    """Store set v1 exported for training (M2b S6): upright, numbered
+    copies of the retailer's photos, never committed or published."""
+    return _path("STORE_TRAIN_DIR")

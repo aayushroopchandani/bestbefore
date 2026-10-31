@@ -100,3 +100,30 @@ def test_without_out_the_suite_goes_into_the_run_as_before(load_script, run, mon
     script.main()
     assert json.loads((run_dir / "suite.json").read_text())["threshold"] == 0.2
     assert "beside this one" not in capsys.readouterr().out          # nothing to compare with
+
+
+def test_m2b_runs_are_scored_from_their_own_records_and_folder(load_script, monkeypatch, tmp_path):
+    script = load_script("score_suite")
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setenv("CHECKPOINT_DIR", str(tmp_path / "ckpt"))
+    run_dir = tmp_path / "runs" / "20261102-010101-m2b-s1280-s0"
+    run_dir.mkdir(parents=True)
+    record = {"status": "finished", "checkpoint": "/cluster/ckpt/m2b/last.pt", "config": {"imgsz": 1280}}
+    (run_dir / "run.json").write_text(json.dumps(record))
+    laptop = tmp_path / "ckpt" / "m2b" / run_dir.name / "weights" / "last.pt"
+    assert script.weights(run_dir, record, "m2b") == laptop       # M2b's own folder
+    scored = {}
+
+    def score_suite(checkpoint, imgsz, out_dir, device):
+        scored.update(checkpoint=checkpoint, imgsz=imgsz, out_dir=out_dir)
+        return _suite(0.2, 187, 300)
+
+    monkeypatch.setattr(detector, "score_suite", score_suite)
+    monkeypatch.setattr(sys, "argv", ["score_suite.py", "--milestone", "m2b", "--run", "s1280-s0"])
+    script.main()
+    assert scored == {"checkpoint": laptop, "imgsz": 1280, "out_dir": run_dir}
+    assert json.loads((run_dir / "suite.json").read_text())["threshold"] == 0.2
+    # M2's lookup, the default, doesn't take an M2b run.
+    monkeypatch.setattr(sys, "argv", ["score_suite.py", "--run", "s1280-s0"])
+    with pytest.raises(SystemExit, match="no finished run m2-s1280-s0"):
+        script.main()
