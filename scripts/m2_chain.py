@@ -32,48 +32,35 @@ inputs exist), not done and not claimed, scoring tasks first:
   two M2 GPU jobs, and nothing if sbatch refuses (the 5-job cap).
 - Decisions go to results/runs/m2-decisions.json as soon as their inputs
   are complete.
+
+The machinery (claims, the watchdog, time left, failures, replacements,
+the dry run) is bestbefore.chain's, shared with M2b's chain; this script
+holds M2's tasks, their readiness, how each runs and the decisions.
 """
 from __future__ import annotations
 
 import argparse
 import os
-import signal
-import socket
-import subprocess
 import sys
-import time
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
-from bestbefore import m2, runs, slurm
-from bestbefore.config import REPO_ROOT, checkpoint_dir
-from bestbefore.runs import update_run, write_json
+from bestbefore import chain, m2, slurm
+from bestbefore.chain import State
+from bestbefore.config import checkpoint_dir
 
 GPU_SCRIPT = "slurm/m2_gpu.sbatch"
 JOB_NAME = "m2"                  # its #SBATCH --job-name
-STALL = 2 * 3600                 # the watchdog: seconds without progress
-POLL = 60                        # how often a training run is checked
+STALL = chain.STALL              # the watchdog: seconds without progress
+POLL = chain.POLL                # how often a training run is checked
 PILOT_WAIT, PILOT_POLL = 30 * 60, 5 * 60
 SCORE_TIMEOUT = 3600             # a suite takes minutes
-MAX_FAILURES = 2
-MARGIN = 2.0                     # start a task only if MARGIN x its estimate fits in the time left
+MAX_FAILURES = chain.MAX_FAILURES
+MARGIN = chain.MARGIN            # start a task only if MARGIN x its estimate fits in the time left
 
 
 def claims_dir() -> Path:
-    return runs.RUNS_DIR / "m2-claims"
-
-
-def failures_dir() -> Path:
-    return runs.RUNS_DIR / "m2-failures"
-
-
-def decisions_path() -> Path:
-    return m2.decisions_path()
-
-
-def log(message: str) -> None:
-    print(f"{datetime.now():%F %T}  {message}", flush=True)
+    return _chain().claims_dir()
 
 
 # --- The tasks ----------------------------------------------------------------
@@ -129,12 +116,6 @@ TASKS = task_list()
 
 # --- Where each task stands ----------------------------------------------------
 
-@dataclass(frozen=True)
-class State:
-    status: str                      # done, ready, claimed, waiting, blocked or failed
-    note: str = ""
-
-
 def done(task: Task) -> Path | None:
     """The finished attempt at the task's run, if the task is done."""
     run_dir = m2.finished_run(task.run)
@@ -144,8 +125,7 @@ def done(task: Task) -> Path | None:
 
 
 def failures(task: Task) -> int:
-    path = failures_dir() / f"{task.name}.txt"
-    return len(path.read_text().splitlines()) if path.exists() else 0
+    return _chain().failures(task)
 
 
 def waiting_for(task: Task, decisions: dict) -> str | None:
@@ -171,29 +151,18 @@ def waiting_for(task: Task, decisions: dict) -> str | None:
 
 
 def state(task: Task, decisions: dict, claims: slurm.Claims, live: set[str] | None) -> State:
-    if (run_dir := done(task)) is not None:
-        return State("done", run_dir.name)
-    if (n := failures(task)) >= MAX_FAILURES:
-        return State("failed", f"failed {n} times: results/runs/m2-failures/{task.name}.txt")
-    if (why := waiting_for(task, decisions)) is not None:
-        return State("blocked" if why.startswith("blocked") else "waiting", why)
-    held = claims.holder(task.name)
-    if held is not None and not claims.is_stale(task.name, held, live):
-        return State("claimed", f"claimed by job {held[0]}")
-    return State("ready", f"stale claim of job {held[0]}: will be taken over" if held else "")
+    return _chain().state(task, decisions, claims, live)
 
 
 def states(decisions: dict, claims: slurm.Claims, live: set[str] | None) -> dict[Task, State]:
-    return {t: state(t, decisions, claims, live) for t in TASKS}
+    return _chain().states(decisions, claims, live)
 
 
 def pick(current: dict[Task, State], time_left: float, skip: set[Task] = frozenset()) -> Task | None:
     """The next task to run: scoring first, then the list's order; only a
     task whose estimate fits MARGIN times in the time left, and none this
     job just failed to claim."""
-    fits = [t for t, s in current.items() if s.status == "ready" and t not in skip
-            and MARGIN * t.hours * 3600 < time_left]
-    return next((t for t in fits if t.score), None) or next(iter(fits), None)
+    return _chain().pick(current, time_left, skip)
 
 
 # --- Decisions (m2.py's rules, applied as soon as their inputs are complete) ---
@@ -204,91 +173,42 @@ def decide() -> dict:
 
 
 def save(decisions: dict) -> None:
-    if decisions != m2.read_json(decisions_path()):
-        decisions_path().parent.mkdir(parents=True, exist_ok=True)
-        write_json(decisions_path(), decisions)
-        log(f"[decisions] {', '.join(decisions) or 'none yet'}")
+    _chain().save(decisions)
 
 
 # --- Running a task --------------------------------------------------------------
 
 def attempt_dir(run: str, launched: float) -> Path | None:
     """This attempt's run folder: the newest one started since `launched`."""
-    for d in reversed(m2.run_dirs(run)):
-        if datetime.strptime(d.name[:15], "%Y%m%d-%H%M%S").timestamp() >= launched - 1:
-            return d
-    return None
+    return _chain().attempt_dir(run, launched)
 
 
 def progress(run: str, launched: float) -> tuple[bool, int]:
     """How far this attempt has got: whether training has started (after
     the label scan and RAM cache), and how many epochs results.csv holds."""
-    run_dir = attempt_dir(run, launched)
-    applied = (m2.read_json(run_dir / "run.json") or {}).get("applied") if run_dir else None
-    if not applied:
-        return False, 0
-    csv = Path(applied["save_dir"]) / "results.csv"
-    return True, max(0, len(csv.read_text().splitlines()) - 1) if csv.exists() else 0
+    return _chain().progress(run, launched)
 
 
-def stop(proc: subprocess.Popen) -> None:
-    """Stop a training run and its loader workers: its whole process group."""
-    for sig, grace in ((signal.SIGTERM, 60), (signal.SIGKILL, 30)):
-        try:
-            os.killpg(proc.pid, sig)
-            proc.wait(timeout=grace)
-            return
-        except ProcessLookupError:
-            return
-        except subprocess.TimeoutExpired:
-            continue
-
-
-def watch(proc: subprocess.Popen, run: str, launched: float) -> str | None:
+def watch(proc, run: str, launched: float) -> str | None:
     """Wait for a training run; None if it finished, else why it failed.
     STALL seconds without progress stop it."""
-    seen, since = (False, 0), launched
-    while True:
-        try:
-            code = proc.wait(timeout=POLL)
-            return None if code == 0 else f"train_detector.py exited with {code}"
-        except subprocess.TimeoutExpired:
-            pass
-        now = progress(run, launched)
-        if now != seen:
-            seen, since = now, time.time()
-        elif time.time() - since > STALL:
-            stop(proc)
-            started, epochs = seen
-            where = f"after epoch {epochs}" if epochs else ("in epoch 1" if started else "in setup")
-            return f"watchdog: no progress for {STALL / 3600:g} hours, {where}"
+    return _chain().watch(proc, run, launched)
 
 
 def run_task(task: Task, decisions: dict) -> str | None:
     """Run one task; None if it succeeded, else why it failed."""
     if task.score:
-        cmd = [sys.executable, "scripts/score_suite.py", "--run", task.run]
-        try:
-            code = subprocess.run(cmd, cwd=REPO_ROOT, timeout=SCORE_TIMEOUT).returncode
-        except subprocess.TimeoutExpired:
-            return f"scoring took over {SCORE_TIMEOUT // 60} minutes"
-        return None if code == 0 else f"score_suite.py exited with {code}"
+        return chain.score([sys.executable, "scripts/score_suite.py", "--run", task.run],
+                           SCORE_TIMEOUT)
     cmd = [sys.executable, "scripts/train_detector.py", "--milestone", "m2", "--arm", task.arm,
            "--seed", str(task.seed), "--name", task.run, *task.flags]
     if task.loader:
         cmd += loader_flags(decisions["loader"])
-    launched = time.time()
-    why = watch(subprocess.Popen(cmd, cwd=REPO_ROOT, start_new_session=True), task.run, launched)
-    if why and (run_dir := attempt_dir(task.run, launched)) is not None:
-        update_run(run_dir, status="failed", failure=why)
-    return why
+    return _chain().train(cmd, task.run)
 
 
 def record_failure(task: Task, why: str, job: str) -> None:
-    path = failures_dir() / f"{task.name}.txt"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as f:
-        f.write(f"{datetime.now():%F %T}  job {job}: {why}\n")
+    _chain().record_failure(task, why, job)
 
 
 # --- The job's end ----------------------------------------------------------------
@@ -296,41 +216,43 @@ def record_failure(task: Task, why: str, job: str) -> None:
 def replace_job(current: dict[Task, State], job: str) -> None:
     """A job that ends with tasks left submits its replacement: held unless
     some task's data is ready, and never more than two M2 GPU jobs."""
-    left = [s for s in current.values() if s.status in ("ready", "claimed", "waiting")]
-    if not left:
-        log("[end] nothing left that a GPU job could do")
-        return
-    jobs = slurm.jobs_named(JOB_NAME)
-    if jobs is None:
-        log(f"[end] {len(left)} tasks left, but squeue didn't answer: no replacement")
-        return
-    others = sorted(set(jobs) - {job})
-    if len(others) >= 2:
-        log(f"[end] {len(left)} tasks left; M2 jobs {', '.join(others)} remain: no replacement")
-        return
-    hold = not any(s.status in ("ready", "claimed") for s in left)
-    ok, answer = slurm.submit(GPU_SCRIPT, hold=hold, cwd=REPO_ROOT)
-    if ok:
-        log(f"[end] {len(left)} tasks left: replacement job {answer}" + (" (held)" if hold else ""))
-    else:
-        log(f"[end] {len(left)} tasks left; sbatch refused a replacement: {answer}")
+    _chain().replace_job(current, job)
 
 
 # --- Main ----------------------------------------------------------------------------
 
+GROUPS = (("stage 1: needs S2's derived sets", lambda t: t.stage == 1 and not t.score),
+          ("stage 2: needs S6's generated sets", lambda t: t.stage == 2 and not t.score),
+          ("scoring", lambda t: t.score))
+
+
+def summary(decisions: dict) -> str:
+    """The dry run's line of decisions: each one's choice."""
+    return ", ".join(f"{k}: {v.get('choice', v.get('arm', v.get('passes')))}"
+                     for k, v in decisions.items()) or "none yet"
+
+
+def pilot_elsewhere(current: dict[Task, State]) -> str | None:
+    """With nothing ready, wait while the other job runs the pilot: it
+    unlocks most of stage 2 within minutes."""
+    if any(t.run == "pilot" and s.status == "claimed" for t, s in current.items()):
+        return "the other job is running the pilot"
+    return None
+
+
+def _chain() -> chain.Chain:
+    """M2's chain, from this script's names as they are when it is called
+    (the tests swap TASKS, run_task, STALL and POLL)."""
+    return chain.Chain(
+        milestone="m2", title="M2", gpu_script=GPU_SCRIPT, job_name=JOB_NAME, tasks=TASKS,
+        done=done, waiting_for=waiting_for, run_task=run_task, decide=decide,
+        run_dirs=m2.run_dirs, groups=GROUPS, summary=summary, wait=pilot_elsewhere,
+        wait_limit=PILOT_WAIT, wait_poll=PILOT_POLL, stall=STALL, poll=POLL,
+        max_failures=MAX_FAILURES, margin=MARGIN)
+
+
 def dry_run(claims: slurm.Claims) -> None:
-    decisions = decide()
-    current = states(decisions, claims, slurm.live_jobs())
-    groups = (("stage 1: needs S2's derived sets", lambda t: t.stage == 1 and not t.score),
-              ("stage 2: needs S6's generated sets", lambda t: t.stage == 2 and not t.score),
-              ("scoring", lambda t: t.score))
-    for title, member in groups:
-        print(title)
-        for task, s in current.items():
-            if member(task):
-                print(f"  {task.name:26s} {s.status:8s} {s.note}")
-    print("decisions:", ", ".join(f"{k}: {v.get('choice', v.get('arm', v.get('passes')))}"
-                                  for k, v in decisions.items()) or "none yet")
+    _chain().dry_run(claims)
 
 
 def main() -> None:
@@ -345,41 +267,7 @@ def main() -> None:
         return
     if job is None:
         raise SystemExit("m2_chain.py runs inside a Slurm job; elsewhere, use --dry-run")
-
-    log(f"job {job} on {socket.gethostname()}, {slurm.time_left() / 3600:.1f} hours left")
-    waited, unclaimed = 0, set()
-    while True:
-        decisions = decide()
-        save(decisions)
-        live = slurm.live_jobs()
-        current = states(decisions, claims, live)
-        task = pick(current, slurm.time_left(), unclaimed)
-        if task is not None:
-            if not claims.claim(task.name, live):
-                unclaimed.add(task)     # another job got there first
-                continue
-            log(f"[run] {task.name}")
-            started = time.time()
-            try:
-                why = run_task(task, decisions)
-                if why:
-                    record_failure(task, why, job)
-            finally:
-                claims.release(task.name)
-            log(f"[{'failed' if why else 'done'}] {task.name} after "
-                f"{(time.time() - started) / 60:.0f} min" + (f": {why}" if why else ""))
-            waited, unclaimed = 0, set()
-            continue
-        pilot_elsewhere = any(t.run == "pilot" and s.status == "claimed" for t, s in current.items())
-        if pilot_elsewhere and waited < PILOT_WAIT:
-            log("[wait] the other job is running the pilot")
-            time.sleep(PILOT_POLL)
-            waited, unclaimed = waited + PILOT_POLL, set()
-            continue
-        break
-    decisions = decide()
-    save(decisions)
-    replace_job(states(decisions, claims, slurm.live_jobs()), job)
+    _chain().run_job(job, claims)
 
 
 if __name__ == "__main__":

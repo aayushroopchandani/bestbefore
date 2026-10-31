@@ -45,6 +45,15 @@ def write_json(path: Path, data) -> None:
     os.replace(tmp, path)
 
 
+def read_json(path: Path) -> dict | None:
+    """A JSON file, or None if it doesn't exist (yet). Records are written
+    atomically (write_json), so one that exists is whole."""
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+
+
 def _versions() -> dict[str, str]:
     found = {}
     for name in PACKAGES:

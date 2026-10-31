@@ -1,7 +1,7 @@
-"""Slurm, for M2's GPU work queue (scripts/m2_chain.py): which of our jobs
+"""Slurm, for the GPU work queues (bestbefore.chain): which of our jobs
 Slurm still lists, how long this job has left, submitting a replacement,
 and claiming tasks so that two jobs never run the same one. Also releasing
-held jobs, once the generated data they wait for is checked (S6)."""
+held jobs, once the generated data they wait for is checked (M2 S6)."""
 from __future__ import annotations
 
 import math
