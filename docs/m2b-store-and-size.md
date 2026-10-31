@@ -791,11 +791,44 @@ merge them.
   `tests/test_m2b_rules.py` (begun): step 1 has `gen-rot-1280`'s lists,
   mix and schedule; only the weights differ; the control's weights are
   M2's `last.pt`.
+- Details fixed while writing it (2026-10-31):
+  - **(changed, owner's OK) The laptop smoke trains on `base`'s lists.**
+    The laptop holds only two of `gen-rot-1280`'s five lists, `train_real`
+    and `train_synth_clean`: `real_rot`, `synth_rot` and `gen50k` were made
+    on the cluster only, as M2 S3 found for `rot`. So the smoke as planned
+    can't start there. It runs `s1280`'s weights, input size, recipe and
+    schedule on `base`'s lists instead, through `--smoke-lists base`,
+    which is refused unless `--fraction` is under 1, is recorded in
+    `run.json`, and is never passed by the chain. The GPU job's
+    `m2b-smoke` keeps `gen-rot-1280`'s lists at 2%. For the same reason
+    the laptop's dry run shows `s1280` and `m1280` waiting for those three
+    lists; only the cluster's can show them ready.
+  - **`score_suite.py --milestone m2b`** (default `m2`, unchanged): stage
+    1's scores on M2's suite need it to find `-m2b-` runs. The plan named
+    only S10's `--suite m2b`.
+  - **M2's tests stay as they are.** `m2_chain.py` keeps its names as thin
+    calls into `bestbefore.chain`, so `tests/test_m2_rules.py` runs on it
+    unchanged: that, and its dry run, are the proof that M2's chain is
+    unchanged. `tests/test_chain.py` tests the machinery on its own, with a
+    made-up milestone, rather than taking M2's tests over.
+  - **The smoke is scored**, as M2's was: scoring an `m2b` run is tried on
+    the GPU before the 4-hour runs, for about 3 minutes (5 scores on M2's
+    suite, not the budget's 4).
+  - **The controls come right after the smoke**: they take seconds and no
+    GPU, and their records then exist from the first day.
+  - **Stage 2 is listed**, every task waiting for its data (v2 frozen,
+    v1's export, gen-v2, the 180° sets) and for S10's code, so none can be
+    ready early. `s1280`'s and `m1280`'s step 2 are listed as
+    `<recipe>` until R2 names one.
+  - **The m2b run record** adds the size, the M2 arm whose lists it trains
+    on, and the SHA-256 of the COCO weights it starts from. Its loader is
+    M2's decision, 8 workers and no RAM cache, passed as `--workers 8`.
 
 **Steps:**
 
-1. Laptop smoke: `train_detector.py --milestone m2b --arm s1280 --epochs 1
-   --fraction 0.01 --device cpu --name smoke-laptop`.
+1. Laptop smoke: `train_detector.py --milestone m2b --arm s1280
+   --smoke-lists base --epochs 1 --fraction 0.01 --device cpu --name
+   smoke-laptop` (changed, above).
 2. `m2b_chain.py --dry-run` on the laptop.
 3. Commit, push (after S1's merge). Cluster: `git pull`,
    `fetch_pretrained.py` (login node), `m2b_chain.py --dry-run`.
