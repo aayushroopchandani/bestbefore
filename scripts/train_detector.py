@@ -1,4 +1,4 @@
-"""Train one date detector: an M1 run, or one of M2's arms.
+"""Train one date detector: an M1 run, one of M2's arms, or an M2b step-1 arm.
 
 M1 (the default, unchanged):
 
@@ -29,6 +29,20 @@ Ultralytics applied (checked against the recipe when training starts: the
 run stops if anything differs) and a status, running then finished. The
 model is the final weights, $CHECKPOINT_DIR/m2/<id>/weights/last.pt, which
 scripts/score_suite.py scores.
+
+M2b (docs/m2b-store-and-size.md, S2):
+
+    python scripts/train_detector.py --milestone m2b --arm s1280 --seed 0 --name s1280-s0
+
+A step-1 arm (m2b.STEP1: s1280, m1280) is M2's gen-rot-1280 trained from
+yolo11s's or yolo11m's COCO weights: M2's path, with the same lists,
+schedule, recipe and checks. Only the weights change, and the record adds
+the size, the M2 arm whose lists it trains on, and the starting weights'
+SHA-256. Ultralytics' output goes to $CHECKPOINT_DIR/m2b/<id>/. n1280 is
+never trained here: it is M2's own runs, recorded by m2b.write_control.
+--smoke-lists base trains on base's lists instead, keeping the input size,
+for the laptop's smoke run (the laptop has base's lists, not
+gen-rot-1280's); it needs --fraction under 1.
 """
 from __future__ import annotations
 
@@ -36,7 +50,7 @@ import argparse
 import json
 import time
 
-from bestbefore import detector, m2
+from bestbefore import detector, m2, m2b
 from bestbefore.config import checkpoint_dir, expdate_dir
 from bestbefore.runs import start_run, update_run
 from bestbefore.sets import load_set
@@ -56,7 +70,7 @@ def device_name(device) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--milestone", choices=("m1", "m2"), default="m1")
+    parser.add_argument("--milestone", choices=("m1", "m2", "m2b"), default="m1")
     parser.add_argument("--name", required=True, help="short run name, e.g. s1280 or base-s0")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int,
@@ -71,11 +85,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     only_m1.add_argument("--train", help="comma-separated image lists, e.g. train_synth,train_real")
     only_m1.add_argument("--patience", type=int)
     only_m1.add_argument("--batch", type=int)
-    only_m2 = parser.add_argument_group("m2 only")
-    only_m2.add_argument("--arm", choices=list(m2.ARMS))
+    only_m2 = parser.add_argument_group("m2 and m2b only")
+    only_m2.add_argument("--arm", choices=[*m2.ARMS, *m2b.STEP1],
+                         help="m2: one of M2's arms; m2b: a step-1 arm (s1280 or m1280)")
     only_m2.add_argument("--budget-share", type=float, default=1.0,
                          help="train on this share of the budget (the pilot: 0.1)")
     only_m2.add_argument("--cache", choices=["ram"], help="RAM cache, if it fits the job's memory")
+    only_m2b = parser.add_argument_group("m2b only")
+    only_m2b.add_argument("--smoke-lists", choices=list(m2.ARMS),
+                          help="train on this M2 arm's lists instead, keeping the input size "
+                               "(the laptop's smoke run: base); needs --fraction under 1")
     args = parser.parse_args(argv)
 
     if args.milestone == "m1":
@@ -83,15 +102,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parser.error("an m1 run needs --weights, --imgsz and --train")
         if args.arm or args.cache or args.budget_share != 1.0:
             parser.error("--arm, --budget-share and --cache are for m2 runs")
+        if args.smoke_lists:
+            parser.error("--smoke-lists is for m2b smoke runs")
         for flag in ("epochs", "patience", "batch"):
             if getattr(args, flag) is None:
                 setattr(args, flag, detector.SETTINGS[flag])
     else:
         if args.arm is None:
-            parser.error("an m2 run needs --arm")
+            parser.error(f"an {args.milestone} run needs --arm")
+        arms = m2.ARMS if args.milestone == "m2" else m2b.STEP1
+        if args.arm not in arms:
+            parser.error(f"--arm {args.arm}: an {args.milestone} arm is one of {', '.join(arms)}")
         given = [f"--{flag}" for flag in M1_ONLY if getattr(args, flag) is not None]
         if given:
-            parser.error(f"{', '.join(given)}: an m2 run takes these from its arm and m2.RECIPE")
+            parser.error(f"{', '.join(given)}: an {args.milestone} run takes these from its arm "
+                         "and m2.RECIPE")
+        if args.smoke_lists and (args.milestone != "m2b" or args.fraction >= 1):
+            parser.error("--smoke-lists is for m2b smoke runs, with --fraction under 1")
     return args
 
 
@@ -125,7 +152,25 @@ def train_m1(args: argparse.Namespace) -> None:
 
 
 def train_m2(args: argparse.Namespace) -> None:
-    arm = m2.ARMS[args.arm]
+    train_arm(args, m2.ARMS[args.arm], m2.WEIGHTS)
+
+
+def train_m2b(args: argparse.Namespace) -> None:
+    """A step-1 arm: its M2 arm with the size's COCO weights, or, for the
+    laptop's smoke run, another M2 arm's lists at the same input size."""
+    step = m2b.STEP1[args.arm]
+    arm = step.arm
+    if args.smoke_lists:
+        lists = m2.ARMS[args.smoke_lists]
+        arm = m2.Arm(lists.real, lists.other, imgsz=arm.imgsz)
+    weights_sha256 = m2b.sha256(detector.pretrained_path(step.weights))
+    train_arm(args, arm, step.weights, size=step.size, lists_from=args.smoke_lists or step.m2_arm,
+              weights_sha256=weights_sha256)
+
+
+def train_arm(args: argparse.Namespace, arm: m2.Arm, weights: str, **more) -> None:
+    """M2's training path, for an M2 arm (args.milestone m2) or an M2b
+    step-1 arm (m2b): `more` joins the record's config after M2's fields."""
     if why := m2.missing({name: m2.list_missing(name) for name in arm.names()}):
         raise SystemExit(f"can't train {args.arm} yet: {why}")
     counts = {name: m2.count_listed(name) for name in arm.names()}
@@ -137,17 +182,17 @@ def train_m2(args: argparse.Namespace) -> None:
         ram = m2.ram_check(m2.listed_images(mix.lists), arm.imgsz)
         loader["cache"] = "ram" if ram["fits"] else False
 
-    config = {"milestone": "m2", "arm": args.arm, "weights": m2.WEIGHTS, "imgsz": arm.imgsz,
+    config = {"milestone": args.milestone, "arm": args.arm, "weights": weights, "imgsz": arm.imgsz,
               "seed": args.seed, "name": args.name, "lists": list(mix.lists), "counts": counts,
               "real_repeats": mix.real_repeats, "n_listed": mix.n_listed,
               "budget_share": args.budget_share, "fraction": args.fraction,
               "train_images": images, "schedule": schedule, "recipe": m2.RECIPE,
               "loader": loader, "ram_check": ram, "device": args.device,
-              "manifests": m2.manifest_hashes(arm.names())}
-    run_dir = start_run(f"m2-{args.name}", config, seed=args.seed)
+              "manifests": m2.manifest_hashes(arm.names()), **more}
+    run_dir = start_run(f"{args.milestone}-{args.name}", config, seed=args.seed)
     data = detector.dataset_yaml(expdate_dir() / "yolo", [m2.list_spec(s) for s in mix.lists],
                                  run_dir / "data.yaml")
-    project = checkpoint_dir() / "m2"
+    project = checkpoint_dir() / args.milestone
     update_run(run_dir, status="running", device_name=device_name(args.device),
                checkpoint_dir=str(project / run_dir.name))
     print(f"run {run_dir.name} on {device_name(args.device)}: {args.arm}, "
@@ -173,7 +218,7 @@ def train_m2(args: argparse.Namespace) -> None:
 
     started = time.time()
     last = detector.train(
-        detector.pretrained_path(m2.WEIGHTS), data, arm.imgsz, args.seed, project,
+        detector.pretrained_path(weights), data, arm.imgsz, args.seed, project,
         run_dir.name, keep="last",
         callbacks={"on_train_start": check_start, "on_train_end": record_end},
         fraction=args.fraction, device=args.device, **loader, **m2.RECIPE, **schedule)
@@ -185,7 +230,7 @@ def train_m2(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    (train_m1 if args.milestone == "m1" else train_m2)(args)
+    {"m1": train_m1, "m2": train_m2, "m2b": train_m2b}[args.milestone](args)
 
 
 if __name__ == "__main__":

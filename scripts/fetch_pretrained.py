@@ -5,10 +5,12 @@
 Compute nodes have no internet, so this runs on a machine that does (the
 cluster's login node, or the laptop). Into $CHECKPOINT_DIR/pretrained/:
   yolo11n.pt, yolo11s.pt   the COCO-pretrained models M1 fine-tunes
+  yolo11m.pt               M2b's medium-size probe (docs/m2b-store-and-size.md)
   yolo26n.pt               only used by Ultralytics' mixed-precision check
-It also fetches the font Ultralytics draws its plots with, and points
-Ultralytics' weights_dir setting at the same folder, so its own lookups
-(the mixed-precision check) find the files instead of downloading them.
+It prints each file's SHA-256 in full, to be recorded. It also fetches the
+font Ultralytics draws its plots with, and points Ultralytics' weights_dir
+setting at the same folder, so its own lookups (the mixed-precision check)
+find the files instead of downloading them.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from ultralytics.utils.downloads import attempt_download_asset
 
 from bestbefore.config import checkpoint_dir
 
-WEIGHTS = ("yolo11n.pt", "yolo11s.pt", "yolo26n.pt")
+WEIGHTS = ("yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo26n.pt")
 
 
 def sha256(path) -> str:
@@ -36,7 +38,7 @@ def main() -> None:
             attempt_download_asset(str(path))
         if not path.exists():
             raise SystemExit(f"could not fetch {name}")
-        print(f"{name:12s} {path.stat().st_size / 1e6:5.1f} MB  sha256 {sha256(path)[:16]}…")
+        print(f"{name:12s} {path.stat().st_size / 1e6:5.1f} MB  sha256 {sha256(path)}")
     print("font:", check_font("Arial.ttf"))
     SETTINGS.update({"weights_dir": str(target)})
     print("Ultralytics weights_dir ->", SETTINGS["weights_dir"])
