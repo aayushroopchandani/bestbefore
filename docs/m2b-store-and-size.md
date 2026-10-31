@@ -1,7 +1,9 @@
 # M2b: Store photos, the generator's gaps and a bigger detector
 
 Planned 2026-10-31. Status: **planned**; S1 done 2026-10-31 (GPU jobs A
-`73831` and B `73832` held, before any code). Next: S2.
+`73831` and B `73832` held, before any code); changed 2026-10-31, before
+any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
+worn patches (Cause 2). Next: S2.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -82,7 +84,13 @@ Seen in the gallery, and absent from every training photo:
 - **light laser marks on a dark printed window**;
 - **barcode digits and unit prices** next to dates, the commonest false
   boxes, which no generated distractor imitates;
-- **missing dot rows** (a clogged print nozzle) in dot-matrix print.
+- **missing dot rows** (a clogged print nozzle) in dot-matrix print;
+- **worn print**: ink rubbed or smeared away over part of a date, faded
+  to almost nothing there while the rest stays dark. The generator only
+  makes patches up to 40% lighter. v1's doubted dates include a smeared
+  pouch print. (First noticed on a v2 photo while labelling, 2026-10-31;
+  recorded here so its source is plain. The change rests on v1's
+  examples, and v2 shapes nothing.)
 
 The import date's keyword is missing too: no generated word mentions
 import, while imported packs print one.
@@ -104,6 +112,34 @@ import, while imported packs print one.
   soft, so the two are tangled.
 - **Sideways dates are soft too**: 12 of the 15 are softer than the kept
   median, none is faint.
+
+### Cause 4: generated dates are bigger than the store's
+
+Measured 2026-10-31 (a scratch snippet; S3 makes it reproducible), each
+date's box short side over its photo's long side: the store's own
+small-print measure, made turn-neutral (for a sideways date the short side
+is its print height).
+
+| Dates | n | Under 1.5% | 1.5–2.5% | 2.5% and up | Median |
+|---|---:|---:|---:|---:|---:|
+| store v1, expiry dates | 81 | 31% | 47% | 22% | 1.83% |
+| store v1, every date | 192 | 37% | 44% | 19% | 1.73% |
+| generated (M2's spec, 1,000 photos) | 2,166 | 16% | 20% | 64% | 3.06% |
+
+Half the store's dates are under 1.73%; the middle half lie between 1.36%
+and 2.19%, and 90% are under 2.80%. Generated dates come out about 1.7
+times bigger, for two reasons:
+
+- **M2's size bands set the digits' height**, small (0.6–1.5%) on 30% of
+  blocks and normal (1.5–4.5%, log-uniform) on 70%, and a date's box is
+  taller than its digits (M2 S5: 1.3 times upright, more tilted).
+- **The normal band itself sits above the store's print.** Even upright
+  generated dates have a median box of 2.74% (21% under 1.5%); tilted ones
+  5.23%, as an upright box round a tilted date is wide.
+
+The store's middle band, 1.5–2.5%, where most of its dates and most of the
+doubted ones lie, gets only 20% of generated dates. M2's plan set its bands
+by rule and never against the store, on purpose (v1 was its test set).
 
 ### Checked and refuted (don't re-learn them)
 
@@ -151,19 +187,21 @@ should help with the fragility above, not with layouts it never saw.
 | fragile features | `s`, and an `m` probe | every set; seed spread |
 | unstable seeds | seed ensemble (by rule) | v1-val |
 | embossed print, never measured | an embossed stratum | synth-val-v2 |
+| worn print | gen-v2's worn patches | synth-val-v2's `worn`, v1-val |
+| generated dates too big | gen-v2 draws each block's size from v1-train's date sizes, measured as the store measures them | real-val-small, synth-val's `small`, v1-val |
 
 ## What we expect (written before any run)
 
-| Run | v1-val mAP (dates) | Store sideways | Real-val-rot180 | Store month words | Real-val |
-|---|---|---|---|---|---|
-| `n1280` (M2's weights, no store data) | the baseline | low | about 0 | doubted | 0.995 |
-| `n1280` at a v1-val threshold | the same (mAP ignores the threshold) | a little up | about 0 | more kept, more false boxes | the same |
-| `s1280` (step 1) | a little up | a little up | about 0 | a little up | as `n` |
-| `m1280` (step 1, probe) | about as `s` | | | | as `n` |
-| `n1280-ft` (step 2) | clearly up | up | up a lot | up | as `n` |
-| `n1280-ft2` (two-stage) | as `ft`, perhaps lower | | | | as `n`, perhaps higher |
-| `n1280-ft-gen50k` (side arm) | as `ft` | | as `ft` | | as `n` |
-| `s1280-ft` | the highest | | | | as `n` |
+| Run | v1-val mAP (dates) | Store sideways | Real-val-rot180 | Store month words | Small store dates | Real-val |
+|---|---|---|---|---|---|---|
+| `n1280` (M2's weights, no store data) | the baseline | low | about 0 | doubted | low | 0.995 |
+| `n1280` at a v1-val threshold | the same (mAP ignores the threshold) | a little up | about 0 | more kept, more false boxes | more kept | the same |
+| `s1280` (step 1) | a little up | a little up | about 0 | a little up | a little up | as `n` |
+| `m1280` (step 1, probe) | about as `s` | | | | | as `n` |
+| `n1280-ft` (step 2) | clearly up | up | up a lot | up | up | as `n` |
+| `n1280-ft2` (two-stage) | as `ft`, perhaps lower | | | | | as `n`, perhaps higher |
+| `n1280-ft-gen50k` (side arm) | a little below `ft` | | as `ft` | | below `ft` (M2's sizes) | as `n` |
+| `s1280-ft` | the highest | | | | up the most | as `n` |
 
 On v2: designs seen in training well above unseen ones, and unseen ones
 still above M2's detector. If fine-tuning lifts v1-val but not v2's unseen
@@ -183,6 +221,8 @@ it gets written up as one.
 | `gen-rot-1280` trained in 202–204 min at 211 images/s; 640 px arms at about 363 images/s | M2 S9 | step 1's estimates |
 | M2's two GPU jobs never ran together: job A did all 40.5 GPU-hours alone | M2 S9 | plan for one GPU at a time |
 | Generation: 52,100 photos in 328 s on 24 CPUs, 185 kB each | M2 S6 | 200,000 cost about 25 minutes and 37 GB |
+| Generated dates' boxes: median 3.06% of the long side, 16% under 1.5%; store v1's: median 1.73%, 37% under 1.5% | this plan, Cause 4 | gen-v2 matches v1-train's sizes |
+| Backgrounds of at least 1,000 px, which small print needs: 711 real and 3,143 synthetic, of 8,185 | M2 S5 | smaller dates reuse those backgrounds more |
 | `derived.turn` turns by any quarter, 180° included, exactly | `derived.py` | the 180° copies need no new geometry |
 | `detection_eval` has no AP function; Ultralytics' mAP needs a single model | `detection_eval.py` | ensembles need our own AP (S13) |
 | RapidOCR 1.2.3 is installed; `ensemble-boxes` isn't | the laptop venv | OCR can propose keyword boxes; WBF needs a pinned dependency |
@@ -255,8 +295,9 @@ decision k.
     robust on new kinds of photos; its first stage is the frozen-layers
     result. Run on `n` only; rule R2 carries the better recipe to `s`.
 11. **(new) One side arm: `n1280-ft-gen50k`**, `ft` with M2's 50,000
-    generated photos instead of gen-v2, to measure what the new layouts
-    add. Not a candidate for the detector, as M2's `gen10k` wasn't.
+    generated photos instead of gen-v2, to measure what gen-v2 adds: its
+    new layouts and its store-like sizes together (separating the two is
+    in Later). Not a candidate for the detector, as M2's `gen10k` wasn't.
 12. **(new) The no-training control.** Every step-1 model is also scored
     at a threshold chosen on v1-val; M2's three `n1280` seeds at that
     threshold are the control. Without it we couldn't tell how much of a
@@ -271,11 +312,18 @@ decision k.
     at least 0.03). Within the band, the cheapest wins. Rules R1 to R4.
 15. **(new) gen-v2: 200,000 photos with every gap filled**, shares fixed by
     rule: each new kind about 10%, taken from upright and plain blocks;
-    the month-word, small-print and dot-matrix shares unchanged. M2's
-    spec keeps its hash and M2's photos their bytes (tests). **(changes
-    M2's rule against leaks)** M2 designed nothing from a store photo,
-    because v1 was its test set. gen-v2's new kinds come from v1's
-    failures, now training data, and never from v2.
+    the month-word and dot-matrix shares unchanged. **(changed
+    2026-10-31, before any code) Sizes match the store's:** each block is
+    drawn so its first date's box, measured as the store measures it,
+    follows v1-train's date sizes (Cause 4), instead of M2's two bands on
+    the digits. M2's spec keeps its hash and M2's photos their bytes
+    (tests). **(changes M2's rule against leaks)** M2 designed nothing from
+    a store photo, because v1 was its test set. gen-v2's new kinds come
+    from v1's failures (the gallery looked at all of v1, before the
+    split), its sizes from v1-train's dates only, and nothing from v2.
+    Worn patches were first noticed on a v2 photo, and are in because v1
+    has the same kind; from here, generator ideas come from v1 only
+    (looking at v2 to label it is fine).
 16. **(new) synth-val-v2 and real-val-rot180** join the suite; M2's four
     sets stay as they are.
 17. **(new) Inference add-ons decided on v1-val** by R4: the 3 seeds
@@ -395,22 +443,51 @@ only when it is on.
 | new distractors | 13-digit barcode numbers, run together or spaced 1-6-6 (`8901234567890`, `8 901234 567890`), unit prices (`USP Rs. 1.50/g`, `Unit Sale Price: Rs. 1.5 per ml`) | among distractor lines |
 | nozzle rows | 1 or 2 whole rows of dots left out, the same rows in every line of the block | 15% of dot-matrix blocks |
 | laser window | a dark printed rectangle (near-black, dark blue, dark green, dark brown) with light grey to white strokes, slightly soft, a faint glow; 30% dotified | style **window 10%** |
+| worn patch | a soft-edged region, 1 to 3 characters wide and up to two lines tall, where the ink fades by 60 to 95%; on solid, dot-matrix and window print | 10% of inked blocks |
+| **sizes like the store's** | each block's first date's box short side, over the photo's long side, drawn from v1-train's date sizes (below) | every block (replaces M2's two bands) |
 
 Kinds: single 25%, pair 30%, panel 15%, dense-panel 10%, line-pair 10%,
 range 5%, relative 5%. Styles: solid 30%, dot-matrix 35%, label 15%,
 embossed 10%, window 10%. Everything else is M2's spec. `₹` is printed
 only if every font has the glyph (S7 checks; otherwise `Rs.`).
 
+**Sizes like the store's** (Cause 4):
+
+- **The target**: v1-train's dates (expiry, mfg and other; never v1-val's
+  or v2's), each measured as its box's short side over its photo's long
+  side. Their deciles, 11 edges, go into `V2Spec` (aggregate numbers,
+  committed and hashed with the spec), with the two ends clipped to M2's
+  floor and ceiling, 0.6% (8 px at 1,280 px input) and 4.5%. A block's
+  target: a decile picked uniformly, then log-uniform inside it.
+- **Hitting it**: the block is drawn once at a provisional size (digits at
+  the target over 1.3, M2 S5's upright ratio), its first date's box is
+  measured after the bending and turning, and the block is drawn again at
+  the size that gives that box the target, with the same random draws
+  (the generator's state saved before the first draw). A box varies with
+  the font, the ordinal, the tilt and the dots, so measuring beats any
+  fixed ratio; it costs one extra drawing per block, about a tenth more
+  generation time.
+- A block that shrinks to find a free place keeps its shrunk size, and
+  says so, as in M2. A block under 1.5% still gets a background of at
+  least 1,000 px (M2's rule): 3,854 of the 8,185 backgrounds qualify, so
+  they are reused more.
+- synth-val-v2's strata keep M2's `clean` sizes, so each compares with M2's
+  strata. Small print stays measured by M2's `small` stratum,
+  real-val-small and v1-val.
+
 Boxes still come from the ink drawn (M2 decision 4): a glued date's box
 stops where its ink starts; a line-pair gives two date boxes and two
 keyword boxes; a dropped dot row stays inside its token's box, which keeps
-the token's remaining ink.
+the token's remaining ink. **One exception:** a worn patch's boxes come
+from the ink before the wear, so a half-worn date keeps its whole box,
+as a person boxes it. The faint-ink floor still applies to what is left:
+a date worn to nothing gets its block drawn again.
 
-**synth-val-v2**: 2,100 photos, 300 per stratum, held-out fonts on
+**synth-val-v2**: 2,400 photos, 300 per stratum, held-out fonts on
 validation backgrounds, one target each, set seed 5. Each stratum changes
 one thing from M2's `clean`: `upside-down`, `glued`, `line-pair` (the target
-is one of the line's two dates), `dense-panel`, `window`, `embossed`, and
-`nozzle-rows`, which changes one thing from M2's `dot-matrix` stratum.
+is one of the line's two dates), `dense-panel`, `window`, `embossed`,
+`worn`, and `nozzle-rows`, which changes one thing from M2's `dot-matrix` stratum.
 **gen-v2**: 200,000 photos, set seed 4; **gen-v2-sample**: 500, set seed 6,
 to look at.
 
@@ -544,7 +621,8 @@ keeps M2's weights at a store-chosen threshold.
 - **Model size:** `n1280` against `s1280` (against `m1280`) at step 1 and
   step 2, on every set, with the seed spread.
 - **gen-v2:** `n1280-ft` against `n1280-ft-gen50k`, on synth-val-v2 per
-  stratum first, then real-val-rot180 and v1-val.
+  stratum first (the layouts), then real-val-small and v1-val's dates by
+  size band (the sizes), then real-val-rot180.
 - **Freezing:** `n1280-ft` against `n1280-ft2` (R2 decides; the table shows
   how far apart they are).
 - **The threshold:** M2's detector at M2's threshold against at
@@ -642,11 +720,11 @@ src/bestbefore/
   ensemble.py       weighted boxes fusion, test-time rotation (S13)
   m2b_results.py    the tables (S11 on)
   synth/            spec.py (V2Spec, GEN_V2, SYNTH_VAL_V2), text.py, render.py, warp.py,
-                    make.py, batch.py: v2's features, off for M2's spec (S7–S9)
+                    compose.py, make.py, batch.py: v2's features, off for M2's spec (S7–S9)
   detection_eval.py average_precision (S13); store.py: DESIGNS_SHA256 (S4)
 scripts/
   m2b_chain.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
-  import_store_keywords.py, store_designs.py
+  import_store_keywords.py, store_designs.py, store_sizes.py
   changed: train_detector.py (--milestone m2b), score_suite.py (--suite m2b),
   eval_detector.py (store-v2, m2b runs, add-ons), generate.py, derive_sets.py,
   fetch_pretrained.py (yolo11m), pull_cluster_results.sh (m2b runs)
@@ -740,8 +818,9 @@ merge them.
   `store_gallery.match`, the same matching as S8's counts); contrast,
   sharpness and size inside its box, by outcome, against real-val and
   gen-sample; month words by outcome; tall and wide sideways boxes; found
-  rates by role and by year; how many expiries the 3 seeds find. Counts
-  and medians only.
+  rates by role and by year; how many expiries the 3 seeds find; every
+  store date's size against generated dates' (Cause 4: the bands, the
+  median, by orientation). Counts, medians and percentiles only.
 - After S4: the design counts (designs in v1; expiries per design).
 
 **Check:** the README's numbers are the script's output; they match this
@@ -833,22 +912,41 @@ distractors.
 
 ### S8. Generator v2, part 2: print and geometry · laptop
 
-**Goal:** nozzle rows, the laser window, upside-down blocks.
+**Goal:** nozzle rows, the laser window, upside-down blocks, worn patches
+and sizes like the store's. Needs S4's split: the sizes come from v1-train.
 
 - `synth/render.py`: nozzle rows in dotify; the `window` style.
 - `synth/warp.py`: the upside-down orientation (`numpy.rot90`, k=2).
-- `synth/spec.py`: `GEN_V2`.
+- `synth/compose.py`: worn patches among the ink defects, the boxes taken
+  before them.
+- `scripts/store_sizes.py`: v1-train's date sizes, measured as the store
+  measures them, and their deciles, printed for `V2Spec` (aggregates only).
+- `synth/make.py`: a block drawn at a provisional size, its first date's
+  box measured, then drawn again to the target with the same random
+  draws; the sidecar records the target, the box reached and whether it
+  shrank.
+- `synth/spec.py`: `GEN_V2`, with the deciles.
 - `scripts/generate.py --set gen-v2-sample --count 500`.
 - **Tests:** a dropped dot row has no ink in any line of its block, and
   its token's box still holds the rest; a window's text is lighter than
-  its rectangle; 180° maps boxes exactly; M2's photos unchanged.
+  its rectangle; 180° maps boxes exactly; a block drawn to a target lands
+  within 1 px or 5% of it in every style and orientation, and the second
+  drawing uses the same draws as the first (the same font, ink and
+  defects); a worn block's boxes equal the same block's unworn boxes, and
+  its patch holds 60 to 95% less ink; a date worn to nothing is drawn
+  again; M2's photos unchanged.
 - **Look:** contact sheet and date crops of gen-v2-sample, beside real
   ExpDate dates and, now allowed, v1-train's store crops (never v2's):
-  does a new kind look pasted?
+  does a new kind look pasted, and do sizes look like the store's?
 
 **Check:** every gen-v2 share within 3 points of its rule in the sample's
-table; the M2 checks (boxes from ink, same bytes however split).
-**Commit:** `feat: generator v2 print: nozzle rows, laser windows, upside-down blocks`
+table; the sample's date sizes, measured as the store measures them,
+within 3 points of v1-train's in each band (under 1.5%, 1.5–2.5%, 2.5% and
+up) and their median within 0.1 points; the time per photo against M2's
+(about a tenth more expected); the M2 checks (boxes from ink, same bytes
+however split).
+**Commits:** `feat: generator v2 print: nozzle rows, laser windows, upside-down blocks, worn patches`,
+`feat: generator v2 sizes drawn to match store set v1's training dates`
 
 ### S9. Generator v2, part 3: synth-val-v2, the 180° sets, generation at scale · laptop, then one CPU job
 
@@ -864,7 +962,7 @@ synth_rot180 on the cluster, checked.
 - Laptop trial first: `--tasks 0-4,200` timed, the check, synth-val-v2's
   contact sheet by stratum.
 
-**Check:** both manifests `complete: true`, 200,000 and 2,100 photos; the
+**Check:** both manifests `complete: true`, 200,000 and 2,400 photos; the
 shares; real-val-rot180 165 photos and 187 dates; the render sheet's
 pixels as the laptop's.
 **Commits:** `feat: synth-val-v2 strata, embossed measured at last`,
@@ -967,11 +1065,13 @@ As in [Report](#report); the plan's status, measured compute and Later.
 S1 ─► jobs A, B held (done)
 S2 ─► release A ─► [GPU: smoke, s1280 ×3, m1280 s0, M2-suite scores]
 S3 (any time)
-S4 ─► S5 ─► S6 ─► [rsync v1 to the cluster] ───────────────┐
-S7 ─► S8 ─► S9 ─► [CPU job: gen-v2, synth-val-v2, 180° sets] ┤
-                                          S10 ─► release B ─┴─► [GPU: controls and step-1 runs on the M2b suite,
-                                                                  n step 2 ×9 → R2, s step 2 ×3, m by R1 → R3]
-                                          S11 ─► S12 ─► S13 ─► S14 ─► S15
+S4 ─┬─► S5 ─► S6 ─► [rsync v1 to the cluster] ──────────────────┐
+    │                                                           │
+S7 ─┴─► S8 ─► S9 ─► [CPU job: gen-v2, synth-val-v2, 180° sets] ─┤
+        (S8's sizes need S4's split)                            │
+                                           S10 ─► release B ─────┴─► [GPU: controls and step-1 runs on the M2b suite,
+                                                                       n step 2 ×9 → R2, s step 2 ×3, m by R1 → R3]
+                                           S11 ─► S12 ─► S13 ─► S14 ─► S15
 ```
 
 | Session | Slices | Ends with |
@@ -1004,12 +1104,12 @@ needs a GPU. If A finishes stage 1 before S10, it exits; B keeps its place.
 
 | CPU work | Size | Estimate |
 |---|---|---|
-| gen-v2 + synth-val-v2 | 202,100 photos | about 25 min on 24 CPUs (M2 S6's 150 ms a photo per worker) |
+| gen-v2 + synth-val-v2 | 202,400 photos | about 30 min on 24 CPUs (M2 S6's 150 ms a photo per worker, plus a tenth for drawing each block twice) |
 | 180° sets | 13,000 photos written | minutes |
 | store export | 99 photos, 70 × 4 turns | seconds, laptop |
 | v2 scoring | about 25 configurations × 99 photos | under an hour on the laptop; with ensemble and rotation, 12 passes a photo |
 
-**Storage** on the cluster: gen-v2 about 37 GB, synth-val-v2 0.4 GB, the
+**Storage** on the cluster: gen-v2 about 37 GB, synth-val-v2 0.45 GB, the
 180° sets about 3 GB, the store export under 0.5 GB, checkpoints under 2 GB
 (`m` is about 40 MB a run). About 43 GB, against 950 GB.
 
@@ -1034,9 +1134,9 @@ needs a GPU. If A finishes stage 1 before S10, it exits; B keeps its place.
 ```
 docs/              m2b-store-and-size.md; datasets.md gains gen-v2 and the store training export
 src/bestbefore/    chain.py, m2b.py, store_train.py, ensemble.py, m2b_results.py;
-                   changed: synth/{spec,text,render,warp,make,batch}.py, detection_eval.py, store.py
+                   changed: synth/{spec,text,render,warp,compose,make,batch}.py, detection_eval.py, store.py
 scripts/           m2b_chain.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
-                   import_store_keywords.py, store_designs.py; changed: train_detector.py,
+                   import_store_keywords.py, store_designs.py, store_sizes.py; changed: train_detector.py,
                    score_suite.py, eval_detector.py, generate.py, derive_sets.py,
                    fetch_pretrained.py, pull_cluster_results.sh, m2_chain.py (on chain.py)
 slurm/             m2b_gpu.sbatch, m2b_chain.sh, m2b_generate.sbatch
@@ -1060,6 +1160,14 @@ results/           m2b_detector.md, store_designs.md (committed; runs/ is not)
 - **Store photos on the cluster.** Only v1 goes, as numbered copies in a
   `chmod 700` folder outside the checkout; never in `results/` or a log
   line by name; v2 stays on the laptop.
+- **v1-val isn't blind to gen-v2's design.** The gaps gen-v2 fills were
+  found by looking at all of v1, validation designs included; only the
+  sizes are drawn from v1-train alone. So a gain from gen-v2 on v1-val may
+  be a little optimistic; v2, which shaped nothing, is the blind test.
+- **Store-like sizes copy how v1's photos were framed.** A date's size over
+  the photo depends on how close the camera was. v2, taken in the same
+  stores, shows whether that carries over; a new store's staff might
+  frame differently.
 - **gen-v2 looks pasted.** The look check against real store crops (S8);
   synth-val-v2 high but real sets flat would say so, as in M2.
 - **Two-stage's "frozen" batch-norm statistics still move** in Ultralytics.
@@ -1093,6 +1201,8 @@ results/           m2b_detector.md, store_designs.md (committed; runs/ is not)
 - **k-fold validation by design**, if v1-val proves too noisy.
 - **A full retrain** of `s` (or `m`) from COCO on gen-v2's whole mix with
   the store share, instead of two steps.
+- **Sizes apart from layouts**: a gen-v2 with M2's sizes, to tell what the
+  store-like sizes add on their own (the side arm measures both together).
 - **`l` or `x`**, only if `m` clearly beats `s`.
 - **The pack's own orientation**: a whole photo turned (EXIF missing)
   against print turned on an upright pack; the gallery can't yet tell
