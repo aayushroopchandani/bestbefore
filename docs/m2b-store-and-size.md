@@ -1,9 +1,10 @@
 # M2b: Store photos, the generator's gaps and a bigger detector
 
-Planned 2026-10-31. Status: **planned**; S1 done 2026-10-31 (GPU jobs A
-`73831` and B `73832` held, before any code); changed 2026-10-31, before
+Planned 2026-10-31. Status: **in progress**; S1 done 2026-10-31 (GPU jobs
+A `73831` and B `73832` held, before any code); changed 2026-10-31, before
 any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
-worn patches (Cause 2). Next: S2.
+worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
+S10). Next: S3.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -840,7 +841,8 @@ merge them.
 2. `m2b_chain.py --dry-run` on the laptop.
 3. Commit, push (after S1's merge). Cluster: `git pull`,
    `fetch_pretrained.py` (login node), `m2b_chain.py --dry-run`.
-4. Owner: `scontrol release 73831`; `squeue -j 73831 --start`.
+4. Owner: `scontrol release 73831`; `squeue -j 73831 --start` (done by
+   Claude, at the owner's request).
 
 **Check:** the dry run on the cluster shows the smoke, `s1280` s0–s2 and
 `m1280` s0 ready, the controls ready, stage 2 waiting for its data.
@@ -848,6 +850,128 @@ merge them.
 `feat: m2b step 1, model size as an arm, s and m at 1280`,
 `feat: m2b chain, step 1 and its scoring`,
 `docs: m2b in CLAUDE.md's milestones` (owner's OK)
+
+**Done 2026-11-02.** Code `fe8616f` to `12cf00f` (2026-10-31), 542 tests
+pass; each commit also passes alone, in a worktree with the laptop's data
+and nothing skipped (519, 528, 534, 542). Then this plan's change for the
+smoke (`59f02aa`) and its job script (`ef1cde5`), 2026-11-02. Job A
+(`73831`) was released at 15:45 on 2026-11-02, by Claude at the owner's
+request (the slice had it as the owner's step); job B (`73832`) stays
+held for S10. What was measured:
+
+- **M2's chain is unchanged.** Its dry run prints the same 47 lines before
+  and after the move, on the laptop and on the cluster (every task done).
+  A scratch probe drove `m2_chain.py` through 7 made-up states (nothing
+  made; stage 1's lists; the loader decided, with claims and failures; the
+  generated data incomplete; the pilot failed; the pilot passed, with
+  claims; every candidate scored), each with 4 settings of `squeue` and
+  the job id: the dry run, `pick` at four amounts of time left,
+  `replace_job`, and the job's loop with a failing task. It printed the
+  same 1,601 lines before and after. `tests/test_m2_rules.py` is unchanged
+  and passes. Nothing of M2's was written: its records, claims, decisions
+  and weights were only read.
+- **Step 1 is `gen-rot-1280` with other weights**, on the cluster's own
+  lists: `train_real*3`, `real_rot*3`, `train_synth_clean`, `synth_rot`,
+  `gen50k`; 79,310 photos listed, 32 epochs, warmup 0.96, mosaic off for
+  the last 3, 2,537,920 images a run, 8 loader workers and no RAM cache.
+  M2's `gen-rot-1280-s0` record has the same, and trained in 201.8
+  minutes. The smoke trains on 1,586 photos (2%).
+- **The control's weights** are M2's `last.pt`, the same bytes on both
+  machines: s0 `8c9a03c7…`, s1 `09f49e9c…`, s2 `6de901f2…`. The GPU job
+  writes the three records; none exists yet.
+- **The COCO weights**, fetched on the login node with
+  `fetch_pretrained.py` (2026-10-31): `yolo11m.pt`, 40.7 MB, SHA-256
+  `d5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95`
+  (Ultralytics' assets, v8.4.0); `yolo11n` `0ebbc80d…`, `yolo11s`
+  `85a76fe8…` and `yolo26n` `9b09cc8b…` as before. Each M2b run records
+  its own weights' hash.
+- **GPU memory at batch 16 and 1,280 px.** The GPU is an H100 NVL with
+  95,830 MiB (`nvidia-smi` in M1's and M2's job logs). Ultralytics'
+  `GPU_mem`, read from those logs: `s1280` 21.1 GB at most (M1); `n1280`
+  10.1 GB (M2's three `gen-rot-1280` seeds) and 12.5 GB (M1's, which
+  validated every epoch). `m` has no GPU measure, so the laptop's CPU
+  measured what autograd keeps for the backward pass, per photo at 1,280
+  px (a scratch script, each model built from its yaml): `n` 0.84 GiB,
+  `s` 1.62, `m` 3.42. That ratio doesn't depend on the device. So `m`
+  needs 2.10 times `s`'s memory, about 44 GB, under half the card; the
+  same ratio puts `n` at 10.9 GB, against the 10.1 measured.
+- **Host memory.** The job's 96 GB is host memory, not the GPU's. M2's job
+  peaked at 30.1 GB (`sacct`'s sampled MaxRSS, which includes its speed
+  test's RAM cache), M1's at 11.2 GB. Model size barely touches it (the
+  loader holds the photos; `m`'s weights are 40 MB), and M2b uses no RAM
+  cache.
+- **Time.** M1's `s1280` trained 181 images a second (1.18 minutes an
+  epoch of 12,795), so an `s1280` run takes about 3.9 hours, as planned.
+  The laptop's CPU takes 2.26 times as long for `m`'s forward and backward
+  pass as for `s`'s (5.7 against 2.5 s a photo at 1,280 px); at that ratio
+  `m` trains about 80 images a second, about 9 hours a run (7.5 to 12.4,
+  between that ratio and the ratio of their FLOPs, 3.2). The chain keeps
+  the plan's 7 hours: it starts a task only with twice its estimate left,
+  14 hours, which covers the range. Stage 1 is then about 21 hours of the
+  job's 72. An epoch takes about 7 minutes for `s` and 16 for `m`, far
+  inside the watchdog's 2 hours.
+- **The dry runs.** On the cluster (2026-10-31 and 2026-11-02, at
+  `12cf00f` and then `ef1cde5`, the last just before the release): the smoke, the three controls, `s1280` s0–s2 and `m1280` s0
+  ready; the 15 step-2 runs waiting for v2 frozen, v1's export, gen-v2
+  (all but the `gen50k` arm), the 180° sets and S10's code; `m1280` s1 and
+  s2 waiting for R1; every score waiting for its run; no decisions. On the
+  laptop: the controls ready; the smoke, `s1280` and `m1280` waiting for
+  `real_rot`, `synth_rot` and `gen50k`, which only the cluster holds.
+  Those reasons are M2's own text, so they name M2's slices ("S2's
+  derive_sets.py", "S6's generation").
+- **The cluster runs the code.** `train_detector.py` and `score_suite.py`
+  import and parse there, and the commands the chain builds parse into the
+  arms above.
+- **The job script.** `slurm/m2b_gpu.sbatch` on the cluster was last
+  changed at 20:37:55 on 2026-10-31, the jobs' submit time, so the copy
+  Slurm keeps should be the committed one. `slurm/m2b_chain.sh` is there,
+  and a test checks that the batch script runs it and that it runs
+  `scripts/m2b_chain.py`.
+- **The smoke: tried on the laptop, run on a CPU node of the cluster.**
+  At `--fraction 0.01` a batch of 16 photos at 1,280 px keeps about 26 GiB
+  for the backward pass (16 × 1.62), on an 8 GB laptop: swap reached 14.8
+  of 15.4 GB, the process held 29 MB at 4% CPU, and it was stopped in
+  batch 2 of 8. At `--fraction 0.0001` (1 photo, a batch of 1) the recipe
+  check passed on a real trainer ("applied as asked: MuSGD, 1 training
+  photos (1 distinct), RAM cache False") and the step took 25 s, but
+  Ultralytics' two validations at the end, 165 photos in batches of 32
+  (2.9 GiB at most, measured), take about 18 minutes each on that CPU.
+  One try was stopped from outside during them (the session ended); the
+  next wrote `last.pt` after the first and froze the laptop in the
+  second, and was stopped by hand. All three records say failed. So the
+  smoke ran as CPU job `73859` (`slurm/m2b_smoke_cpu.sbatch`, owner's
+  go-ahead): on `gen-rot-1280`'s own lists, 79,310 listed and 793 trained
+  on (265 distinct), it trained for 9.9 minutes (10 min 50 s in all, 30.5
+  GB at most by `sacct`'s sample) and left `run.json` finished at
+  `ef1cde5`, every applied argument as asked (MuSGD, `lr0` 0.01, momentum
+  0.937 after warmup, batch 16, 1,280 px, `val` off), `yolo11s`'s hash,
+  and a 19.3 MB `last.pt`. On a CPU Ultralytics uses no loader workers
+  (0 applied, 8 recorded), as M2 S3 found. It is named `smoke-cpu`, so
+  the chain's own `m2b-smoke` still runs first on the GPU.
+- **S1's note on git** was already sorted: the merge `77f8d43` was on
+  GitHub with `946b56f`, so the laptop and GitHub were level before S2's
+  push, and the cluster fast-forwarded from `8843e48` to `12cf00f`.
+- **The queue at the release** (2026-11-02 15:12, read-only `squeue` and
+  `sinfo`): the four H100s run jobs ending 11-05 09:35, 11-07 23:14, 11-08
+  16:31 and 11-09 03:56; six GPU jobs submitted before A wait ahead of it
+  (apoorva 4, meera 2, one of them 12 hours); no reservation. The waiting
+  jobs' `ReqNodeNotAvail, UnavailableNodes:cn[5-6]` only means every GPU
+  is busy (cn5 mixed, cn6 allocated). First come, first served, with the
+  2-running-jobs cap and every job running to its limit, A gets the fifth
+  GPU to free up: about **2026-11-09 04:31**, when meera's 12-hour job
+  ends, and earlier by however much those jobs end early. After the
+  release A is `PENDING` with its submit time kept (2026-10-31 20:37:55);
+  Slurm's own estimate, 2026-11-05 09:35, is only when the first H100
+  frees up, as M2 S3 found. A's reason, "Nodes required for job are DOWN,
+  DRAINED or reserved for jobs in higher priority partitions", is Slurm's
+  word for busy GPU nodes here: every partition is tier 1 (`sinfo`) and
+  every waiting job has priority 1.
+- **Not checked:** an M2b run on a GPU (the job's smoke is the first), so
+  `m`'s memory and speed stay estimates until `m1280-s0`; scoring an
+  `m2b` run for real (tested with a stand-in; the job scores its smoke
+  first); the copy of the batch script Slurm keeps (only its file time);
+  the learnings guide (not written); `CLAUDE.md`'s M2b row and its cluster
+  facts, which wait for the owner's OK.
 
 ### S3. The store look, recorded · laptop
 
