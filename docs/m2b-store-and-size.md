@@ -970,8 +970,11 @@ held for S10. What was measured:
   `m`'s memory and speed stay estimates until `m1280-s0`; scoring an
   `m2b` run for real (tested with a stand-in; the job scores its smoke
   first); the copy of the batch script Slurm keeps (only its file time);
-  the learnings guide (not written); `CLAUDE.md`'s M2b row and its cluster
-  facts, which wait for the owner's OK.
+  the learnings guide (not written).
+- **`CLAUDE.md`** gained M2b's milestone row and the cluster facts above
+  (the GPU's model and memory, `short`'s nodes, what the waiting reason
+  means, the laptop's limit and the CPU smoke's time), with the owner's
+  OK.
 
 ### S3. The store look, recorded · laptop
 

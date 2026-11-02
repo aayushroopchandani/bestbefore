@@ -191,11 +191,15 @@ this repo.
 
 - **Cluster and scheduler:** the university cluster (OpenHPC on Red Hat),
   **Slurm**.
-- **GPUs:** NVIDIA **H100**, 2 per node, on 2 GPU nodes (`cn5`, `cn6`:
-  48 CPUs and about 500 GB RAM each, shared with other users). Partitions
-  with GPUs: `gpu` (3-day limit), `medium` (2 days), `long` (7 days).
-  CPU-only: `short` (6 h), `defaultq` (default, 3 days), `smp` (7 days).
-  One H100 per job is plenty for every model here.
+- **GPUs:** NVIDIA **H100 NVL** (95,830 MiB each, `nvidia-smi` in M1's
+  and M2's jobs), 2 per node, on 2 GPU nodes (`cn5`, `cn6`: 48 CPUs and
+  about 500 GB RAM each, shared with other users). Partitions with GPUs:
+  `gpu` (3-day limit), `medium` (2 days), `long` (7 days). CPU-only:
+  `short` (6 h; `cn1` to `cn4`, 48 CPUs and 510 GB each, checked
+  2026-11-02), `defaultq` (default, 3 days), `smp` (7 days). One H100 per
+  job is plenty for every model here: at batch 16 and 1,280 px,
+  Ultralytics' `GPU_mem` peaked at 10.1 GB for yolo11n (M2) and 21.1 GB
+  for yolo11s (M1); yolo11m is estimated at about 44 GB (M2b S2).
 - **Job limits** (checked 2026-10-22): QOS `limit_gpu_qos` is the
   account's only QOS, so it covers **every** job on every partition,
   CPU-only ones and other projects' too: **2 running** and **5 submitted**
@@ -209,7 +213,12 @@ this repo.
   too early. It gives the time the first GPU frees up (on 2026-10-22 the
   same time to five jobs), and leaves out older jobs held back only by
   their owners' caps. To estimate a start, count the older GPU jobs
-  ahead and the running ones' end times.
+  ahead and the running ones' end times. A waiting job's reason
+  `ReqNodeNotAvail, UnavailableNodes:cn[5-6]` or `Nodes required for job
+  are DOWN, DRAINED or reserved for jobs in higher priority partitions`
+  only means every GPU is busy: there was no reservation (`sinfo -T`) and
+  every partition is tier 1 (checked 2026-11-02). A job just submitted
+  can show it for a few seconds before it starts.
 - **Inside a job** (Slurm 23.11.4, checked 2026-10-22):
   `SLURM_JOB_END_TIME` holds the job's end (Unix time), so a job can tell
   how long it has left. At the time limit or a `scancel`, every process
@@ -242,7 +251,13 @@ this repo.
   differ in their last bits, so generated photos match the laptop's
   byte for byte only mostly (85% in M2 S6; the rest within a few grey
   levels). A busy 24-CPU job ran the generator about 1.6 times slower per
-  photo than the laptop's cores.
+  photo than the laptop's cores. The laptop (8 GB of RAM) can't train at
+  1,280 px: a batch of 16 keeps 13 to 55 GiB for the backward pass
+  (yolo11n to yolo11m), and even a 1-photo run froze it in Ultralytics'
+  validation at the end. A 1-epoch yolo11s smoke at 1,280 px on 793
+  photos took 11 minutes on 24 CPUs of `short` (30.5 GB by `sacct`'s
+  sample), so training smoke runs go there (`slurm/m2b_smoke_cpu.sbatch`,
+  M2b S2).
 - **Python:** modules `Python/3.11.11` (same minor version as the laptop),
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
   use it. The module provides `python3`, not `python`, and the venv only
