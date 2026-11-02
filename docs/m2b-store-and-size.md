@@ -803,6 +803,13 @@ merge them.
     `m2b-smoke` keeps `gen-rot-1280`'s lists at 2%. For the same reason
     the laptop's dry run shows `s1280` and `m1280` waiting for those three
     lists; only the cluster's can show them ready.
+  - **(changed 2026-11-02, owner's OK) The smoke runs on a CPU node of
+    the cluster**, `slurm/m2b_smoke_cpu.sbatch` (`short`, 24 CPUs, 64 GB):
+    the laptop can't hold it. A batch of 16 photos at 1,280 px keeps about
+    26 GiB for `s`'s backward pass, and even a 1-photo smoke froze the
+    laptop in Ultralytics' validation at the end (the record below). On
+    the cluster it trains on `gen-rot-1280`'s own lists, so it needs no
+    `--smoke-lists`, which stays for a machine without them.
   - **`score_suite.py --milestone m2b`** (default `m2`, unchanged): stage
     1's scores on M2's suite need it to find `-m2b-` runs. The plan named
     only S10's `--suite m2b`.
@@ -826,9 +833,10 @@ merge them.
 
 **Steps:**
 
-1. Laptop smoke: `train_detector.py --milestone m2b --arm s1280
-   --smoke-lists base --epochs 1 --fraction 0.01 --device cpu --name
-   smoke-laptop` (changed, above).
+1. Smoke on a CPU node of the cluster (changed twice, above): `sbatch
+   slurm/m2b_smoke_cpu.sbatch`, which runs `train_detector.py --milestone
+   m2b --arm s1280 --epochs 1 --fraction 0.01 --device cpu --name
+   smoke-cpu` on `gen-rot-1280`'s own lists.
 2. `m2b_chain.py --dry-run` on the laptop.
 3. Commit, push (after S1's merge). Cluster: `git pull`,
    `fetch_pretrained.py` (login node), `m2b_chain.py --dry-run`.
