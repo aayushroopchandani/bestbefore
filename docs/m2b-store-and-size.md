@@ -216,7 +216,7 @@ it gets written up as one.
 | Fact | Where it comes from | What it means for M2b |
 |---|---|---|
 | Store set v1: 99 photos, 81 expiries in frame, frozen (`7b9a4043…`) | M0 B3 | becomes training and validation data |
-| Store set v2: 99 photos in `testset2/`, photo list frozen (`8be1f9e9…`); labelled and imported 2026-10-31 (74 with an expiry, 8 of them derived; 24 `other-face`; 1 unreadable); label freeze (D6) waits for the owner | M0 Part D | the test set; frozen before any store training |
+| Store set v2: 99 photos in `testset2/`, photo list frozen (`8be1f9e9…`); labelled and imported 2026-10-31 (74 with an expiry, 8 of them derived; 24 `other-face`; 1 unreadable); labels frozen 2026-11-03 (`f1fe6b8d…`, D6) | M0 Part D | the test set; frozen before any store training |
 | Permission of 2026-10-28: store photos may be trained on and shown to AI tools; never committed or published | `CLAUDE.md` | v1 goes to the cluster for training; nothing about a photo is committed |
 | M2's 18 runs and their `last.pt` on the cluster; `gen-rot-1280` s0, s1, s2 are `n1280`'s step 1 | M2 S8 | no `n` retraining |
 | `gen-rot-1280` trained in 202–204 min at 211 images/s; 640 px arms at about 363 images/s | M2 S9 | step 1's estimates |

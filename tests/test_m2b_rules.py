@@ -263,8 +263,9 @@ STAGE_1 = ["m2b-smoke", "m2b-n1280-s0", "m2b-n1280-s1", "m2b-n1280-s2",
            "m2b-s1280-s0", "m2b-s1280-s1", "m2b-s1280-s2", "m2b-m1280-s0"]
 
 
-def test_the_chain_starts_with_stage_1_and_stage_2_waits_for_its_data(load_script, cluster):
+def test_the_chain_starts_with_stage_1_and_stage_2_waits_for_its_data(load_script, cluster, monkeypatch):
     script = load_script("m2b_chain")
+    monkeypatch.setattr(script.store, "TEST_SET_V2_SHA256", None)    # as before M0 D6
     current = states(script)
     assert [n for n, s in current.items() if s.status == "ready"] == STAGE_1
     stage2 = {t.name: current[t.name] for t in script.TASKS if t.stage == 2 and not t.score}

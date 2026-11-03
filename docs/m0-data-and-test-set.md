@@ -709,8 +709,9 @@ and frozen like v1 (B1 to B3), before anything trains on store photos.
 Status: **D1 to D4 done** (2026-10-28): the photo list is frozen
 (99 photos, `8be1f9e9…`) and Label Studio is ready. **D5 done**
 (2026-10-31): all 99 labelled, exported and imported, every check
-passing. D6, freezing the labels, waits for the owner's go-ahead. The
-record is at the end of this part.
+passing. **D6 done** (2026-11-03): the labels are frozen
+(`f1fe6b8d…`), before anything trains on store photos. The record is at
+the end of this part.
 
 **Why.** The retailer's owner has allowed training on the store photos
 (`CLAUDE.md`, 2026-10-28). v1 becomes training data from the first
@@ -981,17 +982,44 @@ committed).
 No v2 photo was shown to Claude: the work used Label Studio's database,
 API and page text only.
 
+**D6, the labels frozen (2026-11-03).** With the owner's go-ahead, after
+these checks:
+
+- **Every task submitted.** Label Studio's database, read-only: v2's 99
+  tasks have one annotation each, none skipped (`was_cancelled`), no
+  drafts, last changed 2026-10-31 09:02 UTC, before D5's export. v1's
+  project still has its 99 annotations, last changed 2026-10-21.
+- **The export again**, with D5's command (database backed up to
+  `data/store/backups/` first): byte-identical to D5's
+  (`620150ae…`), and the database's hash was the same before and after.
+  The CLI looks up its latest version on PyPI as it starts; nothing else
+  left the laptop.
+- **The import again**: checks 1, 2, 3, 5 and 6 pass, and `labels.json`
+  came out byte-identical to D5's. The counts are D5's: 74 with an
+  expiry (46 to the day, 28 to the month, 8 derived), 24 `other-face`,
+  1 unreadable; 7 moved from `small-print` to `clean`.
+- **Boxes:** 68 expiry, 84 mfg and 60 other dates on 83 photos. The 8
+  expiries without an expiry box are exactly the 8 derived ones (worked
+  out, not printed); the unreadable one has its box.
+- **Frozen:** `data/store/v2/test_set.json`, 99 photos, SHA-256
+  `f1fe6b8d1c953a100b2245c3a1401a82bcc6314796c814609ae05ad5ad4a74f0`, in
+  `TEST_SET_V2_SHA256`. `store.read_frozen(store.V2)` loads it with the
+  photo list's check, and its labels, less each photo's hash, are
+  `labels.json` exactly. v1's file still hashes to `7b9a4043…`.
+- **M2b's chain** no longer lists v2's freeze among step 2's waits.
+  `tests/test_m2b_rules.py` assumed v2 unfrozen, so its stage-2 test now
+  sets that itself, as its neighbour already set the opposite. 542 tests
+  pass.
+
 **Not checked:**
 
-- Nothing about what the v2 photos show: their tags, whether a date is
-  visible, their sizes, how many carry an EXIF rotation flag. Labelling
-  and import check 5 will show these.
-- Whether the same pack appears in both v1 and v2 (see Later).
+- Whether the same pack appears in both v1 and v2 (see Later). M2b S4's
+  design ids, typed by the owner, count it.
 - Whether the boxes are right: no one but the owner has looked at them
   on the photos. B2's by-eye contact sheet waits for the set name (see
   Later).
-- v2's label freeze has run only on made-up data in the tests, not on
-  the real export.
+- How many v2 photos carry an EXIF rotation flag (check 5 only shows the
+  boxes were drawn on the upright photo).
 - `results/m0_expdate_stats.md` wasn't rebuilt. It reads no store code.
 
 ### Later
