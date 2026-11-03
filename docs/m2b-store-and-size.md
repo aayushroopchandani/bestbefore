@@ -4,7 +4,7 @@ Planned 2026-10-31. Status: **in progress**; S1 done 2026-10-31 (GPU jobs
 A `73831` and B `73832` held, before any code); changed 2026-10-31, before
 any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
 worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
-S10). Next: S3.
+S10); S3 done 2026-11-03. Next: S4.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -151,8 +151,8 @@ by rule and never against the store, on purpose (v1 was its test set).
   and found no more often (57.4%) than expiries from 2027 on (50.2%).
   ExpDate's real training dates are mostly 2020 to 2023 (1,065 of 1,244)
   and only 21 are 2027 or later, but the store shows no year effect: the 12
-  early expiries found 94% of the time are mostly numeric (8) and
-  dot-matrix (5), the easy kinds.
+  early expiries found 94% of the time are mostly printed as numbers
+  only (10, 8 of them `DD/MM/YYYY`) and dot-matrix (5), the easy kinds.
 - *"More of the same generated data."* M2's data-size arm: 5 times more
   distinct generated photos gave +1.6 points on the hard sets and no
   visible change on the store (38.3 against 37 of 81).
@@ -995,6 +995,51 @@ held for S10. What was measured:
 plan's within rounding (the scratch script and the committed one share
 their matching). No photo or photo name in any committed file (searched).
 **Commit:** `docs: m2b store look experiment`
+
+**Done 2026-11-03.** `experiments/m2b-store-look/measure.py` ran on
+2026-11-02 on the laptop's CPU in 7 s. Its README holds the output word
+for word: the same output again from a clean start (no bytecode, an empty
+environment). 542 tests pass. What was found:
+
+- **The scratch code was gone from disk.** It was recovered from the
+  session transcripts: the 2026-10-28 gallery script (the look by outcome,
+  month words, the seeds) and its role and year snippet, and the
+  2026-10-31 size snippets. `measure.py` ports their measures. It matches
+  with `store_gallery.match`, as S8 does, and stops if a seed's counts
+  differ from its `store.json`. All 3 agree: kept and boxed 39 and 69
+  (s0), 53 and 70 (s1), 46 and 72 (s2). It reads store set v1 only, and
+  stops on a photo from outside v1's folders.
+- **Every number in "What M2 and the store gallery tell us" and Causes 1
+  to 4 matched within rounding**: the outcomes (39 / 30 / 12), contrast
+  and sharpness by outcome against real-val and gen-sample, month words
+  (20 of the 30 doubted), the seeds (55, 37, 7), the found rates by role
+  and year (57.4% and 56.8%; 50.2% and 94.4%), and the size bands
+  (store expiries 30.9 / 46.9 / 22.2%, median 1.83%; generated
+  15.9 / 19.8 / 64.3%, median 3.06%).
+- **One count was wrong, and is corrected above** (owner's OK): of the 12
+  early expiries, 10 are printed as numbers only, not 8. The 8 counted
+  only `DD/MM/YYYY`; the others are 1 `MM/YYYY` and 1 `YYYYMMDD`. The
+  claim (mostly numeric, the easy kinds) holds.
+- **New: 8 of the 15 sideways expiries are small print** (under 1.5% of
+  the photo's long side), measured by the box's short side as this plan
+  defines size. The scratch script measured box height, which for
+  sideways print is its length, so it found none. Sideways expiries are
+  then small as well as turned, which gen-v2's sizes (Cause 4) should
+  cover too.
+- **The generated sizes hold over 5,000 photos**, not only task 0's 1,000:
+  17.3 / 21.0 / 61.7% in the bands, median 3.04% (against 3.06%).
+- **Photo names.** The committed files and the two new ones were searched
+  for every v1 and v2 photo name (the name and its stem, 5 characters or
+  more). The new files hold none. 9 lines in older files hit: generic
+  example names (a folder and "sample" plus a number) in M0's
+  `store_import.py` docstring, M0's plan and `tests/test_store_import.py`,
+  committed since `cca856f` and `2b20d77`. They happen to match real v1
+  names, and were left alone.
+- **Not checked:** the design counts (designs in v1, expiries per design)
+  and whether the same print swings between photos, both pending until
+  S4; Cause 2's other layouts, only ever seen by eye; per-photo seed
+  confidences (not printed, being per photo); the learnings guide (not
+  written).
 
 ### S4. Design ids and the v1 split · owner, then laptop
 
