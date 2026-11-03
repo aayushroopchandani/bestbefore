@@ -707,9 +707,10 @@ data/        expdate/, store/           (never committed)
 Planned 2026-10-28. Not a milestone: a second store test set, labelled
 and frozen like v1 (B1 to B3), before anything trains on store photos.
 Status: **D1 to D4 done** (2026-10-28): the photo list is frozen
-(99 photos, `8be1f9e9…`) and Label Studio is ready. D5 and D6, labelling
-and freezing the labels, are the owner's. The record is at the end of
-this part.
+(99 photos, `8be1f9e9…`) and Label Studio is ready. **D5 done**
+(2026-10-31): all 99 labelled, exported and imported, every check
+passing. D6, freezing the labels, waits for the owner's go-ahead. The
+record is at the end of this part.
 
 **Why.** The retailer's owner has allowed training on the store photos
 (`CLAUDE.md`, 2026-10-28). v1 becomes training data from the first
@@ -946,17 +947,51 @@ Don't edit, rotate or re-save a photo in `testset2/`: macOS Preview's
 rotate rewrites the file. Any change to a photo fails the photo-list
 check at import and at freezing.
 
+**D5, labelling (2026-10-31).** The owner drew the boxes in Label Studio
+and typed every other field into a CSV,
+`data/expiry_ground_truth_testset2.csv` (under `data/`, so never
+committed).
+
+- **The boxes were all drafts.** Label Studio saves a draft while you
+  draw, and only *Submit* turns it into an annotation; the JSON-MIN
+  export leaves drafts out. An edit to a submitted task is a draft too,
+  until *Update*. So an export after drawing would have held no labels.
+- Claude copied the CSV's fields into each task's draft and submitted it
+  through Label Studio's API, logged in as the owner. Each task was
+  matched to its CSV row by exact file name: task IDs (100 to 198) don't
+  follow the photos' numbering. The database was backed up to
+  `data/store/backups/` before each write.
+- Comparing the boxes with the CSV found 11 photos still to box, and
+  8 boxed ones worth a second look (e.g. a date in the note but no box
+  for it). The owner boxed the 11 and fixed 2 of the 8. The other 6 were
+  left as labelled, the owner's call.
+- **Result:** 99 tasks, one annotation each, no drafts left. 83 photos
+  have boxes; the 16 without are all `other-face` with no date in frame.
+  v1's project is unchanged: 99 annotations, last changed 2026-10-21.
+- **Export:** `label-studio export 2 JSON_MIN --export-path <dir>`, run
+  with the server's environment (as in `.claude/launch.json`), then
+  copied to `data/store/v2/label_studio_export.json`. It uses the same
+  converter as the UI's *Export*, and has the same keys and box fields as
+  v1's export.
+- **Import:** checks 1, 2, 3, 5 and 6 pass (4 is v1's only). The
+  small-print rule moved 7 photos from `small-print` to `clean` (v1: 20).
+  74 photos have an expiry, 8 of them derived; 24 are `other-face`; 1 has
+  its expiry in frame but unreadable.
+
+No v2 photo was shown to Claude: the work used Label Studio's database,
+API and page text only.
+
 **Not checked:**
 
 - Nothing about what the v2 photos show: their tags, whether a date is
   visible, their sizes, how many carry an EXIF rotation flag. Labelling
   and import check 5 will show these.
 - Whether the same pack appears in both v1 and v2 (see Later).
-- v2's Label Studio project isn't created yet, because that needs the
-  owner's login. So the 99-task sync hasn't been seen, and the steps
-  above haven't been run for v2.
-- v2's import and label freeze have run only on made-up data in the
-  tests, not on a real export.
+- Whether the boxes are right: no one but the owner has looked at them
+  on the photos. B2's by-eye contact sheet waits for the set name (see
+  Later).
+- v2's label freeze has run only on made-up data in the tests, not on
+  the real export.
 - `results/m0_expdate_stats.md` wasn't rebuilt. It reads no store code.
 
 ### Later
