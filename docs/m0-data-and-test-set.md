@@ -1036,7 +1036,8 @@ these checks:
 - **The same pack in both sets.** Only byte-identical copies are checked.
   A pack photographed for both v1 and v2 would let training on v1 leak
   into v2's results. Check this by eye while labelling, before v1 is
-  trained on.
+  trained on. **Counted in M2b S4** by pack design: 9 designs are in
+  both sets, holding 30 of v2's photos and 11 of its 68 expiries.
 - **How v1 enters training** (M3): its photos and labels as a training
   list, with v2 never in one.
 

@@ -62,6 +62,9 @@ TEST_SET_SHA256: str | None = "7b9a4043886c9f4fcb37cba339962261acaef19e2993f7fba
 # (D3, 2026-10-28), then its labels (D6, 2026-11-03). results/store_test_set_v2.md.
 PHOTOS_V2_SHA256: str | None = "8be1f9e9cb256625259c17b88a070a9a30e204c94a85ff4ad1cd498be1d6080c"
 TEST_SET_V2_SHA256: str | None = "f1fe6b8d1c953a100b2245c3a1401a82bcc6314796c814609ae05ad5ad4a74f0"
+# SHA-256 of data/store/designs.json, the pack design of every v1 and v2
+# photo, pasted in when it was frozen (M2b S4). results/store_designs.md.
+DESIGNS_SHA256: str | None = "fa888edb77c14123c5839044e7ac880aa8de2fc299ca0f8acdfd7376bc566f6e"
 
 
 @dataclass(frozen=True)

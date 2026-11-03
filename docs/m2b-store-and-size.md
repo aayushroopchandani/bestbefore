@@ -4,7 +4,8 @@ Planned 2026-10-31. Status: **in progress**; S1 done 2026-10-31 (GPU jobs
 A `73831` and B `73832` held, before any code); changed 2026-10-31, before
 any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
 worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
-S10); S3 done 2026-11-03. Next: S4.
+S10); S3 done 2026-11-03; S4 done 2026-11-03 (v2's labels frozen, pack
+designs frozen, v1 split: 25 expiries in validation). Next: S5.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -260,7 +261,8 @@ decision k.
    training.** The owner types one per photo: same brand, product line and
    date-print layout is one design. They decide the v1 split and v2's
    seen-or-unseen report. They are frozen with a hash, as the labels are,
-   and stay in `data/store/`.
+   and stay in `data/store/`. **(changed 2026-11-03, owner's request)**
+   Claude drafted them from the photos and the owner approved them (S4).
 5. **(new) v1 split by design, 70% training and 30% validation**,
    stratified by tag (rule in [The data](#the-data)). Splitting by photo
    would put the same pack on both sides, and validation would look far
@@ -1059,6 +1061,94 @@ has one in validation; a v2 photo can't enter the split.
 **Check:** the counts; validation holds at least 20 expiries (if not, that
 is a finding, recorded; the rule doesn't change).
 **Commit:** `feat: store pack designs frozen, v1 split by design`
+
+**Done 2026-11-03.** Step 1 is M0's D6 (`13eefd1`, recorded there): v2's
+labels frozen, `f1fe6b8d…`, before anything trains on store photos. Then
+the designs, frozen as `data/store/designs.json` (`DESIGNS_SHA256`
+`fa888edb…`), and v1 split, `SPLIT_SHA256` `4418c65b…`;
+`results/store_designs.md` holds the counts. 558 tests pass (542 before).
+What was found:
+
+- **(changed, owner's request) Claude drafted the design ids, the owner
+  approved them.** Step 2 had the owner type them. Claude wrote
+  `designs.csv` with every photo listed, made numbered contact sheets of
+  all 198 (upright, 520 px, the hand-drawn date boxes on them, in
+  `data/store/runs/designs/`), looked at every one and named each pack,
+  using the owner's v2 notes for brands and barcodes. No model output was
+  used. Then one sheet per design (`runs/designs/by-design/`) and a list
+  of every photo with what Claude saw (`data/store/designs_review.csv`) for
+  the owner's review; the owner approved the draft as it was. So **v2's
+  photos were shown to Claude**, which D5 hadn't done: allowed by the
+  2026-10-28 permission and by decision 15 (looking at v2 to label it).
+  Nothing about the generator or training came from them, and decision 3
+  holds: no v2 photo is on the cluster or in any training list.
+- **The rule as applied**: one design is one brand and one back-panel
+  template with the date printed the same way in the same place, whatever
+  the flavour, size or life stage; another product line, template or print
+  method is another design; an `other-face` photo takes its pack's design.
+  The calls worth knowing: a treat jar's label and its base are one design
+  (13 photos); every biscuit of one brand, jar or pouch, is one (12: the
+  same batch sticker and best-before band); one brand's treat pouches from
+  one maker are one (10); one chew brand splits by template and print
+  (bags 8, coloured small packs 3, and three solid-printed packs of 1
+  each); an importer's sticker is no design of its own, so one importer's
+  sticker on two brands makes two designs; a box in v1 and its bars in v2
+  are one (the same EXP and lot print).
+- **Designs:** 85 in all, 40 in v1, 54 in v2, **9 in both**. Most are
+  small: a median of 1 photo per design in each set; 23 of v1's 40 and 30
+  of v2's 54 have one photo.
+- **Cause 3 measured.** v1's largest design holds 10 of the 81 expiries in
+  frame and its largest 4 hold 31, as the gallery's "about 30, one pouch
+  about 10" had it. v2 is flatter: 5 and 15 of 68.
+- **The same pack in both sets** (M0 Part D, Later): 30 of v2's 99 photos
+  have a design v1 also has, but they hold only 11 of v2's 68 expiries;
+  most are `other-face` or relative-expiry packs (one biscuit brand: 8
+  photos, no expiry box).
+- **The split** (seed 0): 27 designs, 70 photos and 56 expiries train;
+  **13 designs, 29 photos and 25 expiries validation**, so the check (at
+  least 20) holds. By photo tag, validation's expiries: clean 10,
+  small-print 7, sideways 5, dot-matrix 3.
+- **v1's four largest designs all fell in training** (a treat jar, a
+  treat pouch, a dry food and a wet-food pouch): 30 of training's 56
+  expiries. So v1-val is many small designs, and the pouch
+  that gave 6 of M2's 12 never-boxed expiries is a training design, not a
+  validation one. And **dot-matrix validation is thin: 3 expiries**. Both
+  are the rule's outcome and stay; per-tag v1-val numbers for dot-matrix
+  mean little.
+- **v2 by design** (at the end, S14): seen in training (a design in
+  v1-train) 16 photos with **4 expiries**; in v1-val only 14 photos with
+  7; unseen 69 with 57. So "seen against unseen" on v2 rests on 4 and 11
+  expiries: too few to compare on their own (S14 should report counts with
+  every rate).
+- **Details fixed while writing:**
+  - **A tied tag** goes to the one first in `store.TAGS` (sideways before
+    clean): the order photos take their tags in.
+  - **"round(0.3 × n)" is rounded half up**, in integers: Python's
+    `round` rounds half to even, which would give 4 of 15 designs, not 5.
+    With half up, 2 or more designs always give at least 1, as the rule
+    asks.
+  - **One generator**, seeded with 0, shuffles the tags in `store.TAGS`
+    order; every list is sorted first. The split hashes the same under 3
+    hash seeds and in a fresh process.
+  - **Added beyond the plan:** the freeze also refuses two ids that differ
+    only in case or spaces (one design typed two ways would sit on both
+    sides of the split) and a row with a stray comma; `designs.json`
+    records the hashes of the label files it was named against;
+    `SPLIT_SHA256` in `store_train.py`, checked by `store_train.v1_split()`
+    (for S6's export), so the split can't change unseen; the script checks
+    the file without writing (no flag) and writes the report
+    (`--report`).
+  - `tests/test_store_train.py`: 16 tests, made-up names, covering the
+    plan's five and the above.
+- **Photo names.** The committed files were searched for every v1 and v2
+  photo name (and stem, 5 characters or more) and for every design name:
+  none in this slice's changes, and no brand: the S4 record describes
+  designs without naming them, as some brands are the retailer's own. `designs.csv`, `designs.json`,
+  `designs_review.csv` and the sheets are under `data/`, gitignored.
+- **Not checked:** whether every id is right, beyond the owner's approval
+  (no second look, sheet by sheet, recorded); the design counts for S3's
+  experiment and whether the same print swings between photos (S3's two
+  items pending S4: not done here); the learnings guide (not written).
 
 ### S5. v1's keyword boxes · laptop, owner in Label Studio
 
