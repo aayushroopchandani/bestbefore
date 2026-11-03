@@ -176,3 +176,249 @@ def test_the_summary_names_no_photo_or_design(load_script, monkeypatch):
     # v2: pack01 and pack06 are in v1, pack99 isn't; every made-up photo has one expiry box
     assert "| v2, design not in v1 (unseen) | 1 | 1 | 1 |" in text
     assert "| v1 | 11 | 25 | 25 |" in text
+
+
+# --- Keyword boxes (S5) ---------------------------------------------------------
+
+def keywords(text: str) -> list[tuple[str, str]]:
+    return [(label, text[a:b]) for label, a, b in store_train.find_keywords(text)]
+
+
+def test_a_keyword_glued_to_its_date_is_boxed_alone():
+    assert keywords("EXP.FEB 2027") == [("due", "EXP.")]
+    # a 12-character line 120 px long: EXP. is its first 40 px, the date stays out
+    assert store_train.span_box([(0, 0), (120, 0), (120, 10), (0, 10)], 0, 4, 12) == (0, 0, 40, 10)
+
+
+@pytest.mark.parametrize("line, found", [
+    ("Best before:03-03-2027", [("due", "Best before:")]),
+    ("Expiry Date : FEB-2029", [("due", "Expiry Date :")]),
+    ("USE BY 12/2026", [("due", "USE BY")]),
+    ("MFD(Date): April 2026", [("prod", "MFD(Date):")]),
+    ("Mfg. Date: 05/12/2024", [("prod", "Mfg. Date:")]),
+    ("Month and year of manufacture: 19/06/2023", [("prod", "Month and year of manufacture:")]),
+    ("MFG:FEB 2025 | IMPORT: MAR 2025", [("prod", "MFG:"), ("prod", "IMPORT:")]),
+    ("MFG28/11/25;EXP22/05/27", [("prod", "MFG"), ("due", "EXP")]),
+    ("Batch No.: K2311A", [("code", "Batch No.: K2311A")]),
+    ("B.NO: 2307B", [("code", "B.NO: 2307B")]),
+    ("LOT A12B3 14:32", [("code", "LOT A12B3"), ("code", "14:32")]),
+    ("Lot/Batch No - as printed on bag", [("code", "Lot/Batch No -")]),
+    ("Best Before 12 months from Mfg.", [("due", "Best Before")]),
+    ("BEST BEFORE 24 MONTHS FROM DATE OF MANUFACTURE", [("due", "BEST BEFORE")]),
+])
+def test_keywords_are_boxed_as_printed_with_their_colon(line, found):
+    assert keywords(line) == found
+
+
+@pytest.mark.parametrize("line", [
+    "Manufactured By: Some Petfood Ltd", "Imported & Marketed by:", "Importer: Some Traders",
+    "Mfd. By : See On Pack", "Mfg. Lic. No. 10012345", "MRP: ₹450.00", "USP Rs. 1.50/g",
+    "8901234567890", "Net Wt. 2.5 kg", "Customer care 1800 123 4567", "Plot No. 12, Some Road",
+    "Our experts export worldwide", "05/12/2024",
+])
+def test_no_box_for_prices_quantities_addresses_or_dates(line):
+    assert keywords(line) == []
+
+
+def test_a_turned_or_flipped_line_is_cut_from_its_reading_end():
+    tall = [(0, 0), (10, 0), (10, 120), (0, 120)]          # read top to bottom
+    assert store_train.span_box(tall, 0, 4, 12, turned=True) == (0, 0, 10, 40)
+    assert store_train.span_box(tall, 0, 4, 12, turned=True, flipped=True) == pytest.approx((0, 80, 10, 120))
+    wide = [(0, 0), (120, 0), (120, 10), (0, 10)]           # upside down: reads right to left
+    assert store_train.span_box(wide, 0, 4, 12, flipped=True) == pytest.approx((80, 0, 120, 10))
+
+
+def test_proposals_are_numbered_and_in_the_photos_frame():
+    lines = [{"quad": [(100, 200), (220, 200), (220, 210), (100, 210)], "text": "EXP.FEB 2027",
+              "turned": False, "flipped": False}]
+    assert store_train.propose(lines, (1000, 750)) == [
+        {"id": "kw1", "label": "due", "xyxy": [0.1, 0.266667, 0.14, 0.28], "text": "EXP.", "line": "EXP.FEB 2027"}]
+
+
+def test_a_task_names_its_photo_as_v1s_project_does_and_reads_back():
+    from bestbefore.store_import import photo_id, rect_box
+    proposal = {"id": "kw1", "label": "due", "xyxy": [0.1, 0.25, 0.14, 0.28]}
+    task = store_train.keyword_task("samples2/made up 1.jpg", (3024, 4032), [proposal], label("clean"))
+    assert task["data"]["image"] == "/data/local-files/?d=samples2/made%20up%201.jpg"
+    assert photo_id(task["data"]["image"]) == "samples2/made up 1.jpg"
+    (prediction,) = task["predictions"]
+    keyword, *dates = prediction["result"]
+    assert rect_box(keyword["value"]) == {"label": "due", "xyxy": [0.1, 0.25, 0.14, 0.28]}
+    assert (keyword["original_width"], keyword["original_height"]) == (3024, 4032)
+    assert [rect_box(d["value"]) for d in dates] == label("clean")["boxes"]
+    assert all(d["readonly"] and d["from_name"] == "date" for d in dates) and "readonly" not in keyword
+
+
+# A made-up reviewed export: three v1 photos, 1000x750 upright.
+PHOTOS = ["samples1/a.jpg", "samples2/b.jpg", "samples3/c.jpg"]
+SIZE = (1000, 750)
+PROPOSED = {"samples1/a.jpg": [{"id": "kw1", "label": "due", "xyxy": [0.0, 0.5, 0.09, 0.55]},
+                               {"id": "kw2", "label": "prod", "xyxy": [0.0, 0.6, 0.09, 0.65]}],
+            "samples2/b.jpg": [{"id": "kw1", "label": "code", "xyxy": [0.5, 0.1, 0.6, 0.12]}],
+            "samples3/c.jpg": []}
+
+
+def reviewed(photo: str, boxes: list[dict], **annotation) -> dict:
+    result = [store_train.ls_region(b["id"], "keyword", b, SIZE) for b in boxes]
+    result += [store_train.ls_region(f"date{k}", "date", b, SIZE, readonly=True)
+               for k, b in enumerate(label("clean")["boxes"], start=1)]
+    return {"data": {"image": f"/data/local-files/?d={photo}"}, "drafts": [],
+            "annotations": [{"result": result, "was_cancelled": False, **annotation}]}
+
+
+def export(**changed) -> list[dict]:
+    """Every photo reviewed: a's prod box moved, b's code box deleted, a due box added on c."""
+    final = {"samples1/a.jpg": [PROPOSED["samples1/a.jpg"][0], {**PROPOSED["samples1/a.jpg"][1],
+                                                                "xyxy": [0.0, 0.6, 0.08, 0.65]}],
+             "samples2/b.jpg": [], "samples3/c.jpg": [{"id": "Xy12Ab", "label": "due", "xyxy": [0.2, 0.2, 0.3, 0.24]}]}
+    return [changed.get(p) or reviewed(p, final[p]) for p in PHOTOS]
+
+
+def checks(tasks: list[dict]) -> dict[str, list[str]]:
+    labels = {p: label("clean") for p in PHOTOS}
+    boxes = store_train.keyword_boxes(tasks)
+    return {"reviewed": store_train.check_reviewed(tasks, PHOTOS),
+            "boxes": store_train.check_keyword_boxes(tasks, {p: SIZE for p in PHOTOS}),
+            "off dates": store_train.check_off_dates(boxes, labels),
+            "reference": store_train.check_reference(tasks, labels)}
+
+
+def test_a_reviewed_export_passes_and_ocrs_help_is_counted():
+    tasks = export()
+    assert all(not p for p in checks(tasks).values())
+    counts = store_train.ocr_help(PROPOSED, store_train.keyword_boxes(tasks))
+    assert counts == {("kept", "due"): 1, ("moved", "prod"): 1, ("relabelled", "prod"): 0,
+                      ("deleted", "code"): 1, ("added", "due"): 1}
+
+
+def test_a_relabelled_proposal_counts_as_moved():
+    final = {"samples2/b.jpg": [{**PROPOSED["samples2/b.jpg"][0], "label": "due"}]}
+    counts = store_train.ocr_help({"samples2/b.jpg": PROPOSED["samples2/b.jpg"]}, final)
+    assert counts == {("moved", "code"): 1, ("relabelled", "code"): 1}
+
+
+def test_a_photo_not_reviewed_fails():
+    unsubmitted = {**reviewed("samples2/b.jpg", []), "annotations": []}
+    assert checks(export(**{"samples2/b.jpg": unsubmitted}))["reviewed"] == [
+        "samples2/b.jpg: 0 submitted and 0 skipped annotations, not 1 submitted"]
+    skipped = reviewed("samples2/b.jpg", [], was_cancelled=True)
+    assert checks(export(**{"samples2/b.jpg": skipped}))["reviewed"] == [
+        "samples2/b.jpg: 0 submitted and 1 skipped annotations, not 1 submitted"]
+    draft = {**reviewed("samples2/b.jpg", []), "drafts": [{"result": []}]}
+    assert checks(export(**{"samples2/b.jpg": draft}))["reviewed"] == ["samples2/b.jpg: 1 drafts not submitted"]
+    missing = export()[:2]
+    assert store_train.check_reviewed(missing, PHOTOS) == ["samples3/c.jpg: not labelled"]
+
+
+def test_a_photo_from_outside_v1_fails():
+    tasks = export() + [reviewed("testset2/x.jpeg", [])]
+    assert store_train.check_reviewed(tasks, PHOTOS) == ["testset2/x.jpeg: labelled, but not in store set v1"]
+
+
+def test_a_box_outside_the_photo_or_off_its_frame_fails():
+    outside = reviewed("samples3/c.jpg", [{"id": "k", "label": "due", "xyxy": [0.95, 0.2, 1.02, 0.24]}])
+    assert checks(export(**{"samples3/c.jpg": outside}))["boxes"] == [
+        "samples3/c.jpg: a keyword box reaches outside the photo"]
+    raw = reviewed("samples3/c.jpg", [{"id": "k", "label": "due", "xyxy": [0.2, 0.2, 0.3, 0.24]}])
+    raw["annotations"][0]["result"][0].update(original_width=750, original_height=1000)
+    assert checks(export(**{"samples3/c.jpg": raw}))["boxes"] == [
+        "samples3/c.jpg: a keyword box drawn on 750x1000, not the upright photo's (1000, 750)"]
+    wrong = reviewed("samples3/c.jpg", [{"id": "k", "label": "expiry", "xyxy": [0.2, 0.2, 0.3, 0.24]}])
+    assert checks(export(**{"samples3/c.jpg": wrong}))["boxes"] == [
+        "samples3/c.jpg: a keyword box labelled ['expiry']"]
+
+
+def test_a_keyword_box_over_a_date_box_fails():
+    date_box = label("clean")["boxes"][0]["xyxy"]          # the expiry, [0.1, 0.5, 0.4, 0.55]
+    over = reviewed("samples3/c.jpg", [{"id": "k", "label": "due", "xyxy": [0.12, 0.5, 0.4, 0.56]}])
+    assert checks(export(**{"samples3/c.jpg": over}))["off dates"] == [
+        "samples3/c.jpg: a due box over its expiry box (IoU 0.79)"]
+    beside = reviewed("samples3/c.jpg", [{"id": "k", "label": "due", "xyxy": [0.02, 0.5, date_box[0], 0.55]}])
+    assert checks(export(**{"samples3/c.jpg": beside}))["off dates"] == []
+
+
+def test_a_changed_reference_date_box_fails():
+    moved = reviewed("samples3/c.jpg", [])
+    moved["annotations"][0]["result"][0]["value"]["x"] += 1
+    assert checks(export(**{"samples3/c.jpg": moved}))["reference"] == [
+        "samples3/c.jpg: 1 of its frozen date boxes moved or deleted"]
+    deleted = reviewed("samples3/c.jpg", [])
+    del deleted["annotations"][0]["result"][0]
+    assert checks(export(**{"samples3/c.jpg": deleted}))["reference"] == [
+        "samples3/c.jpg: 1 of its frozen date boxes moved or deleted"]
+
+
+def test_a_date_v1_missed_is_kept_apart_from_its_frozen_labels():
+    added = reviewed("samples3/c.jpg", [])
+    added["annotations"][0]["result"].append(store_train.ls_region(
+        "Ab12", "date", {"label": "other_date", "xyxy": [0.5, 0.7, 0.7, 0.74]}, SIZE))
+    tasks = export(**{"samples3/c.jpg": added})
+    labels = {p: label("clean") for p in PHOTOS}
+    assert checks(tasks)["reference"] == []
+    assert store_train.added_dates(tasks, labels) == {
+        "samples3/c.jpg": [{"label": "other_date", "xyxy": [0.5, 0.7, 0.7, 0.74]}]}
+    assert store_train.added_dates(export(), labels) == {}
+
+
+def test_the_keyword_file_holds_every_photo_and_no_region_id():
+    content = store_train.keywords_file(store_train.keyword_boxes(export()), {"export_sha256": "e"}, "2026-11-03")
+    assert sorted(content["photos"]) == PHOTOS and content["export_sha256"] == "e" and content["added_dates"] == {}
+    assert content["photos"]["samples3/c.jpg"] == [{"label": "due", "xyxy": [0.2, 0.2, 0.3, 0.24]}]
+
+
+def test_the_import_writes_only_a_checked_export(load_script, tmp_path, monkeypatch, capsys):
+    from PIL import Image
+    script = load_script("import_store_keywords")
+    for photo in PHOTOS:
+        (tmp_path / photo).parent.mkdir(exist_ok=True)
+        Image.new("RGB", SIZE).save(tmp_path / photo)
+    monkeypatch.setattr(script, "store_photos_dir", lambda: tmp_path)
+    monkeypatch.setattr(store, "labels", lambda s: {p: label("clean") for p in PHOTOS})
+    proposals = {"test_set_sha256": store.TEST_SET_SHA256, "photos": {p: {"boxes": b} for p, b in PROPOSED.items()}}
+    (tmp_path / "proposals.json").write_text(json.dumps(proposals))
+    out = tmp_path / "v1_keywords.json"
+    args = ["--proposals", str(tmp_path / "proposals.json"), "--export", str(tmp_path / "export.json"),
+            "--out", str(out)]
+    monkeypatch.setattr("sys.argv", ["import_store_keywords.py", *args])
+
+    (tmp_path / "export.json").write_text(json.dumps(export()[:2]))
+    with pytest.raises(SystemExit, match="1 checks failed"):
+        script.main()
+    assert not out.exists()
+
+    (tmp_path / "export.json").write_text(json.dumps(export()))
+    script.main()
+    printed = capsys.readouterr().out
+    assert sorted(store_train.read_keywords(out)) == PHOTOS
+    assert "| kept | 1 | 0 | 0 | 1 |" in printed and "| added | 1 | 0 | 0 | 1 |" in printed
+    assert "kept or moved, by IoU with the final box: 0.7+ 2, 0.5-0.7 0, under 0.5 0" in printed
+    assert "| **all** | 3 | 2 |" in printed
+    assert json.loads(out.read_text())["added_dates"] == {}
+
+
+def ink_line(*runs: tuple[int, int], height: int = 40, width: int = 400):
+    """A made-up line of print: dark columns at each (start, end), rows 10 to 30, on light grey."""
+    import numpy as np
+    gray = np.full((height, width), 220.0, np.float32)
+    for a, b in runs:
+        gray[10:30, a:b] = 30.0
+    return gray
+
+
+def test_a_padded_box_snaps_to_its_ink(load_script):
+    script = load_script("draft_keywords")
+    gray = ink_line((50, 60), (64, 74), (78, 88))                  # three letters, x 50 to 88
+    assert script.tighten(gray, (40, 2, 98, 38), along_x=True) == (50, 10, 88, 30)
+
+
+def test_a_keyword_stops_before_the_date_beside_it(load_script):
+    script = load_script("draft_keywords")
+    # 'EXP.' at 50 to 98, its date from 106: OCR's cut ran 8 px into the date
+    gray = ink_line((50, 60), (64, 74), (78, 88), (94, 98), (106, 116), (120, 130))
+    assert script.tighten(gray, (45, 5, 114, 35), along_x=True, stops=[(106, 130)]) == (50, 10, 98, 30)
+
+
+def test_a_sideways_box_snaps_along_its_column(load_script):
+    script = load_script("draft_keywords")
+    gray = ink_line((50, 60), (64, 74), (78, 88)).T.copy()         # the same line, reading down
+    assert script.tighten(gray, (2, 40, 38, 98), along_x=False) == (10, 50, 30, 88)

@@ -42,7 +42,10 @@ def _text(value) -> str | None:
     return (value or "").strip() or None
 
 
-def _box(rect: dict) -> dict:
+def rect_box(rect: dict) -> dict:
+    """A Label Studio rectangle as a box: its label and 0..1 xyxy of the
+    image it was drawn on. M2b S5's keyword import uses it too, so keyword
+    boxes and date boxes share one convention."""
     x, y, w, h = rect["x"], rect["y"], rect["width"], rect["height"]
     # Percentages are pixels of a 100 x 100 image.
     xyxy = normalise((x, y, x + w, y + h), 100, 100)
@@ -61,7 +64,7 @@ def from_export(tasks: list[dict]) -> dict[str, dict]:
             "format": _text(task.get("format")),
             "tag": task.get("tag"),
             "unreadable": expiry is None and "unreadable" in note.lower(),
-            "boxes": [_box(r) for r in task.get("box", [])],
+            "boxes": [rect_box(r) for r in task.get("box", [])],
             "note": note,
         }
     return labels

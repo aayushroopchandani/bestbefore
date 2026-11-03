@@ -5,7 +5,8 @@ A `73831` and B `73832` held, before any code); changed 2026-10-31, before
 any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
 worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
 S10); S3 done 2026-11-03; S4 done 2026-11-03 (v2's labels frozen, pack
-designs frozen, v1 split: 25 expiries in validation). Next: S5.
+designs frozen, v1 split: 25 expiries in validation); S5 done 2026-11-03
+(341 keyword boxes on v1, every photo reviewed). Next: S6.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -414,7 +415,9 @@ photo reviewed. v1's frozen label file doesn't change.
   an area filter, JPEG quality 95, named `v1-0001.jpg` on; the map back to
   photo names stays in `data/store/train/names.json`, on the laptop only;
 - label lines: expiry, mfg and other dates as `date` (class 0), keyword
-  boxes as their class;
+  boxes as their class; **(changed 2026-11-03, S5)** the 3 dates S5's review
+  found unboxed in v1's frozen labels (`v1_keywords.json`'s `added_dates`)
+  as `date` too, so they aren't learned as background;
 - v1-train also at 90°, 180° and 270° (`derived.turn`); v1-val as it is;
 - lists of v1-train's exported photos (all 4 turns) and of v1-val's; each
   training run's design-balanced lines are built from the first by
@@ -1170,6 +1173,100 @@ reviewed.
 deleted and added (OCR's help, measured).
 **Commit:** `feat: keyword boxes on store set v1, proposed by OCR and checked`
 
+**Done 2026-11-03.** `data/store/v1_keywords.json` holds **341 keyword
+boxes on 96 of v1's 99 photos**, every photo reviewed and every import
+check passing; v1's frozen labels and its own project are unchanged. 602
+tests pass (558 before). What was found:
+
+- **OCR's proposals** (`scripts/propose_keywords.py`): RapidOCR 1.2.3 on
+  each v1 photo, upright and shrunk to 1,000 px with Scanify's LANCZOS
+  thumbnail, read 3,216 lines in 50 s. The matcher found **218 keywords on
+  82 photos** (72 `due`, 95 `prod`, 51 `code`), none over a date box. The
+  script runs RapidOCR's own steps to keep two flags `RapidOCR()` drops
+  (a line read turned a quarter, a line its classifier turned 180°), which
+  say which end of a line its keyword is at; its lines are those of
+  `RapidOCR()` exactly (20 photos compared). RapidOCR boxes whole lines,
+  so each keyword is cut from its line in proportion to its characters.
+  Address lines (`Manufactured By:`, `Imported & Marketed By:`) and shelf
+  lives (`12 months from Mfg.`) get no box.
+- **The coordinates match v1's.** A sheet drew the proposals beside v1's
+  frozen date boxes on every upright photo (`data/store/runs/`), and three
+  tasks were opened in Label Studio (an EXIF quarter turn, an EXIF half
+  turn with print reading down, an upside-down label): every keyword box
+  sat just before its date. The tasks name each photo exactly as v1's
+  project does, the boxes are drawn on the upright size (`original_width`,
+  `original_height`), and keyword and date boxes go through one converter
+  (`store_import.rect_box`, renamed from `_box`; v1's import unchanged).
+- **The project, "Store v1 keywords"** (Label Studio 1.23.2, project 3, on
+  127.0.0.1:8080 only: the laptop's network address gets no answer), made
+  through the API from the browser pane, logged in as the owner. Labels
+  `due`, `prod`, `code`; v1's date boxes as a second, read-only layer; the
+  box rule in a header on every task and in the instructions. Its photos
+  are served through v1's storages; it has none of its own. Database
+  backed up to `data/store/backups/` before each write; v1's and v2's
+  projects fingerprinted (rows, tasks, annotations, drafts, predictions,
+  storages) before the first write and after the last: unchanged.
+- **(changed, owner's request) Claude drafted the boxes**, between OCR and
+  the owner, as S4's design ids were drafted. `scripts/draft_keywords.py`
+  snaps every box to its ink (the line's padding trimmed; an end facing a
+  date box stops at the last ink before it, so the colon stays and the date
+  is out) and applies Claude's edits from looking at all 99 photos at full
+  size (`data/store/keywords/edits.json`): **165 edits on 59 photos**, 123
+  boxes added (77 drawn by eye, 46 from a second OCR pass: RapidOCR again
+  on each photo's date area, enlarged, with lower detection thresholds, a
+  scratch script whose output is in `edits.json`), 36 redrawn, 3 extended
+  (a code's label over its value) and 3 deleted. The draft, **338 boxes on
+  95 photos**, went to Label Studio as a second prediction
+  (`claude-draft-1`), OCR's kept beside it, and became what each task opens
+  with. It rebuilds byte for byte from `edits.json`.
+- **The owner's review.** The owner changed **39 photos** (3 on OCR's
+  proposals before the draft existed, 36 on the draft) and left 60 as
+  drafted, then asked Claude to submit: Claude submitted all 99 through the
+  API, each changed photo's draft as the owner left it and each other one
+  the draft unchanged, which is what Submit on an untouched photo does
+  (as in M0's D5). 99 annotations, one a task, none skipped, no draft left.
+- **v1's labels miss 3 dates.** The owner boxed 3 dates in the date layer
+  that v1's frozen labels have no box for (two import dates, and one on a
+  line whose word OCR read as `MOI:`). v1's labels can't change, so check 4 now fails only
+  when a frozen date box is moved or deleted; an added one is checked like
+  a keyword box and kept in `v1_keywords.json`'s `added_dates` (all 3
+  `other_date`). S6's export takes them as dates ([The export](#the-export),
+  changed). A revision of v1's labels (M0 Part D, Later) would carry them.
+- **The keyword boxes**: `due` 106 on 93 photos, `prod` 147 on 92, `code`
+  88 on 76. 3 photos have none (no keyword in frame).
+- **OCR's help**, by region id (Label Studio keeps a predicted region's id
+  in the annotation made from it), OCR's 218 proposals against the final
+  boxes: **kept 1, moved 214, deleted 3, added 126**, no label changed.
+  "Moved" includes the draft's snapping, which moves every box a little,
+  so it hides how good the proposals were: of the 215 that survived, 168
+  overlap their final box at IoU 0.5 or more (71 at 0.7 or more), so OCR
+  found the keyword and the box only needed fixing; 47 changed more,
+  mostly a code's box extended over its value. Of the 126 added, 77 were
+  drawn by eye, 45 came from the second OCR pass and 4 from the owner. So
+  OCR found 63% of the final keywords (215 of 341), and missed mostly
+  times, dot-matrix and sideways stamps, small print and misspelled packs
+  (`BARTCH NO`).
+- **The export**: `label-studio export 3 JSON` with the server's settings,
+  as D5's; the full JSON export, not v1's JSON-MIN, as only it keeps
+  region ids (a departure, written down before the code). The import twice
+  gives the same `v1_keywords.json`, byte for byte.
+- **Details fixed while writing:** a prod word after "from date of" is a
+  shelf life's too (`24 MONTHS FROM DATE OF MANUFACTURE`; one first-pass
+  proposal dropped in the draft, `proposals.json` kept as made);
+  `propose_keywords.py` also saves OCR's lines (`lines.json`), which the
+  draft cuts boxes from; measuring the draft's help as well as OCR's was
+  dropped (owner's call).
+- **Only v1.** Every script lists v1's photos from its folders and checks
+  them against v1's frozen labels; nothing read `testset2/`. The committed
+  files were searched for every v1 and v2 photo name (and stem, 5
+  characters or more) and every design name: none in this slice's changes.
+- **Not checked:** whether the owner looked at the 60 photos left as
+  drafted (Label Studio keeps no record of a view; the owner said all 99
+  were done); how far the owner's boxes moved from Claude's draft (not
+  measured, owner's call); a sheet of the final boxes (only the draft's and
+  OCR's were looked at); the second OCR pass as a committed script; S6's
+  use of `added_dates`; the learnings guide (not written).
+
 ### S6. v1 as training and validation data · laptop, then the cluster
 
 **Goal:** v1-train and v1-val exported, checked, and on the cluster.
@@ -1499,7 +1596,16 @@ results/           m2b_detector.md, store_designs.md (committed; runs/ is not)
 - **More labelled store photos, and internet photos** (Open Pet Food Facts,
   CC BY-SA, licences checked): through S4 to S6's tools, into training,
   never v2. Arrivals after S10 wait for a later round, so runs stay
-  comparable.
+  comparable. **15 more store photos arrived on 2026-11-03** (HEIC, under
+  `data/store/`, not yet looked at): their own training-only set beside v1,
+  not added to it, so v1's frozen labels, designs and split stay as they
+  are (owner's OK); planned after S5, before S6's export.
+- **A dates-only arm**: the detector trained without the `due`, `prod` and
+  `code` classes, to measure whether they help or cost the `date` class
+  (asked by the owner in S5; every run so far has all four, M1 decision 2).
+  Only if dates turn out to be the bottleneck.
+- **Keyword boxes for new store photos** start from S5's tools: OCR's
+  proposals snapped to their ink, then a second OCR pass on the date area.
 - **A mask of the pack** for generated blocks (M2's Later).
 - **k-fold validation by design**, if v1-val proves too noisy.
 - **A full retrain** of `s` (or `m`) from COCO on gen-v2's whole mix with
