@@ -246,6 +246,15 @@ this repo.
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
   model weights on the login node before submitting a job.
+- **Copying store photos there** (M2b S6, 2026-11-04): the laptop's `rsync`
+  is macOS's openrsync (protocol 29; the cluster has rsync 3.1.3). It
+  refuses `--chmod=D700,F600`, accepts `--chmod=u=rwX,go=` but applies
+  nothing, and `-a` copies the laptop's permissions (755, 644), even onto a
+  folder made 700. So `chmod` on the cluster after every sync (folders 700,
+  files 600) and check with `find ... -perm /077`. The home folder is 700;
+  `~/bestbefore-data` is 775 and the umask 0002. The store export lives in
+  `~/bestbefore-data/store/`. A `du` over all of `~/bestbefore-data` (M2's
+  generated photos) ran over 5 minutes on the login node without finishing.
 - **CPUs:** compute nodes are Intel Xeon Gold 6442Y (x86-64); the laptop
   is arm64. With the same library versions, floating-point results still
   differ in their last bits, so generated photos match the laptop's
