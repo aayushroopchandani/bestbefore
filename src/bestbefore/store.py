@@ -1,11 +1,13 @@
-"""The store test sets: the retailer's photos, labelled by hand
-(docs/m0-data-and-test-set.md: Part B for v1, Part D for v2).
+"""The store sets: the retailer's photos, labelled by hand
+(docs/m0-data-and-test-set.md: Part B for v1, Part D for v2;
+docs/m2b-store-and-size.md, S5b, for v3).
 
 Each set is a `StoreSet`: its photo folders under `$STORE_PHOTOS_DIR`,
 where its files live and the hashes they were frozen with. Anything that
 lists or loads store photos takes one, so it always says which set it
-means. v1 (`V1`) is the test set M0 to M2 were measured on; v2 (`V2`),
-new photos, is the test set once store photos are trained on.
+means. v1 (`V1`) is the test set M0 to M2 were measured on, and M2b's
+training data; v2 (`V2`), new photos, is the test set once store photos are
+trained on; v3 (`V3`), more photos, is training data only, beside v1.
 
 The photos and their labels belong to the retailer. They stay in
 `$STORE_PHOTOS_DIR` and `data/store/` (gitignored); only counts and the
@@ -16,6 +18,9 @@ frozen file's hash go into git (decision 7).
                                written once by scripts/freeze_store_test_set.py (B3)
     data/store/v2/             v2's files, the same names, plus photos.json:
                                its photo list, frozen before labelling (D3)
+    data/store/v3/             v3's files, as v2's, its frozen labels named
+                               train_set.json, plus heic.json: the HEIC each
+                               photo was converted from (S5b)
 
 labels.json and test_set.json map a photo's path relative to
 `$STORE_PHOTOS_DIR` to its label:
@@ -62,6 +67,10 @@ TEST_SET_SHA256: str | None = "7b9a4043886c9f4fcb37cba339962261acaef19e2993f7fba
 # (D3, 2026-10-28), then its labels (D6, 2026-11-03). results/store_test_set_v2.md.
 PHOTOS_V2_SHA256: str | None = "8be1f9e9cb256625259c17b88a070a9a30e204c94a85ff4ad1cd498be1d6080c"
 TEST_SET_V2_SHA256: str | None = "f1fe6b8d1c953a100b2245c3a1401a82bcc6314796c814609ae05ad5ad4a74f0"
+# v3's, a training set (M2b S5b): its photo list before labelling, then its
+# labels. results/store_set_v3.md.
+PHOTOS_V3_SHA256: str | None = "8b279416fe0eb857e2027bd6035db11e15ced51206aa094e92d5ec4a59accd2c"
+LABELS_V3_SHA256: str | None = None
 # SHA-256 of data/store/designs.json, the pack design of every v1 and v2
 # photo, pasted in when it was frozen (M2b S4). results/store_designs.md.
 DESIGNS_SHA256: str | None = "fa888edb77c14123c5839044e7ac880aa8de2fc299ca0f8acdfd7376bc566f6e"
@@ -81,6 +90,9 @@ class StoreSet:
     photos_sha256: str | None = None
     # Import check 4: Scanify's ground truth covers v1's photos only.
     scanify_check: bool = False
+    # A set that is only ever trained on (v3): its frozen labels are
+    # train_set.json, so no file calls it a test set.
+    training: bool = False
 
     @property
     def export_path(self) -> Path:
@@ -92,7 +104,8 @@ class StoreSet:
 
     @property
     def test_set_path(self) -> Path:
-        return self.data_dir / "test_set.json"
+        """The frozen labels: test_set.json, or train_set.json for a training set."""
+        return self.data_dir / ("train_set.json" if self.training else "test_set.json")
 
     @property
     def photos_path(self) -> Path:
@@ -104,7 +117,9 @@ V1 = StoreSet("v1", ("samples1", "samples2", "samples3"), DATA_DIR, TEST_SET_SHA
               scanify_check=True)
 V2 = StoreSet("v2", ("testset2",), DATA_DIR / "v2", TEST_SET_V2_SHA256,
               photo_list=True, photos_sha256=PHOTOS_V2_SHA256)
-SETS = {s.version: s for s in (V1, V2)}
+V3 = StoreSet("v3", ("trainset3",), DATA_DIR / "v3", LABELS_V3_SHA256,
+              photo_list=True, photos_sha256=PHOTOS_V3_SHA256, training=True)
+SETS = {s.version: s for s in (V1, V2, V3)}
 
 _DATE = re.compile(r"(\d{4})-(\d{2})(?:-(\d{2}))?")
 
@@ -123,7 +138,7 @@ def photos_on_disk(store_set: StoreSet, root: Path | None = None) -> list[str]:
     root = root or store_photos_dir()
     missing = [f for f in store_set.folders if not (root / f).is_dir()]
     if missing:
-        raise FileNotFoundError(f"store test set {store_set.version}: no folder "
+        raise FileNotFoundError(f"store set {store_set.version}: no folder "
                                 f"{', '.join(missing)} in {root}")
     return sorted(p.relative_to(root).as_posix()
                   for folder in store_set.folders for p in (root / folder).iterdir()
@@ -193,9 +208,9 @@ def read_photo_list(store_set: StoreSet, root: Path | None = None) -> dict:
     shown unchanged: no photo added, removed or changed."""
     v = store_set.version
     if not store_set.photo_list:
-        raise ValueError(f"store test set {v} has no photo list of its own")
+        raise ValueError(f"store set {v} has no photo list of its own")
     if store_set.photos_sha256 is None:
-        raise RuntimeError(f"store test set {v}'s photo list isn't frozen yet: "
+        raise RuntimeError(f"store set {v}'s photo list isn't frozen yet: "
                            f"run scripts/freeze_store_test_set.py --version {v} --photos")
     data = store_set.photos_path.read_bytes()
     if hashlib.sha256(data).hexdigest() != store_set.photos_sha256:
@@ -207,7 +222,7 @@ def read_photo_list(store_set: StoreSet, root: Path | None = None) -> dict:
               "removed": sorted(set(listed) - on_disk),
               "changed": sorted(p for p in on_disk & set(listed) if sha256(root / p) != listed[p])}
     if any(differ.values()):
-        raise RuntimeError(f"store test set {v}'s photos differ from its frozen list: "
+        raise RuntimeError(f"store set {v}'s photos differ from its frozen list: "
                            + "; ".join(f"{what}: {', '.join(ps)}" for what, ps in differ.items() if ps))
     return photo_list
 
@@ -217,7 +232,7 @@ def read_frozen(store_set: StoreSet, root: Path | None = None) -> dict:
     unchanged and, for a set with a photo list, its photos are the list's."""
     v = store_set.version
     if store_set.test_set_sha256 is None:
-        raise RuntimeError(f"store test set {v} isn't frozen yet: "
+        raise RuntimeError(f"store set {v} isn't frozen yet: "
                            f"run scripts/freeze_store_test_set.py --version {v}")
     test_set = read_test_set(store_set.test_set_path, root, expected=store_set.test_set_sha256)
     if test_set["version"] != v:
@@ -225,7 +240,7 @@ def read_frozen(store_set: StoreSet, root: Path | None = None) -> dict:
     if store_set.photo_list:
         listed = read_photo_list(store_set, root)["photos"]
         if {p: label["sha256"] for p, label in test_set["photos"].items()} != listed:
-            raise RuntimeError(f"store test set {v}'s labelled photos aren't its frozen photo list")
+            raise RuntimeError(f"store set {v}'s labelled photos aren't its frozen photo list")
     return test_set
 
 

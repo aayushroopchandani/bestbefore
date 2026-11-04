@@ -1,5 +1,5 @@
-"""Freeze a store test set: the labels plus a SHA-256 of every photo (B3),
-and for v2, the photo list first (Part D).
+"""Freeze a store set: the labels plus a SHA-256 of every photo (B3), and
+from v2 on, the photo list first (Part D; v3, a training set, M2b S5b).
 
     python scripts/freeze_store_test_set.py --version v2 --photos   # D3: before labelling
     python scripts/freeze_store_test_set.py --version v2            # D6: once imported
@@ -8,8 +8,9 @@ and for v2, the photo list first (Part D).
 its SHA-256. Without it, the script writes the set's test_set.json: the
 labels plus each photo's SHA-256 (for v2, only when the labels cover
 exactly the frozen photo list, still unchanged). Neither file is
-committed. results/store_test_set.md (v1) or results/store_test_set_v2.md
-(committed: hashes and counts only) records what was frozen, and the
+committed. results/store_test_set.md (v1), results/store_test_set_v2.md
+or results/store_set_v3.md (committed: hashes and counts only) records what
+was frozen, and the
 script prints the line to paste into src/bestbefore/store.py. From then on
 every load checks the file and every photo against it.
 
@@ -31,7 +32,8 @@ from bestbefore.config import REPO_ROOT
 from bestbefore.tables import markdown_table
 
 SUMMARIES = {"v1": REPO_ROOT / "results" / "store_test_set.md",
-             "v2": REPO_ROOT / "results" / "store_test_set_v2.md"}
+             "v2": REPO_ROOT / "results" / "store_test_set_v2.md",
+             "v3": REPO_ROOT / "results" / "store_set_v3.md"}
 HISTORY = "## History\n\n"
 INTROS = {
     "v1": "# Store test set\n\n"
@@ -45,6 +47,12 @@ INTROS = {
           "and the labels never enter git. This file records what was frozen, so any\n"
           "change shows: `store.read_photo_list()` and `store.read_frozen()` refuse a\n"
           "file or photo that differs.\n\n",
+    "v3": "# Store set v3\n\n"
+          "More photos from the retailer's stores, training data only, beside store\n"
+          "set v1 ([plan](../docs/m2b-store-and-size.md), S5b); never a test set. The\n"
+          "photos and the labels never enter git. This file records what was frozen,\n"
+          "so any change shows: `store.read_photo_list()` and `store.read_frozen()`\n"
+          "refuse a file or photo that differs.\n\n",
 }
 
 
@@ -122,7 +130,8 @@ def freeze_labels(store_set: store.StoreSet, today: str, why: str | None) -> Non
     line = f"- **{v}** ({today}): {why or ('labels frozen.' if photo_list else 'first version.')}"
     summary_path.write_text(summary(store_set, history(summary_path) + [line],
                                     photo_list, test_set, digest))
-    constant = "TEST_SET_SHA256" if store_set is store.V1 else f"TEST_SET_{v.upper()}_SHA256"
+    constant = ("TEST_SET_SHA256" if store_set is store.V1 else
+                f"LABELS_{v.upper()}_SHA256" if store_set.training else f"TEST_SET_{v.upper()}_SHA256")
     print(f"froze {len(test_set['photos'])} photos as {v}: {store_set.test_set_path}")
     print(f"wrote {summary_path}")
     print(f'\nnow set, in src/bestbefore/store.py:\n{constant} = "{digest}"')

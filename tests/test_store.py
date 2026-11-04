@@ -118,13 +118,33 @@ def test_tag_counts():
 
 
 def test_v2_is_kept_apart_from_v1():
-    assert set(store.SETS) == {"v1", "v2"}
+    assert set(store.SETS) == {"v1", "v2", "v3"}
     assert not set(store.V1.folders) & set(store.V2.folders)
     v1_files = {store.V1.export_path, store.V1.labels_path, store.V1.test_set_path}
     v2_files = {store.V2.export_path, store.V2.labels_path, store.V2.test_set_path, store.V2.photos_path}
     assert not v1_files & v2_files and len(v2_files) == 4
     assert (store.V1.photo_list, store.V1.scanify_check) == (False, True)
     assert (store.V2.photo_list, store.V2.scanify_check) == (True, False)
+
+
+def test_v3_is_a_training_set_kept_apart_from_v1_and_v2():
+    folders = [set(s.folders) for s in store.SETS.values()]
+    assert store.V3.folders == ("trainset3",) and not any(a & b for a in folders for b in folders if a is not b)
+    v3_files = {store.V3.export_path, store.V3.labels_path, store.V3.test_set_path, store.V3.photos_path}
+    others = {getattr(s, f) for s in (store.V1, store.V2)
+              for f in ("export_path", "labels_path", "test_set_path", "photos_path")}
+    assert len(v3_files) == 4 and not v3_files & others
+    assert store.V3.test_set_path == store.DATA_DIR / "v3" / "train_set.json"
+    assert (store.V3.photo_list, store.V3.scanify_check, store.V3.training) == (True, False, True)
+    assert not store.V1.training and not store.V2.training
+
+
+def test_each_set_lists_only_its_own_folder(root):
+    for folder in ("samples1", "samples2", "samples3", "testset2", "trainset3"):
+        (root / folder).mkdir()
+        Image.new("RGB", (40, 20)).save(root / folder / f"{folder}-x.jpg")
+    assert store.photos_on_disk(store.V3, root) == ["trainset3/trainset3-x.jpg"]
+    assert "trainset3/trainset3-x.jpg" not in store.photos_on_disk(store.V1, root) + store.photos_on_disk(store.V2, root)
 
 
 @pytest.fixture
