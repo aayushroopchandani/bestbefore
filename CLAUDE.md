@@ -250,8 +250,12 @@ this repo.
   is macOS's openrsync (protocol 29; the cluster has rsync 3.1.3). It
   refuses `--chmod=D700,F600`, accepts `--chmod=u=rwX,go=` but applies
   nothing, and `-a` copies the laptop's permissions (755, 644), even onto a
-  folder made 700. So `chmod` on the cluster after every sync (folders 700,
-  files 600) and check with `find ... -perm /077`. The home folder is 700;
+  folder made 700. So make the laptop's copy owner-only first (folders
+  700, files 600): `-a` then carries that across, and nothing is open even
+  mid-sync (S6's second sync: 0 entries open after it). Still `chmod` on
+  the cluster after every sync and check with `find ... -perm /077`. A
+  re-export gives every file a new time, so rsync lists all 710 files but
+  sends only what changed (1 MB of 166 MB in 11 s). The home folder is 700;
   `~/bestbefore-data` is 775 and the umask 0002. The store export lives in
   `~/bestbefore-data/store/`. A `du` over all of `~/bestbefore-data` (M2's
   generated photos) ran over 5 minutes on the login node without finishing.
