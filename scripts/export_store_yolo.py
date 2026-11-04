@@ -9,8 +9,9 @@ labels and photos, their keyword boxes (with the dates S5's review added),
 the designs and both splits. It refuses to start while store set v2 isn't
 frozen, and refuses any v2 photo: v2 is the test set and never leaves the
 laptop. Every photo goes in upright, in sRGB, at most 1,600 px, as a
-numbered JPEG (v1-0001.jpg, v3-0001.jpg) without metadata; the training
-part also turned 90, 180 and 270 degrees; validation as it is:
+numbered JPEG (v1-0001.jpg, v3-0001.jpg) without metadata, any box under
+2 px across left out as a slip and counted; the training part also turned
+90, 180 and 270 degrees; validation as it is:
 
     $STORE_TRAIN_DIR/images/{train_0,train_90,train_180,train_270,val}/v1-0001.jpg
                      labels/.../v1-0001.txt     date, due, prod, code (yolo.CLASSES)
@@ -66,6 +67,9 @@ def export() -> None:
         print(f"{part} boxes per photo: " + ", ".join(f"{k} {n}" for k, n in c["boxes"][part].items())
               + "; dates: " + ", ".join(f"{k} {n}" for k, n in c["dates"][part].items()))
     print("worst: " + ", ".join(f"{k} {v}" for k, v in manifest["worst"].items()))
+    slips = {n: e["dropped"] for n, e in manifest["photos"].items() if e["dropped"]}
+    print(f"left out, under {store_train.MIN_BOX_PX:g} px across: "
+          + (", ".join(f"{n} {' '.join(labels)}" for n, labels in slips.items()) or "none"))
     print(f"wrote {len(manifest['files'])} files into {out}, the names map into {store_train.NAMES_PATH}")
     check(out)
 

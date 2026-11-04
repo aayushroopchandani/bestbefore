@@ -642,7 +642,7 @@ def test_names_are_numbers_and_the_names_map_stays_out_of_the_export(made_up):
     assert names["designs"] == {"d01": "BoxCo", "d02": "CanCo", "d03": "JarCo", "d04": "PouchCo"}
     assert names["manifest_sha256"] == store.sha256(made_up.out / "manifest.json")
     assert made_up.manifest["photos"]["v3-0001"] == {"part": "train", "design": "d04", "tag": "clean",
-                                                     "labels": ["expiry", "due"], "added_dates": 0}
+                                                     "labels": ["expiry", "due"], "added_dates": 0, "dropped": []}
 
 
 def test_the_names_map_may_not_go_inside_the_export(made_up, tmp_path):
@@ -700,6 +700,29 @@ def test_the_dates_a_review_added_are_dates(made_up, tmp_path):
     assert [b.label for b in derived.read_boxes(tmp_path / "store/images/val/v1-0002.jpg")] == ["date", "date", "due"]
     assert manifest["photos"]["v1-0002"]["labels"] == ["expiry", "other_date", "due"]
     assert manifest["counts"]["dates"]["val"] == {"expiry": 2, "mfg": 0, "other_date": 1, "added": 1}
+
+
+def test_a_box_under_2_px_across_is_left_out_and_counted(made_up, tmp_path):
+    """As v1's stray mfg box, 1.1 by 3.8 px on its exported photo (S6): out
+    of the label files, in the manifest's counts, and the frozen labels it
+    came from as they were."""
+    v1 = json.loads(json.dumps(made_up.sets["v1"]))
+    w, h = 1600, 1200                                    # samples2/b.jpg as exported
+    v1["labels"]["samples2/b.jpg"]["boxes"].append({"label": "mfg", "xyxy": [0.5, 0.5, 0.5 + 1.1 / w, 0.5 + 3.8 / h]})
+    v1["keywords"]["added_dates"]["samples2/b.jpg"] = [
+        {"label": "other_date", "xyxy": [0.1, 0.1, 0.1 + 3 / w, 0.1 + 1.5 / h]},      # a slip too
+        {"label": "other_date", "xyxy": [0.2, 0.2, 0.2 + 2.5 / w, 0.2 + 2.5 / h]}]    # small, but kept
+    frozen = json.dumps(v1["labels"])
+    plan = store_train.export_plan({**made_up.sets, "v1": v1}, made_up.designs, made_up.split)
+    manifest = store_train.write_export(plan, tmp_path / "store", {}, made_up.root, tmp_path / "names.json")
+    assert [b.label for b in derived.read_boxes(tmp_path / "store/images/val/v1-0002.jpg")] == ["date", "date", "due"]
+    entry = manifest["photos"]["v1-0002"]
+    assert (entry["labels"], entry["added_dates"], entry["dropped"]) == (["expiry", "other_date", "due"], 1,
+                                                                         ["mfg", "other_date"])
+    assert manifest["counts"]["dropped"] == {"train": {}, "val": {"mfg": 1, "other_date": 1}}
+    assert manifest["counts"]["dates"]["val"] == {"expiry": 2, "mfg": 0, "other_date": 1, "added": 1}
+    assert made_up.manifest["counts"]["dropped"] == {"train": {}, "val": {}}
+    assert json.dumps(v1["labels"]) == frozen
 
 
 def test_the_export_writes_only_into_an_empty_folder_and_the_same_bytes_every_time(made_up, tmp_path):

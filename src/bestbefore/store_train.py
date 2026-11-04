@@ -33,7 +33,7 @@ import random
 import re
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from urllib.parse import quote
@@ -583,6 +583,12 @@ BOX_TOLERANCE_PX = 0.01
 # v3; a 180-degree copy left unturned, a wrong turn, 3.4 to 99 (median 59;
 # the least on a photo 97% white). Measured in S6.
 TURN_NOISE = 2.0
+# A box under this across on its exported photo holds no print: a slip of
+# the pen, left out and counted (Ultralytics drops boxes of 2 px or less
+# after augmentation too). v1's frozen labels hold one, 1.1 by 3.8 px, the
+# only box under 7 px of 634 (S6); their file keeps it, as M0 to M2 were
+# scored on it.
+MIN_BOX_PX = 2.0
 
 
 @dataclass(frozen=True)
@@ -597,6 +603,7 @@ class ExportPhoto:
     tag: str
     boxes: tuple[Box, ...]      # store labels: its frozen dates, the dates its review added, its keywords
     added: int = 0              # how many of its dates its keyword review added (other_date)
+    dropped: tuple[str, ...] = ()   # the labels of its boxes under MIN_BOX_PX, left out (without_slips)
 
 
 def _box_problem(photo: str, b: dict) -> str | None:
@@ -688,6 +695,18 @@ def export_image(data: bytes) -> Image.Image:
     return shrink(to_srgb(load_upright(io.BytesIO(data)), icc))
 
 
+def without_slips(p: ExportPhoto, size: tuple[int, int]) -> ExportPhoto:
+    """`p` without its boxes under MIN_BOX_PX across on its exported photo
+    of `size`, their labels in `dropped`; an added date left out leaves the
+    count of added dates too."""
+    keep = [(x2 - x1) * size[0] >= MIN_BOX_PX and (y2 - y1) * size[1] >= MIN_BOX_PX
+            for x1, y1, x2, y2 in (b.xyxy for b in p.boxes)]
+    dates = sum(b.label in store.BOX_LABELS for b in p.boxes)     # the frozen ones, then the added ones
+    return replace(p, boxes=tuple(b for b, k in zip(p.boxes, keep) if k),
+                   added=sum(keep[dates - p.added:dates]),
+                   dropped=p.dropped + tuple(b.label for b, k in zip(p.boxes, keep) if not k))
+
+
 def turn_back_error(upright: Path, turned: Path, quarter: int) -> tuple[float, float]:
     """A turned copy against its upright copy, both as written: the mean
     absolute difference of their pixels once the turned one is turned back,
@@ -704,9 +723,9 @@ def turn_back_error(upright: Path, turned: Path, quarter: int) -> tuple[float, f
 
 
 def _counts(plan: list[ExportPhoto]) -> dict:
-    """Photos per set and part, images per folder, designs, boxes per class
-    and dates per label in each part (per photo: a training photo is in
-    every training folder too)."""
+    """Photos per set and part, images per folder, designs, boxes per class,
+    dates per label and the boxes left out as slips, by label, in each part
+    (per photo: a training photo is in every training folder too)."""
     of = {part: [p for p in plan if p.part == part] for part in FOLDERS}
     return {
         "photos": {v: {part: sum(p.name.startswith(f"{v}-") for p in of[part]) for part in FOLDERS}
@@ -718,6 +737,8 @@ def _counts(plan: list[ExportPhoto]) -> dict:
         "dates": {part: {**{label: sum(b.label == label for p in of[part] for b in p.boxes)
                             for label in store.BOX_LABELS},
                          "added": sum(p.added for p in of[part])} for part in FOLDERS},
+        "dropped": {part: dict(sorted(Counter(label for p in of[part] for label in p.dropped).items()))
+                    for part in FOLDERS},
     }
 
 
@@ -725,20 +746,24 @@ def write_export(plan: list[ExportPhoto], out: Path, sources: dict, root: Path,
                  names_path: Path = NAMES_PATH, made: str | None = None) -> dict:
     """Write the export into `out`, which must be empty or absent, and the
     names map into `names_path`, which must be outside it; returns the
-    manifest. Each file is read back and checked: its boxes against what was
-    meant, no EXIF (no turn, no GPS), and each turned copy, turned back,
-    against its upright copy. The manifest goes last, once all of it holds."""
+    manifest. A box under MIN_BOX_PX across is left out (without_slips).
+    Each file is read back and checked: its boxes against what was meant,
+    no EXIF (no turn, no GPS), and each turned copy, turned back, against
+    its upright copy. The manifest goes last, once all of it holds."""
     if out.exists() and any(out.iterdir()):
         raise SystemExit(f"{out} isn't empty: the export goes into an empty folder, "
                          "so no file of an earlier one stays")
     if names_path.resolve().is_relative_to(out.resolve()):
         raise SystemExit(f"{names_path} is inside {out}: the names map stays out of what goes to the cluster")
     worst = {"box_error_px": 0.0, "turn_back_mad": 0.0, "turn_back_box_px": 0.0}
+    exported = []
     for p in plan:
         data = (root / p.photo).read_bytes()
         if hashlib.sha256(data).hexdigest() != p.sha256:
             raise RuntimeError(f"{p.photo} has changed since it was frozen")
         image = export_image(data)
+        p = without_slips(p, image.size)
+        exported.append(p)
         boxes = [Box(YOLO_LABEL[b.label], b.xyxy) for b in p.boxes]
         written = {}
         for folder, quarter in FOLDERS[p.part].items():
@@ -760,7 +785,7 @@ def write_export(plan: list[ExportPhoto], out: Path, sources: dict, root: Path,
                 worst["turn_back_mad"] = max(worst["turn_back_mad"], mad)
                 worst["turn_back_box_px"] = max(worst["turn_back_box_px"], px)
     for part, name in LISTS.items():
-        lines = [f"./images/{folder}/{p.name}.jpg\n" for folder in FOLDERS[part] for p in plan if p.part == part]
+        lines = [f"./images/{folder}/{p.name}.jpg\n" for folder in FOLDERS[part] for p in exported if p.part == part]
         (out / name).write_text("".join(lines))
     files = {f.relative_to(out).as_posix(): store.sha256(f)
              for f in sorted(out.rglob("*")) if f.is_file()}
@@ -768,17 +793,19 @@ def write_export(plan: list[ExportPhoto], out: Path, sources: dict, root: Path,
         "made": made or date.today().isoformat(), **git_state(),
         "code_sha256": code_sha256(sys.modules[__name__], derived, images),
         "settings": {"max_side": MAX_SIDE, "resample": "PIL BOX", "colour": "sRGB",
-                     "jpeg_quality": derived.JPEG_QUALITY, "folders": FOLDERS, "lists": LISTS},
-        "sources": sources, "counts": _counts(plan), "worst": {k: round(v, 4) for k, v in worst.items()},
+                     "jpeg_quality": derived.JPEG_QUALITY, "folders": FOLDERS, "lists": LISTS,
+                     "min_box_px": MIN_BOX_PX},
+        "sources": sources, "counts": _counts(exported), "worst": {k: round(v, 4) for k, v in worst.items()},
         "photos": {p.name: {"part": p.part, "design": p.design, "tag": p.tag,
-                            "labels": [b.label for b in p.boxes], "added_dates": p.added} for p in plan},
+                            "labels": [b.label for b in p.boxes], "added_dates": p.added,
+                            "dropped": list(p.dropped)} for p in exported},
         "files": files,
     }
     text = json.dumps(manifest, indent=1, sort_keys=True) + "\n"
     names = {"made": manifest["made"], "export": str(out),
              "manifest_sha256": hashlib.sha256(text.encode()).hexdigest(),
-             "photos": {p.name: {"photo": p.photo, "sha256": p.sha256} for p in plan},
-             "designs": dict(sorted({p.design: p.design_name for p in plan}.items()))}
+             "photos": {p.name: {"photo": p.photo, "sha256": p.sha256} for p in exported},
+             "designs": dict(sorted({p.design: p.design_name for p in exported}.items()))}
     names_path.write_text(json.dumps(names, indent=1, sort_keys=True) + "\n")
     (out / MANIFEST).write_text(text)
     return manifest
