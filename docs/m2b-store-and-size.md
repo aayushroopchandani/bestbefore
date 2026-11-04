@@ -432,7 +432,15 @@ photo reviewed. v1's frozen label file doesn't change.
 - label lines: expiry, mfg and other dates as `date` (class 0), keyword
   boxes as their class; **(changed 2026-11-03, S5)** the 3 dates S5's review
   found unboxed in v1's frozen labels (`v1_keywords.json`'s `added_dates`)
-  as `date` too, so they aren't learned as background;
+  as `date` too, so they aren't learned as background **(4 since S6's
+  look at the export found one more, added in the same review)**;
+- **(added 2026-11-04, S6, after the export was looked at)** a box under
+  2 px across on its exported photo is left out, and counted (each photo's
+  `dropped` in the manifest): that small, it holds no print, so it's a slip
+  of the pen, and Ultralytics drops boxes of 2 px or less after
+  augmentation anyway. v1's frozen labels hold one (1.1 by 3.8 px, the
+  only box under 7 px of 634); their file keeps it, as M0 to M2 were
+  scored on it;
 - v1-train also at 90°, 180° and 270° (`derived.turn`); v1-val as it is;
 - lists of v1-train's exported photos (all 4 turns) and of v1-val's; each
   training run's design-balanced lines are built from the first by
