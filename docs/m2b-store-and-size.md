@@ -6,7 +6,8 @@ any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
 worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
 S10); S3 done 2026-11-03; S4 done 2026-11-03 (v2's labels frozen, pack
 designs frozen, v1 split: 25 expiries in validation); S5 done 2026-11-03
-(341 keyword boxes on v1, every photo reviewed). Next: S6.
+(341 keyword boxes on v1, every photo reviewed); S5b added 2026-11-04
+(15 more store photos as store set v3). Next: S5b.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -356,6 +357,7 @@ k-fold validation, `l` and `x`, a full retrain on gen-v2.
 |---|---|---|
 | v1, about 70% of its designs | **training**: turned 4 ways, design-balanced | laptop, cluster |
 | v1, the other 30% of designs | **validation** (`v1-val`): thresholds and every choice; never augmented, never trained on | laptop, cluster |
+| v3 (`trainset3/`, S5b), 15 photos | the same two roles: a design in v1 keeps its side, the rest split as v1 | laptop, cluster |
 | v2 (`testset2/`) | **test**, once, at the end | laptop only |
 | ExpDate train (real, synthetic), turned 90°/270° and 180° | training (replay) | both |
 | gen50k (M2), gen-v2 (new) | training (replay) | cluster (gen-v2's sample also on the laptop) |
@@ -414,6 +416,8 @@ photo reviewed. v1's frozen label file doesn't change.
 - every v1 photo upright (EXIF applied), shrunk to at most 1,600 px with
   an area filter, JPEG quality 95, named `v1-0001.jpg` on; the map back to
   photo names stays in `data/store/train/names.json`, on the laptop only;
+  **(changed 2026-11-04, S5b)** v3's photos the same way, `v3-0001.jpg` on,
+  with their dates, keyword boxes and v3's split;
 - label lines: expiry, mfg and other dates as `date` (class 0), keyword
   boxes as their class; **(changed 2026-11-03, S5)** the 3 dates S5's review
   found unboxed in v1's frozen labels (`v1_keywords.json`'s `added_dates`)
@@ -422,7 +426,7 @@ photo reviewed. v1's frozen label file doesn't change.
 - lists of v1-train's exported photos (all 4 turns) and of v1-val's; each
   training run's design-balanced lines are built from the first by
   `m2b.mix()`; a manifest with the counts and the hashes of the design,
-  keyword and label files;
+  keyword and label files (v1's and v3's);
 - it refuses a v2 photo, and refuses to run while `TEST_SET_V2_SHA256` is
   unset.
 
@@ -722,15 +726,16 @@ Once, on the laptop's CPU, after R3 and R4:
 src/bestbefore/
   chain.py          the GPU chain's machinery, from m2_chain.py (S2)
   m2b.py            layout, sizes, step-1 and step-2 arms, the mix, the recipe, rules R1–R4
-  store_train.py    designs, the v1 split, keyword boxes, the YOLO export (S4–S6)
+  store_train.py    designs, the v1 and v3 splits, keyword boxes, the YOLO export (S4–S6)
   ensemble.py       weighted boxes fusion, test-time rotation (S13)
   m2b_results.py    the tables (S11 on)
   synth/            spec.py (V2Spec, GEN_V2, SYNTH_VAL_V2), text.py, render.py, warp.py,
                     compose.py, make.py, batch.py: v2's features, off for M2's spec (S7–S9)
-  detection_eval.py average_precision (S13); store.py: DESIGNS_SHA256 (S4)
+  detection_eval.py average_precision (S13); store.py: DESIGNS_SHA256 (S4), V3 (S5b)
 scripts/
   m2b_chain.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
-  import_store_keywords.py, store_designs.py, store_sizes.py
+  draft_keywords.py, import_store_keywords.py, store_designs.py, store_heic.py,
+  store_sizes.py
   changed: train_detector.py (--milestone m2b), score_suite.py (--suite m2b),
   eval_detector.py (store-v2, m2b runs, add-ons), generate.py, derive_sets.py,
   fetch_pretrained.py (yolo11m), pull_cluster_results.sh (m2b runs)
@@ -1267,9 +1272,97 @@ tests pass (558 before). What was found:
   OCR's were looked at); the second OCR pass as a committed script; S6's
   use of `added_dates`; the learnings guide (not written).
 
+### S5b. Store set v3: 15 more store photos · laptop, owner in Label Studio
+
+Added 2026-11-04, before any code (owner's OK): 15 store photos arrived on
+2026-11-03, HEIC, 4,032 × 3,024, under `data/store/NewExtraStoreData/`.
+None has a v1 or v2 photo's name; none reports an EXIF turn (`sips`), but
+a HEIC can keep its turn in its own container, so S5b checks uprightness
+after converting.
+
+**Goal:** the 15 as **store set v3**, training data like v1: labelled,
+design ids, split by design and keyword boxes, every file frozen, before
+S6 exports them with v1.
+
+**Decisions** (all new; v1's and v2's files don't change; 6 widens what
+v1-train and v1-val mean):
+
+1. **Their own set, not v1.** v1's labels (`7b9a4043…`), designs
+   (`fa888edb…`) and split (`4418c65b…`) are frozen, and M0 to M2's tables
+   rest on v1's. v3 is a third `StoreSet`: folder `trainset3/` under
+   `$STORE_PHOTOS_DIR`, files in `data/store/v3/`, its own hashes. Its name
+   says its role, as `testset2/` does.
+2. **Converted once, to JPEG at quality 95, with `sips`** (macOS's own, no
+   new dependency); the JPEGs are v3's photos from then on, never
+   re-encoded. `data/store/v3/heic.json` maps each HEIC's SHA-256 to its
+   JPEG's, so the conversion stays traceable. `trainset3/` goes into
+   Scanify's `.git/info/exclude`, as `testset2/` did (M0 D1).
+3. **Frozen twice, as v2:** the photo list before labelling, the labels
+   after (`freeze_store_test_set.py --version v3`; its summary
+   `results/store_set_v3.md`, as v3 is no test set).
+4. **Labelled by M0's B1**, in a Label Studio project `Store set v3` with
+   v1's interface and settings. B2's checks 1 to 3, 5 and 6 (4 is v1's
+   only), and the small-print rule.
+5. **Design ids in a file of their own**, `data/store/designs_v3.csv` →
+   `designs_v3.json` (`DESIGNS_V3_SHA256`), named by S4's rule and, for a
+   pack already in v1 or v2, with exactly that id; `designs.json` stays as
+   frozen. Claude drafts them from the photos, the owner approves (as S4).
+   The freeze refuses an id that differs from a v1 or v2 id only in case
+   or spaces.
+6. **The split: a known design keeps its side.** A v3 photo whose design
+   is in v1 goes where that design is (train or val); every other v3
+   design is split by S4's rule among v3's own (30% to validation by tag,
+   seed 0). v1's split is unchanged (`SPLIT_SHA256`); v3's gets
+   `SPLIT_V3_SHA256`. **From here, v1-train and v1-val, as this plan
+   names them, hold v3's parts too**: the store lines, the thresholds,
+   v1-val's scores and S8's sizes. No M2b run has been scored on v1-val
+   yet, so the larger validation set costs no comparison.
+7. **A design v2 also has** becomes "seen in training" in S14's report.
+   Allowed (v2 shaped nothing); S5b counts it in `results/store_designs.md`.
+8. **Keyword boxes by S5's tools**, which take the set (`--version
+   v1|v3`): OCR's proposals, Claude's draft, the owner's review, the same
+   checks, `data/store/v3/keywords.json`. A second project, `Store v3
+   keywords`, as the dates must be frozen first (they're the reference
+   layer and the snapping stops at them).
+
+**Steps:**
+
+1. `scripts/store_heic.py`: the 15 converted into `trainset3/`, `heic.json`
+   written; `store.V3`; `freeze_store_test_set.py --version v3 --photos`.
+2. Look: a contact sheet of the 15 upright (`load_upright`), to see each
+   is the right way up; Label Studio's drawn size against `upright_size`
+   (B2 check 5) confirms it once labelled.
+3. Label Studio: project `Store set v3`, storage `trainset3`, 15 tasks.
+   Owner labels by B1 (about 30 minutes), exports JSON-MIN to
+   `data/store/v3/label_studio_export.json`.
+4. `import_store_labels.py --version v3`, then
+   `freeze_store_test_set.py --version v3`.
+5. Design ids: Claude drafts `designs_v3.csv`, owner approves;
+   `store_designs.py --version v3 --freeze`; the split and its counts into
+   `results/store_designs.md` (v1's rows unchanged).
+6. Keyword boxes: `propose_keywords.py`, `draft_keywords.py`,
+   `import_store_keywords.py`, each `--version v3`; owner reviews 15 in
+   `Store v3 keywords`.
+
+**Tests** (made-up names): `V3` lists only `trainset3/`, and none of v1's
+or v2's sets lists it; a v3 photo can't enter v1's split, nor a v2 photo
+v3's; v1's split hashes as before; a known design takes its v1 side; the
+v3 design freeze refuses a missing or doubled photo and an id typed two
+ways across files; the keyword tools refuse a v2 photo; v1's keyword file
+rebuilds byte for byte with `--version v1`.
+**Check:** 15 photos, every file frozen and loading with its hash; v1's
+`labels.json`, `designs.json`, split and `v1_keywords.json` byte-identical
+before and after; Label Studio's v1, v2 and `Store v1 keywords` projects
+unchanged (fingerprints, as S5); no photo or design name in a committed
+file (searched).
+**Commits:** `feat: store set v3, 15 more photos converted and listed`,
+`feat: store set v3 labelled, its designs and split frozen`,
+`feat: keyword boxes on store set v3`
+
 ### S6. v1 as training and validation data · laptop, then the cluster
 
-**Goal:** v1-train and v1-val exported, checked, and on the cluster.
+**Goal:** v1-train and v1-val exported, checked, and on the cluster
+(v3's parts with them, from S5b).
 
 - `scripts/export_store_yolo.py` as in [The export](#the-export);
   `m2b.store_lines()` (design-balanced) used by the mix.
@@ -1313,7 +1406,8 @@ distractors.
 ### S8. Generator v2, part 2: print and geometry · laptop
 
 **Goal:** nozzle rows, the laser window, upside-down blocks, worn patches
-and sizes like the store's. Needs S4's split: the sizes come from v1-train.
+and sizes like the store's. Needs S4's and S5b's splits: the sizes come
+from v1-train, v3's training part included.
 
 - `synth/render.py`: nozzle rows in dotify; the `window` style.
 - `synth/warp.py`: the upside-down orientation (`numpy.rot90`, k=2).
@@ -1465,10 +1559,10 @@ As in [Report](#report); the plan's status, measured compute and Later.
 S1 ─► jobs A, B held (done)
 S2 ─► release A ─► [GPU: smoke, s1280 ×3, m1280 s0, M2-suite scores]
 S3 (any time)
-S4 ─┬─► S5 ─► S6 ─► [rsync v1 to the cluster] ──────────────────┐
+S4 ─┬─► S5 ─► S5b ─► S6 ─► [rsync v1 and v3 to the cluster] ────┐
     │                                                           │
 S7 ─┴─► S8 ─► S9 ─► [CPU job: gen-v2, synth-val-v2, 180° sets] ─┤
-        (S8's sizes need S4's split)                            │
+        (S8's sizes need S4's and S5b's splits)                 │
                                            S10 ─► release B ─────┴─► [GPU: controls and step-1 runs on the M2b suite,
                                                                        n step 2 ×9 → R2, s step 2 ×3, m by R1 → R3]
                                            S11 ─► S12 ─► S13 ─► S14 ─► S15
@@ -1478,7 +1572,8 @@ S7 ─┴─► S8 ─► S9 ─► [CPU job: gen-v2, synth-val-v2, 180° sets] 
 |---|---|---|
 | 1 | S2, S3 | job A released |
 | 2 | S4, S5 (with the owner) | designs frozen, keyword boxes in |
-| 3 | S6, S7 | v1 on the cluster, gen-v2's text |
+| 2b | S5b (with the owner) | store set v3 frozen, its keyword boxes in |
+| 3 | S6, S7 | v1 and v3 on the cluster, gen-v2's text |
 | 4 | S8, S9 | the generation job done |
 | 5 | S10 | job B released |
 | 6 | S11, S12 | R2 and R3 |
@@ -1536,14 +1631,16 @@ docs/              m2b-store-and-size.md; datasets.md gains gen-v2 and the store
 src/bestbefore/    chain.py, m2b.py, store_train.py, ensemble.py, m2b_results.py;
                    changed: synth/{spec,text,render,warp,compose,make,batch}.py, detection_eval.py, store.py
 scripts/           m2b_chain.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
-                   import_store_keywords.py, store_designs.py, store_sizes.py; changed: train_detector.py,
+                   draft_keywords.py, import_store_keywords.py, store_designs.py, store_heic.py,
+                   store_sizes.py; changed: train_detector.py, import_store_labels.py,
+                   freeze_store_test_set.py (v3),
                    score_suite.py, eval_detector.py, generate.py, derive_sets.py,
                    fetch_pretrained.py, pull_cluster_results.sh, m2_chain.py (on chain.py)
 slurm/             m2b_gpu.sbatch, m2b_chain.sh, m2b_generate.sbatch
 experiments/       m2b-store-look/, m2b-model-size/, m2b-fine-tune/, m2b-gen-v2/, m2b-inference/
 tests/             test_chain.py, test_m2b_rules.py, test_store_train.py, test_synth_v2.py,
                    test_ensemble.py, test_m2b_results.py
-results/           m2b_detector.md, store_designs.md (committed; runs/ is not)
+results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed; runs/ is not)
 ```
 
 ## Risks
@@ -1599,7 +1696,7 @@ results/           m2b_detector.md, store_designs.md (committed; runs/ is not)
   comparable. **15 more store photos arrived on 2026-11-03** (HEIC, under
   `data/store/`, not yet looked at): their own training-only set beside v1,
   not added to it, so v1's frozen labels, designs and split stay as they
-  are (owner's OK); planned after S5, before S6's export.
+  are (owner's OK); planned as store set v3 in S5b, before S6's export.
 - **A dates-only arm**: the detector trained without the `due`, `prod` and
   `code` classes, to measure whether they help or cost the `date` class
   (asked by the owner in S5; every run so far has all four, M1 decision 2).
