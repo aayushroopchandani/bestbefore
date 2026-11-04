@@ -8,7 +8,9 @@ S10); S3 done 2026-11-03; S4 done 2026-11-03 (v2's labels frozen, pack
 designs frozen, v1 split: 25 expiries in validation); S5 done 2026-11-03
 (341 keyword boxes on v1, every photo reviewed); S5b added 2026-11-04
 (15 more store photos as store set v3); S5b done 2026-11-04 (v3 frozen:
-10 photos train, 5 validate, 61 keyword boxes). Next: S6.
+10 photos train, 5 validate, 61 keyword boxes); S6 done 2026-11-04 (v1
+and v3 exported, 80 photos train in 4 turns, 34 validate, on the cluster
+and checked; 3 label problems found, left for the owner). Next: S7.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -1479,6 +1481,144 @@ before). The first two commits each pass the suite on their own (604,
 **Check:** label files byte-identical on both machines; counts as the
 manifest's.
 **Commits:** `feat: store set v1 exported for training, upright, numbered and turned`
+
+**Done 2026-11-04.** `scripts/export_store_yolo.py` wrote store sets v1
+and v3 into `$STORE_TRAIN_DIR` in 17 s on the laptop's CPU, from code
+`9b42b28` with a clean tree: 80 photos train in 4 turns (320 images), 34
+validate, 710 files and the manifest, 160 MB. The copy in
+`~/bestbefore-data/store/` (folders 700, files 600) is byte-identical,
+file by file. 627 tests pass (611 before). What was found:
+
+- **S4 to S5b were done**, checked first: v1's labels (`7b9a4043…`,
+  every photo hashed), v3's photo list and labels, `designs.json` (typed
+  against the frozen v1 and v2 labels) and `designs_v3.json`, both splits
+  (`4418c65b…`, `edd2c25c…`) and both keyword files (341 boxes and 3 added
+  dates; 61 boxes) load with their hashes. v2 was checked frozen by
+  hashing its two JSON files only; no v2 photo was opened, here or by the
+  export.
+- **The export** (`store_train.export_plan` and `write_export`; [The
+  export](#the-export), changed before it ran): each photo decoded from the
+  bytes its frozen hash names, upright, in sRGB, shrunk with PIL's BOX
+  filter to at most 1,600 px (the 63 photos of 4,032 px: 48 of v1's, all
+  of v3's; v1's other 51, 1,599 or 1,600 px, keep their size), saved at
+  quality 95 without metadata and numbered by set in photo order (`v1-0001`
+  to `v1-0099`, `v3-0001` to `v3-0015`). Every expiry, mfg and other date
+  is a `date` box (S5's 3 added dates too), every keyword box keeps its
+  class. Folders `images/{train_0,train_90,train_180,train_270,val}/` and
+  their `labels/`; `train.txt` and `val.txt` hold `./images/…` lines, valid
+  on both machines as they are (Ultralytics replaces every `./` in a line,
+  so the lists sit at the export's root, where that prefix is the only
+  one); designs are `d01` to `d47`.
+- **Counts** (the manifest's): v1 70 photos train and 29 validate, v3 10
+  and 5; 31 designs train and 16 validate, none on both sides. Per photo,
+  training holds 169 dates (64 expiries, 75 mfg, 30 other, 2 of them
+  added) and 92 `due`, 138 `prod` and 82 `code` boxes; validation 63 dates
+  (29, 31, 3, 1 added) and 31, 34 and 25. These are the frozen files'
+  counts (64 and 29 expiries, as S5b had them).
+- **Boxes stay on their print.** The tests use made-up phone photos (a red
+  date and a blue keyword off-centre, stored with 7 of EXIF's 8 flags,
+  mirrors included, bigger than 1,600 px): every box covers its colour
+  within 2 px after the EXIF turn, the shrink and each turn. On the real
+  export every box reads back within 0.0008 px of where it was meant; each
+  turned copy, turned back, matches its upright copy within 1.19 grey
+  levels (mean absolute difference) and its boxes within 0.0016 px; every
+  photo's size is its upright size shrunk by the rule; and each v1 photo
+  matches its source, upright and shrunk, within 0.10 to 1.65 grey levels
+  (JPEG's re-encoding).
+- **Uprightness: v3 as S5b checked it, and further.** B2's check 5 again:
+  every date box of v1 and v3 (drawn on 92 and 15 photos) and every region
+  of both keyword projects (543 and 91) was drawn on the upright frame.
+  That check can't see a half turn, which keeps width and height, so v3's
+  HEICs were read as well: each one's own rotation (its `irot` box, no
+  `imir`) agrees with its JPEG's EXIF flag (13 quarter turns, 1 half, 1
+  none), so `sips` turned nothing. Two v3 photos show their pack upside
+  down: the packs were held that way, both tagged sideways, their boxes on
+  their print (S5b's sheet found all 15 the right way up, true of the
+  camera, not of these two packs).
+- **Colour and metadata.** v3's 15 photos are Display P3 (v1's carry no
+  profile). Put into sRGB (relative colorimetric), they change by 0.9 to
+  8.1 grey levels on average and by up to 62 in saturated colours (99th
+  percentile of the largest channel change). 20 of v1's photos carry a GPS
+  position in their EXIF. Pillow 12.3 writes no EXIF or colour profile
+  unless asked, and the export checks that every file it writes has no
+  EXIF, so no copy holds a turn, a GPS position or a camera's name. OpenCV,
+  which Ultralytics reads with, gets the same pixels as PIL (a test).
+- **Ultralytics reads it** (8.4.177, on a scratch copy, as its label cache
+  goes beside the labels): `train.txt` 320 images, 0 corrupt, 1,924 boxes
+  (4 times the per-photo counts); `val.txt` 34 images, 0 corrupt, 153
+  boxes, 2 photos without one (bottle fronts). On the cluster that cache
+  will land in `~/bestbefore-data/store/labels/`; the copy check ignores it.
+- **The turn check's band** (`TURN_NOISE`): a right turn scores at most
+  1.19; a wrong one (a 180° copy left unturned) 3.4 to 99, median 59, the
+  least on a photo that is 97% white. The band was 3.0 for the first run;
+  it is 2.0 from this measurement, and the export was run again: its 710
+  files are byte-identical to the first run's, only the manifest's commit
+  and code hash changed.
+- **Every photo looked at, box by box** (29 sheets of photos with each box
+  enlarged and 6 sheets of the 80 training photos in their 4 turns, in
+  `data/store/runs/`, drawn from the export's own files; Claude, as allowed
+  since 2026-10-28): every box on all 114 photos and 240 turned copies
+  sits where its label puts it. **Three label problems** came up, all in
+  files the export reads, none made by it; they are listed by export
+  number in `data/store/export_review.md`, on the laptop only:
+  - a dot-matrix import date on a jar base has no date box, neither in
+    v1's frozen labels nor among S5's added dates, so it would be learned
+    as background (the same design's 5 other jar bases have theirs boxed);
+  - one `prod` box sits on a shelf life (`… from Mfg. Dt.`), against S5's
+    box rule and the same design's other photos;
+  - v1's frozen labels hold one stray `mfg` box of 1.1 by 3.8 px beside
+    the real one: the only box under 7 px of 634. Ultralytics drops boxes
+    under 2 px after augmentation, but S8's date sizes would count it.
+
+  Minor: times, and batch values printed apart from their label, are boxed
+  `code` on some photos and not on others. **None is fixed.** The first two
+  are S5's review, fixed in its project and imported again; the third is in
+  v1's frozen labels, which S5's checks keep as they are (a revision is M0
+  Part D's Later). The owner decides; any fix means exporting and copying
+  again, seconds each.
+- **The store lines** (`m2b.store_lines`, fed by `m2b.store_pool`): at the
+  plan's 5,000 lines (20% of 25,000) each of the 31 training designs gets
+  161, 4,991 in all, and a photo in one turn appears 3 to 41 times an
+  epoch. 18 of the 31 designs have one photo, so 18 photos fill 2,898
+  lines, 11.6% of every epoch, 161 lines each (about 1,650 over the
+  fine-tuning budget, augmented); the largest design's 13 photos get 12 to
+  16 each. That is decision 7 as written; S10 may cap it (nothing changed
+  here).
+- **On the cluster.** `~/bestbefore-data/store/` was made with `mkdir -m
+  700`, then rsync sent 710 files, 166 MB, in 11 s, and the manifest last.
+  **The laptop's rsync is macOS's openrsync** (protocol 29): it refuses
+  `--chmod=D700,F600`, accepts `--chmod=u=rwX,go=` but applies nothing, and
+  `-a` copied the laptop folder's 755 onto the folder made 700. So 724
+  entries were readable by others for under two minutes, until `chmod`
+  (folders 700, files 600; none with a group or other bit since). Nothing
+  was reachable meanwhile: the home folder is 700. Then the manifest's
+  SHA-256 was the same on both machines; `check_export`, its source run
+  with the cluster's Python 3.11 as a test runs it, found 0 problems over
+  710 files; all 711 files are byte-identical by SHA-256, the 354 label
+  files among them; the image counts are the manifest's; no names map is
+  there. M2's folders kept their times (checkpoints, ExpDate, generated);
+  jobs A (`73831`, pending) and B (`73832`, held) were not touched;
+  nothing was pulled back.
+- **Details fixed while writing:** the names map outside the export, in
+  `data/store/train_names.json` (a departure written down before the
+  export ran, [The export](#the-export)); sRGB and no metadata (added
+  there); the manifest also holds each photo's part, design number, tag
+  and box labels in label-file order, and every file's SHA-256; the export
+  writes into an empty folder only and refuses a photo changed since its
+  freeze; it refuses to start while v2's photo list or labels hash is
+  unset, and checks that `designs.json` was typed against v2's frozen
+  labels, comparing hashes held in code and in that file, opening no v2
+  file; `check_export` uses only the standard library, so its source runs
+  where the package isn't installed (the cluster's checkout is still
+  `2b68e2e`, not pulled, as job A waits on it).
+- **Photo names.** The changes were searched for every v1, v2 and v3 photo
+  name (and stem, 5 characters or more), the HEIC names, every design id
+  and every word of one: none (5 common words, such as "pack", match).
+- **Not checked:** training on the export (S10); `m2b.mix()`, and the
+  cluster's `.env`, which has no `STORE_TRAIN_DIR` yet (S10);
+  `scripts/export_store_yolo.py --check` on the cluster as a script (its
+  function's source ran there); whether every keyword is boxed (only the
+  uneven cases seen are noted); the learnings guide (not written).
 
 ### S7. Generator v2, part 1: text and layout · laptop
 
