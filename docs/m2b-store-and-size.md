@@ -10,7 +10,8 @@ designs frozen, v1 split: 25 expiries in validation); S5 done 2026-11-03
 (15 more store photos as store set v3); S5b done 2026-11-04 (v3 frozen:
 10 photos train, 5 validate, 61 keyword boxes); S6 done 2026-11-04 (v1
 and v3 exported, 80 photos train in 4 turns, 34 validate, on the cluster
-and checked; 3 label problems found, left for the owner). Next: S7.
+and checked; 3 label problems found, then fixed at the owner's word, and
+exported and copied again). Next: S7.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -1262,6 +1263,10 @@ tests pass (558 before). What was found:
   changed). A revision of v1's labels (M0 Part D, Later) would carry them.
 - **The keyword boxes**: `due` 106 on 93 photos, `prod` 147 on 92, `code`
   88 on 76. 3 photos have none (no keyword in frame).
+  **(changed 2026-11-04, S6)** S6's look at the export fixed this review
+  in its project: a `prod` box on a shelf life deleted, a fourth missed
+  date added and the keyword box beside it trimmed. Now 340 keyword boxes
+  (`prod` 146) and 4 added dates; OCR's help below, added 125.
 - **OCR's help**, by region id (Label Studio keeps a predicted region's id
   in the annotation made from it), OCR's 218 proposals against the final
   boxes: **kept 1, moved 214, deleted 3, added 126**, no label changed.
@@ -1522,7 +1527,8 @@ file by file. 627 tests pass (611 before). What was found:
   training holds 169 dates (64 expiries, 75 mfg, 30 other, 2 of them
   added) and 92 `due`, 138 `prod` and 82 `code` boxes; validation 63 dates
   (29, 31, 3, 1 added) and 31, 34 and 25. These are the frozen files'
-  counts (64 and 29 expiries, as S5b had them).
+  counts (64 and 29 expiries, as S5b had them). After the fixes below,
+  training holds 74 mfg, 31 other (3 added) and 137 `prod`.
 - **Boxes stay on their print.** The tests use made-up phone photos (a red
   date and a blue keyword off-centre, stored with 7 of EXIF's 8 flags,
   mirrors included, bigger than 1,600 px): every box covers its colour
@@ -1579,11 +1585,52 @@ file by file. 627 tests pass (611 before). What was found:
     under 2 px after augmentation, but S8's date sizes would count it.
 
   Minor: times, and batch values printed apart from their label, are boxed
-  `code` on some photos and not on others. **None is fixed.** The first two
-  are S5's review, fixed in its project and imported again; the third is in
-  v1's frozen labels, which S5's checks keep as they are (a revision is M0
-  Part D's Later). The owner decides; any fix means exporting and copying
-  again, seconds each.
+  `code` on some photos and not on others. **None was fixed in the first
+  export.** The first two are S5's review, fixed in its project and
+  imported again; the third is in v1's frozen labels, which S5's checks
+  keep as they are (a revision is M0 Part D's Later). The owner decides;
+  any fix means exporting and copying again, seconds each.
+- **The three fixed, at the owner's word** (the same day). The owner
+  signed in to Label Studio in the browser pane; Claude made the edits
+  through its API, as in S5, with the database backed up to
+  `data/store/backups/` first and all 5 projects fingerprinted before the
+  first write and after the last. Only the two photos' annotations in
+  `Store v1 keywords` changed (and their tasks' times and the project's
+  label summary); no draft is left.
+  - The import date: an `other_date` box in the date layer, as S5's added
+    dates, drawn on the full-size photo 3 px outside its ink (measured
+    column by column). Its `IMPORT MONTH:` box, drawn by eye in Claude's
+    S5 draft, ran over the date's first digit, as no date box stopped it;
+    it now ends after its colon. A fourth date the frozen labels miss.
+  - The shelf life's `prod` box, one the owner drew in S5's review, is
+    deleted.
+  - The stray box is left out by the export: any box under 2 px across on
+    its exported photo, counted ([The export](#the-export), changed before
+    the code). A revision of v1's labels would change the hash that
+    `designs.json`, the keyword file and both splits are checked against,
+    for one box of a pixel. v1's frozen file keeps it; it is the only box
+    left out. A test covers the rule (a slip among the frozen dates and
+    one among the added ones; 628 tests pass, 627 before).
+  - **The import**: all four checks pass; `v1_keywords.json` differs from
+    S5's in exactly those boxes, and the import twice gives the same bytes:
+    340 keyword boxes (`prod` 146) and 4 added dates. OCR's help: added
+    125, so OCR found 215 of the final 340 keywords (63%).
+  - **The export again**, from `eae913c` with a clean tree: all 354
+    images and both lists byte-identical to the first export; 12 label
+    files changed, the three photos' in each of the 4 turns, as the edits
+    say; the box and turn checks as before (worst 0.0008 px, 1.19 grey
+    levels). The three photos and their turned copies were looked at:
+    every box on its print, the import date's box tight on its digits.
+  - **On the cluster**: the laptop's copy was made owner-only (folders
+    700, files 600) before rsync, so `-a` carried that across: no entry was
+    open to others at any time (0 after the sync, 0 after `chmod`).
+    `check_export` found 0 problems over 710 files; all 711 files are
+    byte-identical by SHA-256, the 354 label files among them. Jobs A and B
+    untouched; nothing pulled back. Label Studio was stopped afterwards,
+    its projects as after the edits. The first export's copy on the laptop
+    was deleted, once compared.
+  - Not fixed: the minor uneven keyword boxes above (the owner asked for
+    the three).
 - **The store lines** (`m2b.store_lines`, fed by `m2b.store_pool`): at the
   plan's 5,000 lines (20% of 25,000) each of the 31 training designs gets
   161, 4,991 in all, and a photo in one turn appears 3 to 41 times an
