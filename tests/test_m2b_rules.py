@@ -2,6 +2,7 @@
 M2's gen-rot-1280 with other weights, and the control is M2's runs as they
 are. Against M2's own code and records, on made-up lists and runs."""
 import json
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -393,3 +394,39 @@ def test_the_job_script_runs_this_chain(load_script):
         assert line in sbatch
     assert chain_sh.rstrip().endswith("python scripts/m2b_chain.py")
     assert "export YOLO_OFFLINE=1" in chain_sh and "module load Python/3.11.11" in chain_sh
+
+
+# --- The store lines (decision 7, S6) ------------------------------------------------
+
+def made_up_pool(photos_per_design: dict[str, int]) -> tuple[list[Path], dict[str, str]]:
+    """A training list as the export writes it: each photo in its 4 turns."""
+    names = {f"v1-{k:04d}": d for k, d in enumerate(
+        (d for d, n in photos_per_design.items() for _ in range(n)), start=1)}
+    folders = ("train_0", "train_90", "train_180", "train_270")
+    return [Path(f"/store/images/{f}/{n}.jpg") for f in folders for n in names], names
+
+
+def test_store_lines_give_each_design_the_same_count():
+    images, designs = made_up_pool({"d01": 1, "d02": 10, "d03": 3})
+    lines = m2b.store_lines(images, designs, 5_000, seed=0)
+    per_design = Counter(designs[p.stem] for p in lines)
+    assert per_design == {"d01": 1667, "d02": 1667, "d03": 1667}     # 5,000 / 3, rounded half up
+    for d, n in {"d01": 1, "d02": 10, "d03": 3}.items():
+        copies = Counter(p for p in lines if designs[p.stem] == d)
+        assert len(copies) == 4 * n                                    # every photo, in all 4 turns
+        assert max(copies.values()) - min(copies.values()) <= 1        # as even as can be
+    assert m2b.store_lines(images, designs, 5_000, seed=0) == lines    # the same seed, the same lines
+    assert m2b.store_lines(images, designs, 5_000, seed=1) != lines    # another seed, other extras
+    assert len(m2b.store_lines(*made_up_pool({"a": 2, "b": 5}), 5, seed=0)) == 6    # 2.5 rounds up to 3
+
+
+def test_the_store_pool_is_the_exports_training_list_and_designs(tmp_path):
+    images, designs = made_up_pool({"d01": 1, "d02": 2})
+    (tmp_path / "train.txt").write_text("".join(f"./images/{p.parent.name}/{p.name}\n" for p in images))
+    manifest = {"settings": {"lists": {"train": "train.txt", "val": "val.txt"}},
+                "photos": {**{n: {"part": "train", "design": d} for n, d in designs.items()},
+                           "v1-0009": {"part": "val", "design": "d07"}}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    pool, found = m2b.store_pool(tmp_path)
+    assert pool == [tmp_path / "images" / p.parent.name / p.name for p in images]
+    assert found == designs                                        # validation photos are no part of it

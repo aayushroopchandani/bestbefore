@@ -1,8 +1,15 @@
+import inspect
 import json
+import re
+import shutil
+from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from PIL import Image
 
-from bestbefore import store, store_train
+from bestbefore import derived, store, store_train
 
 
 def label(tag: str, expiries: int = 1) -> dict:
@@ -507,3 +514,234 @@ def test_v3s_keyword_review_is_checked_against_v3s_photos():
     stray = reviewed("samples1/a.jpg", [])
     assert store_train.check_reviewed([task, stray], photos, "store set v3") == [
         "samples1/a.jpg: labelled, but not in store set v3"]
+
+
+# --- The export for training (S6) ---------------------------------------------
+#
+# Made-up phone photos: white, with a red "date" and a blue "keyword"
+# off-centre in the upright frame, stored turned with an EXIF flag as phones
+# store them, and bigger than MAX_SIDE, so the export applies the flag,
+# shrinks and turns them. A box turned, mirrored or scaled the wrong way
+# lands on white.
+
+RED, BLUE = (230, 20, 20), (20, 20, 230)
+# PIL's exif_transpose turns a stored photo upright; these turn an upright
+# photo into the pixels a phone stores with each flag.
+STORED = {2: Image.Transpose.FLIP_LEFT_RIGHT, 3: Image.Transpose.ROTATE_180,
+          4: Image.Transpose.FLIP_TOP_BOTTOM, 5: Image.Transpose.TRANSPOSE,
+          6: Image.Transpose.ROTATE_90, 7: Image.Transpose.TRANSVERSE, 8: Image.Transpose.ROTATE_270}
+TALL, WIDE = (1800, 2400), (2400, 1800)          # upright sizes; both shrink by 2/3 to 1,600 px
+
+
+def stored_photo(path, upright_size, date_rect, keyword_rect, flag):
+    """Save a made-up photo, given in its upright frame, as a phone stores it with `flag`."""
+    up = Image.new("RGB", upright_size, "white")
+    up.paste(RED, date_rect)
+    up.paste(BLUE, keyword_rect)
+    exif = Image.Exif()
+    exif[0x0112] = flag
+    path.parent.mkdir(parents=True, exist_ok=True)
+    (up.transpose(STORED[flag]) if flag in STORED else up).save(path, quality=95, exif=exif.tobytes())
+    return store.sha256(path)
+
+
+def xyxy(rect, size):
+    return [rect[0] / size[0], rect[1] / size[1], rect[2] / size[0], rect[3] / size[1]]
+
+
+# photo: (set, upright size, date rectangle, keyword rectangle, EXIF flag, design, side)
+MADE_UP = {"samples1/a.jpg": ("v1", TALL, (300, 1500, 700, 1590), (90, 1500, 260, 1590), 6, "PouchCo", "train"),
+           "samples2/b.jpg": ("v1", WIDE, (1500, 300, 1590, 900), (1500, 60, 1590, 240), 8, "JarCo", "val"),
+           "samples3/c.jpg": ("v1", TALL, (1200, 2100, 1700, 2200), (1000, 2100, 1150, 2200), 3, "PouchCo", "train"),
+           "samples3/d.jpg": ("v1", WIDE, (60, 1700, 500, 1780), (60, 1600, 200, 1680), 2, "BoxCo", "train"),
+           "trainset3/e.jpg": ("v3", TALL, (200, 200, 800, 300), (40, 200, 180, 300), 1, "PouchCo", "train"),
+           "trainset3/f.jpg": ("v3", WIDE, (1800, 1300, 2300, 1400), (1600, 1300, 1760, 1400), 5, "CanCo", "val")}
+
+
+@pytest.fixture(scope="module")
+def made_up(tmp_path_factory):
+    """The made-up photos on disk, their frozen files as the export reads them, and the export of them."""
+    root = tmp_path_factory.mktemp("photos")
+    sets = {"v1": {"labels": {}, "keywords": {"photos": {}, "added_dates": {}}},
+            "v3": {"labels": {}, "keywords": {"photos": {}, "added_dates": {}}}}
+    for photo, (version, size, date_rect, keyword_rect, flag, _, _) in MADE_UP.items():
+        sets[version]["labels"][photo] = {
+            "sha256": stored_photo(root / photo, size, date_rect, keyword_rect, flag), "tag": "clean",
+            "boxes": [{"label": "expiry", "xyxy": xyxy(date_rect, size)}]}
+        sets[version]["keywords"]["photos"][photo] = [{"label": "due", "xyxy": xyxy(keyword_rect, size)}]
+    designs = {p: v[5] for p, v in MADE_UP.items()}
+    split = {p: v[6] for p, v in MADE_UP.items()}
+    out, names = tmp_path_factory.mktemp("export") / "store", root / "train_names.json"
+    plan = store_train.export_plan(sets, designs, split)
+    manifest = store_train.write_export(plan, out, {"v1": {"labels": "a" * 64}}, root, names)
+    return SimpleNamespace(root=root, sets=sets, designs=designs, split=split, plan=plan,
+                           out=out, names=names, manifest=manifest)
+
+
+def ink(im: Image.Image, colour) -> tuple[int, int, int, int]:
+    """The pixel box (ends exclusive) round every pixel clearly of `colour`
+    (JPEG and the shrink soften its edges by a pixel or so)."""
+    a = np.asarray(im, np.int16)
+    near = np.abs(a - np.array(colour)).max(axis=-1) < 90
+    ys, xs = np.nonzero(near)
+    return xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
+
+
+def test_every_box_sits_on_its_print_after_the_exif_turn_the_shrink_and_every_turn(made_up):
+    """The plan's test: an EXIF-turned photo's exported boxes sit on its date,
+    in each of the 4 turns, with 7 of EXIF's 8 flags (mirrors included)."""
+    seen = 0
+    for p in made_up.plan:
+        version, size, *_ = MADE_UP[p.photo]
+        for folder in store_train.FOLDERS[p.part]:
+            path = made_up.out / "images" / folder / f"{p.name}.jpg"
+            im = Image.open(path).convert("RGB")
+            quarter = store_train.FOLDERS[p.part][folder]
+            long, short = (1600, 1200)
+            upright = (short, long) if size == TALL else (long, short)
+            assert im.size == (upright if quarter % 2 == 0 else upright[::-1])
+            date, keyword = derived.read_boxes(path)
+            assert (date.label, keyword.label) == ("date", "due")
+            for box, colour in ((date, RED), (keyword, BLUE)):
+                drawn = [v * s for v, s in zip(box.xyxy, im.size * 2)]
+                assert np.allclose(drawn, ink(im, colour), atol=2), (p.photo, folder, box.label)
+            seen += 1
+    assert seen == 4 * 4 + 2                     # 4 training photos in 4 turns, 2 validation photos once
+
+
+def test_only_the_training_part_is_turned(made_up):
+    for p in made_up.plan:
+        on_disk = {f.parent.name for f in made_up.out.glob(f"images/*/{p.name}.jpg")}
+        assert on_disk == set(store_train.FOLDERS[p.part])
+    assert (made_up.out / "train.txt").read_text().splitlines()[:2] == ["./images/train_0/v1-0001.jpg",
+                                                                        "./images/train_0/v1-0003.jpg"]
+    assert (made_up.out / "val.txt").read_text() == "./images/val/v1-0002.jpg\n./images/val/v3-0002.jpg\n"
+    assert made_up.manifest["counts"]["images"] == {"train_0": 4, "train_90": 4, "train_180": 4,
+                                                    "train_270": 4, "val": 2}
+
+
+def test_lists_name_their_photos_relative_to_themselves(made_up, tmp_path):
+    moved = tmp_path / "elsewhere"
+    shutil.copytree(made_up.out, moved)
+    images = derived.read_list(moved / "train.txt")
+    assert len(images) == 16 and all(i.is_file() and moved in i.parents for i in images)
+
+
+def test_names_are_numbers_and_the_names_map_stays_out_of_the_export(made_up):
+    files = [f for f in made_up.out.rglob("*") if f.is_file()]
+    assert {f.name for f in files if f.parent == made_up.out} == {"manifest.json", "train.txt", "val.txt"}
+    assert all(re.fullmatch(r"v[13]-\d{4}\.(jpg|txt)", f.name) for f in files if f.parent != made_up.out)
+    text = "".join(f.read_text() for f in files if f.suffix in (".json", ".txt"))
+    secret = {*MADE_UP, *(p.split("/")[1] for p in MADE_UP), *(Path(p).stem for p in MADE_UP if len(Path(p).stem) > 1),
+              *made_up.designs.values(), *(lab["sha256"] for s in made_up.sets.values() for lab in s["labels"].values())}
+    assert not [s for s in secret if s in text]
+    names = json.loads(made_up.names.read_text())
+    assert {n: v["photo"] for n, v in names["photos"].items()} == {
+        "v1-0001": "samples1/a.jpg", "v1-0002": "samples2/b.jpg", "v1-0003": "samples3/c.jpg",
+        "v1-0004": "samples3/d.jpg", "v3-0001": "trainset3/e.jpg", "v3-0002": "trainset3/f.jpg"}
+    assert names["designs"] == {"d01": "BoxCo", "d02": "CanCo", "d03": "JarCo", "d04": "PouchCo"}
+    assert names["manifest_sha256"] == store.sha256(made_up.out / "manifest.json")
+    assert made_up.manifest["photos"]["v3-0001"] == {"part": "train", "design": "d04", "tag": "clean",
+                                                     "labels": ["expiry", "due"], "added_dates": 0}
+
+
+def test_the_names_map_may_not_go_inside_the_export(made_up, tmp_path):
+    out = tmp_path / "store"
+    with pytest.raises(SystemExit, match="names map stays out"):
+        store_train.write_export(made_up.plan, out, {}, made_up.root, out / "train_names.json")
+
+
+def test_exported_photos_carry_no_metadata_and_read_the_same_in_opencv(made_up):
+    cv2 = pytest.importorskip("cv2")
+    for path in made_up.out.rglob("*.jpg"):
+        with Image.open(path) as im:
+            assert not im.getexif() and "icc_profile" not in im.info
+            pixels = np.asarray(im.convert("RGB"))
+        assert np.array_equal(cv2.imread(str(path))[..., ::-1], pixels)    # Ultralytics reads with OpenCV
+
+
+def test_a_v2_photo_is_refused(made_up):
+    v1 = {**made_up.sets["v1"], "labels": {**made_up.sets["v1"]["labels"], "testset2/x.jpg": label("clean")}}
+    with pytest.raises(ValueError, match="testset2/x.jpg: a store set v2 photo"):
+        store_train.export_plan({**made_up.sets, "v1": v1}, {**made_up.designs, "testset2/x.jpg": "JarCo"},
+                                {**made_up.split, "testset2/x.jpg": "train"})
+    with pytest.raises(ValueError, match="not v2"):
+        store_train.export_plan({"v2": made_up.sets["v1"]}, made_up.designs, made_up.split)
+
+
+def test_the_export_refuses_to_start_while_v2_isnt_frozen(load_script, monkeypatch):
+    script = load_script("export_store_yolo")
+    for constant in ("TEST_SET_V2_SHA256", "PHOTOS_V2_SHA256"):
+        with monkeypatch.context() as m:
+            m.setattr(store, constant, None)
+            m.setattr(store_train, "read_designs", lambda *a: pytest.fail("read a file before checking v2"))
+            with pytest.raises(SystemExit, match="v2 isn't frozen"):
+                script.export()
+
+
+def test_a_design_on_both_sides_a_photo_without_its_review_and_a_box_off_the_photo_are_refused(made_up):
+    split = {**made_up.split, "samples1/a.jpg": "val"}       # PouchCo on both sides
+    with pytest.raises(ValueError, match="design PouchCo on both sides"):
+        store_train.export_plan(made_up.sets, made_up.designs, split)
+    v3 = json.loads(json.dumps(made_up.sets["v3"]))
+    del v3["keywords"]["photos"]["trainset3/e.jpg"]
+    v3["labels"]["trainset3/f.jpg"]["boxes"][0]["xyxy"] = [0.9, 0.5, 1.1, 0.6]
+    with pytest.raises(ValueError, match="2 problems") as refused:
+        store_train.export_plan({**made_up.sets, "v3": v3}, made_up.designs, made_up.split)
+    assert "trainset3/e.jpg: no keyword review" in str(refused.value)
+    assert "trainset3/f.jpg: a expiry box outside the photo" in str(refused.value)
+
+
+def test_the_dates_a_review_added_are_dates(made_up, tmp_path):
+    v1 = json.loads(json.dumps(made_up.sets["v1"]))
+    v1["keywords"]["added_dates"]["samples2/b.jpg"] = [{"label": "other_date", "xyxy": [0.1, 0.1, 0.2, 0.15]}]
+    plan = store_train.export_plan({**made_up.sets, "v1": v1}, made_up.designs, made_up.split)
+    manifest = store_train.write_export(plan, tmp_path / "store", {}, made_up.root, tmp_path / "names.json")
+    assert [b.label for b in derived.read_boxes(tmp_path / "store/images/val/v1-0002.jpg")] == ["date", "date", "due"]
+    assert manifest["photos"]["v1-0002"]["labels"] == ["expiry", "other_date", "due"]
+    assert manifest["counts"]["dates"]["val"] == {"expiry": 2, "mfg": 0, "other_date": 1, "added": 1}
+
+
+def test_the_export_writes_only_into_an_empty_folder_and_the_same_bytes_every_time(made_up, tmp_path):
+    with pytest.raises(SystemExit, match="isn't empty"):
+        store_train.write_export(made_up.plan, made_up.out, {}, made_up.root, tmp_path / "names.json")
+    again = store_train.write_export(made_up.plan, tmp_path / "store", {"v1": {"labels": "a" * 64}},
+                                     made_up.root, tmp_path / "names.json", made=made_up.manifest["made"])
+    assert again == made_up.manifest
+    assert (tmp_path / "store/manifest.json").read_bytes() == (made_up.out / "manifest.json").read_bytes()
+
+
+def test_a_photo_changed_since_its_freeze_is_refused(made_up, tmp_path):
+    root = tmp_path / "photos"
+    shutil.copytree(made_up.root, root)
+    with Image.open(root / "samples3/c.jpg") as im:
+        im.convert("RGB").save(root / "samples3/c.jpg", quality=90)
+    with pytest.raises(RuntimeError, match="samples3/c.jpg has changed since it was frozen"):
+        store_train.write_export(made_up.plan, tmp_path / "store", {}, root, tmp_path / "names.json")
+
+
+def test_the_copy_check_passes_a_copy_and_catches_every_difference(made_up, tmp_path):
+    assert store_train.check_export(made_up.out) == []
+    copy = tmp_path / "copy"
+    shutil.copytree(made_up.out, copy)
+    (copy / "labels/train_90/v1-0001.txt").write_text("0 0.5 0.5 0.1 0.1\n")
+    (copy / "images/val/v3-0002.jpg").unlink()
+    (copy / "images/train_0/v9-0001.jpg").write_bytes(b"stray")
+    (copy / "names.json").write_text("{}")
+    (copy / "val.txt").write_text("./images/val/v1-0002.jpg\n/elsewhere/x.jpg\n")
+    assert store_train.check_export(copy) == [
+        "missing: images/val/v3-0002.jpg", "changed: labels/train_90/v1-0001.txt", "changed: val.txt",
+        "not in the manifest: images/train_0/v9-0001.jpg",
+        "images/train_0: 5 .jpg files, the manifest counts 4",
+        "images/val: 1 .jpg files, the manifest counts 2",
+        "val.txt names /elsewhere/x.jpg, not one of the export's photos",
+        "a names map in the export: names.json"]
+    assert store_train.check_export(tmp_path) == [f"no manifest.json in {tmp_path}"]
+
+
+def test_the_copy_check_runs_from_its_source_alone(made_up):
+    """On the cluster it runs without this package (S6): its source and three imports."""
+    source = "import hashlib, json\nfrom pathlib import Path\n" + inspect.getsource(store_train.check_export)
+    space = {}
+    exec(compile(source, "check_export", "exec"), space)
+    assert space["check_export"](made_up.out) == []

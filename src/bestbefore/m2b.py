@@ -3,14 +3,16 @@ before any run (docs/m2b-store-and-size.md). Step 1 is M2's gen-rot-1280
 arm trained from other COCO weights: only the weights change (decision 1).
 n's step 1 is M2's own three runs, kept as they are and recorded as the
 control (decision 12). scripts/train_detector.py trains a step-1 arm and
-scripts/m2b_chain.py runs them all; S10 adds step 2 and the decision
-rules."""
+scripts/m2b_chain.py runs them all. S6 adds step 2's store lines, drawn
+from the store export; S10 the rest of step 2 and the decision rules."""
 from __future__ import annotations
 
+import random
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import m2, runs
+from . import derived, m2, runs
 from .config import checkpoint_dir, generated_dir, store_train_dir
 from .runs import read_json
 from .store import sha256
@@ -64,6 +66,38 @@ def store_export_missing() -> str | None:
     if not (folder / "manifest.json").exists():
         return "store set v1's export ($STORE_TRAIN_DIR/manifest.json; S6)"
     return None
+
+
+# --- The store lines (decision 7, S6) -----------------------------------------------
+
+def store_pool(folder: Path | None = None) -> tuple[list[Path], dict[str, str]]:
+    """The export's training images (every photo in all 4 turns) and each
+    exported photo's design, from its train.txt and manifest (S6)."""
+    folder = folder or store_train_dir()
+    manifest = read_json(folder / "manifest.json")
+    return (derived.read_list(folder / manifest["settings"]["lists"]["train"]),
+            {name: p["design"] for name, p in manifest["photos"].items() if p["part"] == "train"})
+
+
+def store_lines(images: Sequence[Path], designs: Mapping[str, str], count: int, seed: int) -> list[Path]:
+    """One run's store lines, design-balanced (decision 7): every design
+    among `images` gets the same number of lines, count / designs rounded
+    half up, spread as evenly as can be over its photos and their turns;
+    the copies that get one line more are drawn with `seed`. `images` is
+    the export's training list; `designs` maps an exported photo's name
+    (v1-0001, its file's stem) to its design (d01), as store_pool reads them."""
+    by_design: dict[str, list[Path]] = {}
+    for image in images:
+        by_design.setdefault(designs[image.stem], []).append(image)
+    n = len(by_design)
+    per = (2 * count + n) // (2 * n)
+    rng, lines = random.Random(seed), []
+    for design in sorted(by_design):
+        copies = sorted(by_design[design])
+        each, extra = divmod(per, len(copies))
+        more = set(rng.sample(range(len(copies)), extra))
+        lines += [c for k, c in enumerate(copies) for _ in range(each + (k in more))]
+    return lines
 
 
 # --- Model size (decisions 1 and 2) -------------------------------------------

@@ -416,9 +416,17 @@ photo reviewed. v1's frozen label file doesn't change.
 
 - every v1 photo upright (EXIF applied), shrunk to at most 1,600 px with
   an area filter, JPEG quality 95, named `v1-0001.jpg` on; the map back to
-  photo names stays in `data/store/train/names.json`, on the laptop only;
+  photo names stays on the laptop only, **(changed 2026-11-04, S6, before
+  the export ran)** in `data/store/train_names.json`, outside the export
+  folder rather than in it, so copying the folder to the cluster can't take
+  it along; designs go into the export as numbers (`d01` on), their names
+  into the same map;
   **(changed 2026-11-04, S5b)** v3's photos the same way, `v3-0001.jpg` on,
   with their dates, keyword boxes and v3's split;
+- **(added 2026-11-04, S6)** in sRGB and without metadata: v3's photos
+  are Display P3, which a detector reading the numbers would see as
+  washed-out sRGB; and 20 of v1's photos carry a GPS position in their
+  EXIF, which the export drops with the rest of it;
 - label lines: expiry, mfg and other dates as `date` (class 0), keyword
   boxes as their class; **(changed 2026-11-03, S5)** the 3 dates S5's review
   found unboxed in v1's frozen labels (`v1_keywords.json`'s `added_dates`)
@@ -427,7 +435,11 @@ photo reviewed. v1's frozen label file doesn't change.
 - lists of v1-train's exported photos (all 4 turns) and of v1-val's; each
   training run's design-balanced lines are built from the first by
   `m2b.mix()`; a manifest with the counts and the hashes of the design,
-  keyword and label files (v1's and v3's);
+  keyword and label files (v1's and v3's); **(added 2026-11-04, S6)** and
+  every exported file's SHA-256, so a copy is checked against it, and each
+  photo's part, design number, tag and box labels (`expiry`, `mfg`, ...,
+  in label-file order), so the cluster can tell an expiry from another
+  date without the laptop;
 - it refuses a v2 photo, and refuses to run while `TEST_SET_V2_SHA256` is
   unset.
 

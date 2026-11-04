@@ -1,5 +1,6 @@
 """Store set v1 as training data (docs/m2b-store-and-size.md, "The data"):
-pack design ids for v1 and v2, v1 split by design, and v1's keyword boxes.
+pack design ids for v1 and v2, v1 split by design, v1's keyword boxes, and
+the export of v1 and v3 for training.
 
     data/store/designs.csv    photo,design, one row per photo of v1 and v2,
                               named from the photos (S4)
@@ -11,6 +12,10 @@ pack design ids for v1 and v2, v1 split by design, and v1's keyword boxes.
                               and the reviewed export (S5)
     data/store/v1_keywords.json  the due, prod and code boxes on each v1
                               photo, written by scripts/import_store_keywords.py
+    $STORE_TRAIN_DIR          v1 and v3 exported for training, numbered, by
+                              scripts/export_store_yolo.py (S6)
+    data/store/train_names.json  the map from the export's numbers back to
+                              photo and design names: laptop only
 
 One design is one brand, product line and date-print layout. The ids come
 from looking at the photos, never from a model's output. The split is
@@ -22,15 +27,25 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import random
 import re
+import sys
 from collections import Counter
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-from . import store
+import numpy as np
+from PIL import Image, ImageCms
+
+from . import derived, images, store
 from .detection_eval import iou
+from .images import load_upright
+from .runs import code_sha256, git_state
+from .samples import Box
 from .store_import import check_photos, photo_id, rect_box
 
 DESIGNS_CSV = store.DATA_DIR / "designs.csv"
@@ -530,3 +545,314 @@ def keywords_file(boxes: dict[str, list[dict]], hashes: dict[str, str], date: st
 def read_keywords(path: Path | None = None) -> dict[str, list[dict]]:
     """photo -> its keyword boxes, from v1_keywords.json."""
     return json.loads((path or KEYWORDS_PATH).read_text())["photos"]
+
+
+# --- The export for training (S6) ----------------------------------------------
+#
+# Store sets v1 and v3 as Ultralytics reads training data ("The export").
+# Each photo is decoded from the very bytes its frozen hash names, turned
+# upright (its EXIF turn applied: Ultralytics would read the file without
+# it), put into sRGB (v3's photos are Display P3, whose numbers a detector
+# would read as washed-out sRGB), shrunk to at most MAX_SIDE with an area
+# filter, and saved as a numbered JPEG without metadata (the EXIF of 20 of
+# v1's photos holds a GPS position). Its dates become `date` boxes, its
+# keyword boxes keep their class. The training part is also turned 90, 180
+# and 270 degrees (derived.turn); validation stays as it is. Every file is
+# read back and checked, and the manifest holds every file's SHA-256, so a
+# copy (the cluster's) is checked against it by check_export. Photo and
+# design names stay on the laptop, in NAMES_PATH, outside the export
+# folder: the export names photos by number and designs d01, d02, ...
+# v2, the test set, is never exported.
+
+EXPORT_SETS = ("v1", "v3")
+MAX_SIDE = 1600
+# Each part's folders, and the quarter turns (anticlockwise, derived.turn) they hold.
+FOLDERS = {"train": {"train_0": 0, "train_90": 1, "train_180": 2, "train_270": 3},
+           "val": {"val": 0}}
+LISTS = {"train": "train.txt", "val": "val.txt"}
+MANIFEST = "manifest.json"
+NAMES_PATH = store.DATA_DIR / "train_names.json"
+# Every store date is a `date` to the detector: telling them apart is M3's job.
+YOLO_LABEL = {"expiry": "date", "mfg": "date", "other_date": "date",
+              "due": "due", "prod": "prod", "code": "code"}
+# A box read back from its label file may be off by the file's rounding
+# (6 decimals: under 0.005 px at 1,600 px); more is a box gone wrong.
+BOX_TOLERANCE_PX = 0.01
+# A turned copy, turned back, differs from its upright copy only by JPEG's
+# noise: a mean absolute difference of at most 1.19 grey levels on v1 and
+# v3; a 180-degree copy left unturned, a wrong turn, 3.4 to 99 (median 59;
+# the least on a photo 97% white). Measured in S6.
+TURN_NOISE = 2.0
+
+
+@dataclass(frozen=True)
+class ExportPhoto:
+    """One store photo as the export writes it."""
+    name: str                   # v1-0001: its files' stem, numbered within its set in photo order
+    photo: str                  # its path under $STORE_PHOTOS_DIR (laptop only)
+    sha256: str                 # its frozen SHA-256 (laptop only)
+    part: str                   # train or val
+    design: str                 # d01, d02, ...: its design, numbered over every exported design
+    design_name: str            # the design's id (laptop only)
+    tag: str
+    boxes: tuple[Box, ...]      # store labels: its frozen dates, the dates its review added, its keywords
+    added: int = 0              # how many of its dates its keyword review added (other_date)
+
+
+def _box_problem(photo: str, b: dict) -> str | None:
+    x1, y1, x2, y2 = b["xyxy"]
+    if b["label"] not in YOLO_LABEL:
+        return f"{photo}: a box labelled {b['label']}"
+    if not (0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1):
+        return f"{photo}: a {b['label']} box outside the photo or without area: {b['xyxy']}"
+    return None
+
+
+def export_plan(sets: dict[str, dict], designs: dict[str, str], split: dict[str, str]) -> list[ExportPhoto]:
+    """Every photo to export, numbered, from the frozen files. `sets` maps
+    each set's version to {"labels": its frozen labels, each with its
+    photo's sha256, "keywords": its keyword file's content}; `designs` and
+    `split` hold every photo's design and side. Refuses a set other than v1
+    and v3, a photo outside its set's folders (above all a v2 photo), one
+    without a design, a side or a keyword review, a design on both sides,
+    and a box outside its photo or without area. Problems name photos, so
+    they're for the screen only."""
+    if unknown := sorted(set(sets) - set(EXPORT_SETS)):
+        raise ValueError(f"only store sets {', '.join(EXPORT_SETS)} are exported for training, "
+                         f"not {', '.join(unknown)}")
+    problems, sides = [], {}
+    for version, given in sets.items():
+        labels, keywords = given["labels"], given["keywords"]
+        for photo in sorted(labels):
+            top = photo.split("/")[0]
+            if top in store.V2.folders:
+                problems.append(f"{photo}: a store set v2 photo; v2 is the test set, never exported")
+            elif top not in store.SETS[version].folders:
+                problems.append(f"{photo}: not in store set {version}'s folders")
+            if photo not in designs:
+                problems.append(f"{photo}: no design")
+            if split.get(photo) not in FOLDERS:
+                problems.append(f"{photo}: on neither side of the split")
+            elif photo in designs:
+                sides.setdefault(designs[photo], set()).add(split[photo])
+            if photo not in keywords["photos"]:
+                problems.append(f"{photo}: no keyword review")
+                continue
+            for b in labels[photo]["boxes"] + keywords["added_dates"].get(photo, []) + keywords["photos"][photo]:
+                if why := _box_problem(photo, b):
+                    problems.append(why)
+        problems += [f"{p}: keyword boxes, but not labelled in store set {version}"
+                     for p in sorted(set(keywords["photos"]) - set(labels))]
+    problems += [f"design {d} on both sides of the split" for d, s in sorted(sides.items()) if len(s) > 1]
+    if problems:
+        raise ValueError(f"{len(problems)} problems, nothing exported:\n  " + "\n  ".join(problems))
+
+    exported = sorted({designs[p] for given in sets.values() for p in given["labels"]})
+    number = {d: f"d{k:02d}" for k, d in enumerate(exported, start=1)}
+    plan = []
+    for version in (v for v in EXPORT_SETS if v in sets):
+        labels, keywords = sets[version]["labels"], sets[version]["keywords"]
+        for k, photo in enumerate(sorted(labels), start=1):
+            added = keywords["added_dates"].get(photo, [])
+            boxes = labels[photo]["boxes"] + added + keywords["photos"][photo]
+            plan.append(ExportPhoto(f"{version}-{k:04d}", photo, labels[photo]["sha256"], split[photo],
+                                    number[designs[photo]], designs[photo], labels[photo]["tag"],
+                                    tuple(Box(b["label"], tuple(b["xyxy"])) for b in boxes), len(added)))
+    return plan
+
+
+def to_srgb(image: Image.Image, icc: bytes | None) -> Image.Image:
+    """The image in sRGB, from the colour profile its file carried (v3's
+    are Display P3). Without one it is taken to be sRGB already, as v1's."""
+    if not icc:
+        return image
+    return ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(io.BytesIO(icc)),
+                                     ImageCms.createProfile("sRGB"),
+                                     renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC, outputMode="RGB")
+
+
+def shrink(image: Image.Image, max_side: int = MAX_SIDE) -> Image.Image:
+    """The long side shrunk to at most max_side with an area filter (PIL's
+    BOX), as M2's backgrounds (synth/compose.py); a smaller photo as it is.
+    Boxes are fractions of the photo, so they don't move."""
+    scale = min(1.0, max_side / max(image.size))
+    size = (round(image.width * scale), round(image.height * scale))
+    return image if size == image.size else image.resize(size, Image.Resampling.BOX)
+
+
+def export_image(data: bytes) -> Image.Image:
+    """A photo's file, as bytes, the way the export saves it: upright
+    (load_upright reads anything PIL opens), in sRGB, shrunk."""
+    with Image.open(io.BytesIO(data)) as im:
+        icc = im.info.get("icc_profile")
+    return shrink(to_srgb(load_upright(io.BytesIO(data)), icc))
+
+
+def turn_back_error(upright: Path, turned: Path, quarter: int) -> tuple[float, float]:
+    """A turned copy against its upright copy, both as written: the mean
+    absolute difference of their pixels once the turned one is turned back,
+    and the largest difference between their boxes, in pixels."""
+    back, boxes = derived.turn(load_upright(turned), derived.read_boxes(turned), 4 - quarter)
+    first = load_upright(upright)
+    if back.size != first.size:
+        return float("inf"), float("inf")
+    mad = float(np.abs(np.asarray(back, np.int16) - np.asarray(first, np.int16)).mean())
+    w, h = first.size
+    off = [abs(p - q) * s for a, b in zip(boxes, derived.read_boxes(upright), strict=True)
+           for p, q, s in zip(a.xyxy, b.xyxy, (w, h, w, h))]
+    return mad, max(off, default=0.0)
+
+
+def _counts(plan: list[ExportPhoto]) -> dict:
+    """Photos per set and part, images per folder, designs, boxes per class
+    and dates per label in each part (per photo: a training photo is in
+    every training folder too)."""
+    of = {part: [p for p in plan if p.part == part] for part in FOLDERS}
+    return {
+        "photos": {v: {part: sum(p.name.startswith(f"{v}-") for p in of[part]) for part in FOLDERS}
+                   for v in EXPORT_SETS},
+        "images": {folder: len(of[part]) for part in FOLDERS for folder in FOLDERS[part]},
+        "designs": {part: len({p.design for p in of[part]}) for part in FOLDERS},
+        "boxes": {part: dict(sorted(Counter(YOLO_LABEL[b.label] for p in of[part] for b in p.boxes).items()))
+                  for part in FOLDERS},
+        "dates": {part: {**{label: sum(b.label == label for p in of[part] for b in p.boxes)
+                            for label in store.BOX_LABELS},
+                         "added": sum(p.added for p in of[part])} for part in FOLDERS},
+    }
+
+
+def write_export(plan: list[ExportPhoto], out: Path, sources: dict, root: Path,
+                 names_path: Path = NAMES_PATH, made: str | None = None) -> dict:
+    """Write the export into `out`, which must be empty or absent, and the
+    names map into `names_path`, which must be outside it; returns the
+    manifest. Each file is read back and checked: its boxes against what was
+    meant, no EXIF (no turn, no GPS), and each turned copy, turned back,
+    against its upright copy. The manifest goes last, once all of it holds."""
+    if out.exists() and any(out.iterdir()):
+        raise SystemExit(f"{out} isn't empty: the export goes into an empty folder, "
+                         "so no file of an earlier one stays")
+    if names_path.resolve().is_relative_to(out.resolve()):
+        raise SystemExit(f"{names_path} is inside {out}: the names map stays out of what goes to the cluster")
+    worst = {"box_error_px": 0.0, "turn_back_mad": 0.0, "turn_back_box_px": 0.0}
+    for p in plan:
+        data = (root / p.photo).read_bytes()
+        if hashlib.sha256(data).hexdigest() != p.sha256:
+            raise RuntimeError(f"{p.photo} has changed since it was frozen")
+        image = export_image(data)
+        boxes = [Box(YOLO_LABEL[b.label], b.xyxy) for b in p.boxes]
+        written = {}
+        for folder, quarter in FOLDERS[p.part].items():
+            sample = derived.write_yolo(out, folder, f"{p.name}.jpg", *derived.turn(image, boxes, quarter))
+            error = derived.check_written(sample)
+            if error > BOX_TOLERANCE_PX:
+                raise RuntimeError(f"{sample.image}: a box read back {error:.3f} px from where it was meant")
+            worst["box_error_px"] = max(worst["box_error_px"], error)
+            with Image.open(sample.image) as im:
+                if im.getexif():
+                    raise RuntimeError(f"{sample.image}: written with EXIF")
+            written[quarter] = sample.image
+        for quarter, path in written.items():
+            if quarter:
+                mad, px = turn_back_error(written[0], path, quarter)
+                if mad > TURN_NOISE or px > BOX_TOLERANCE_PX:
+                    raise RuntimeError(f"{path}, turned back, isn't its upright copy: "
+                                       f"{mad:.2f} grey levels, boxes {px:.3f} px apart")
+                worst["turn_back_mad"] = max(worst["turn_back_mad"], mad)
+                worst["turn_back_box_px"] = max(worst["turn_back_box_px"], px)
+    for part, name in LISTS.items():
+        lines = [f"./images/{folder}/{p.name}.jpg\n" for folder in FOLDERS[part] for p in plan if p.part == part]
+        (out / name).write_text("".join(lines))
+    files = {f.relative_to(out).as_posix(): store.sha256(f)
+             for f in sorted(out.rglob("*")) if f.is_file()}
+    manifest = {
+        "made": made or date.today().isoformat(), **git_state(),
+        "code_sha256": code_sha256(sys.modules[__name__], derived, images),
+        "settings": {"max_side": MAX_SIDE, "resample": "PIL BOX", "colour": "sRGB",
+                     "jpeg_quality": derived.JPEG_QUALITY, "folders": FOLDERS, "lists": LISTS},
+        "sources": sources, "counts": _counts(plan), "worst": {k: round(v, 4) for k, v in worst.items()},
+        "photos": {p.name: {"part": p.part, "design": p.design, "tag": p.tag,
+                            "labels": [b.label for b in p.boxes], "added_dates": p.added} for p in plan},
+        "files": files,
+    }
+    text = json.dumps(manifest, indent=1, sort_keys=True) + "\n"
+    names = {"made": manifest["made"], "export": str(out),
+             "manifest_sha256": hashlib.sha256(text.encode()).hexdigest(),
+             "photos": {p.name: {"photo": p.photo, "sha256": p.sha256} for p in plan},
+             "designs": dict(sorted({p.design: p.design_name for p in plan}.items()))}
+    names_path.write_text(json.dumps(names, indent=1, sort_keys=True) + "\n")
+    (out / MANIFEST).write_text(text)
+    return manifest
+
+
+def check_export(folder: Path, names: tuple[str, ...] = ("names.json", "train_names.json")) -> list[str]:
+    """Problems with an export as found in `folder`, the laptop's or a copy
+    of it (the cluster's), against its manifest: every file it lists, with
+    its SHA-256; no other file in its photo and label folders; image counts
+    as the manifest's; lists naming only its photos; and no names map. Uses
+    nothing but hashlib, json and pathlib, so its source runs as it is where
+    this package isn't installed."""
+    path = folder / "manifest.json"
+    if not path.is_file():
+        return [f"no manifest.json in {folder}"]
+    manifest = json.loads(path.read_text())
+    listed, problems = manifest["files"], []
+    for rel, digest in sorted(listed.items()):
+        f = folder / rel
+        if not f.is_file():
+            problems.append(f"missing: {rel}")
+        elif hashlib.sha256(f.read_bytes()).hexdigest() != digest:
+            problems.append(f"changed: {rel}")
+    for part in manifest["settings"]["folders"].values():
+        for name in part:
+            for kind, ext in (("images", ".jpg"), ("labels", ".txt")):
+                d = folder / kind / name
+                found = {f.relative_to(folder).as_posix() for f in d.rglob("*") if f.is_file()} if d.is_dir() else set()
+                problems += [f"not in the manifest: {r}" for r in sorted(found - set(listed))]
+                n = sum(r.endswith(ext) for r in found)
+                if n != manifest["counts"]["images"][name]:
+                    problems.append(f"{kind}/{name}: {n} {ext} files, the manifest counts "
+                                    f"{manifest['counts']['images'][name]}")
+    for name in manifest["settings"]["lists"].values():
+        lines = (folder / name).read_text().splitlines() if (folder / name).is_file() else []
+        problems += [f"{name} names {line}, not one of the export's photos" for line in lines
+                     if not (line.startswith("./images/") and line.endswith(".jpg") and line[2:] in listed)]
+    problems += [f"a names map in the export: {f.relative_to(folder)}" for n in names for f in folder.rglob(n)]
+    return problems
+
+
+def check_v2_frozen() -> None:
+    """The export starts only once v2, the test set, is frozen: its photo
+    list and labels hashed in store.py (M0 D3, D6). Only those hashes are
+    read here; no v2 file is opened."""
+    if store.PHOTOS_V2_SHA256 is None or store.TEST_SET_V2_SHA256 is None:
+        raise SystemExit("store set v2 isn't frozen yet (M0 D6): no store photo is exported "
+                         "for training before the test set is frozen")
+
+
+def export_inputs() -> tuple[dict[str, dict], dict[str, str], dict[str, str], dict]:
+    """The export's inputs, each from its frozen file and checked against
+    its hash: v1's and v3's labels (every photo hashed), keyword files,
+    designs and splits; and the hashes of all of them, for the manifest.
+    Refuses to start while v2 isn't frozen, or if the designs were typed
+    against other labels than v1's and v2's frozen ones."""
+    check_v2_frozen()
+    designs = read_designs()
+    if json.loads(DESIGNS_PATH.read_bytes())["test_sets"] != {"v1": store.TEST_SET_SHA256,
+                                                             "v2": store.TEST_SET_V2_SHA256}:
+        raise SystemExit(f"{DESIGNS_PATH} was typed against other labels than v1's and v2's frozen ones")
+    split = {**v1_split(), **v3_split()}
+    designs_v3 = read_designs(DESIGNS_V3_PATH, store.DESIGNS_V3_SHA256)
+    sets, sources = {}, {}
+    for s in (store.V1, store.V3):
+        path = keywords_path(s)
+        data = path.read_bytes()
+        keywords = json.loads(data)
+        if keywords["version"] != s.version or keywords["test_set_sha256"] != s.test_set_sha256:
+            raise SystemExit(f"{path} wasn't made against store set {s.version}'s frozen labels")
+        sets[s.version] = {"labels": store.read_frozen(s)["photos"], "keywords": keywords}
+        sources[s.version] = {"labels": s.test_set_sha256, "keywords": hashlib.sha256(data).hexdigest()}
+    sources["v1"].update(designs=store.DESIGNS_SHA256, split=SPLIT_SHA256)
+    sources["v3"].update(photo_list=store.PHOTOS_V3_SHA256, designs=store.DESIGNS_V3_SHA256, split=SPLIT_V3_SHA256)
+    sources["v2"] = {"exported": False, "labels": store.TEST_SET_V2_SHA256, "photo_list": store.PHOTOS_V2_SHA256}
+    photos = {p for given in sets.values() for p in given["labels"]}
+    return sets, {p: d for p, d in {**designs, **designs_v3}.items() if p in photos}, split, sources
