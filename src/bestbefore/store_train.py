@@ -5,6 +5,8 @@ pack design ids for v1 and v2, v1 split by design, and v1's keyword boxes.
                               named from the photos (S4)
     data/store/designs.json   the same ids, frozen by scripts/store_designs.py
                               --freeze; its SHA-256 is store.DESIGNS_SHA256
+    data/store/designs_v3.csv, designs_v3.json  store set v3's, the same way
+                              (--version v3; S5b), store.DESIGNS_V3_SHA256
     data/store/keywords/      OCR's keyword proposals, the Label Studio tasks
                               and the reviewed export (S5)
     data/store/v1_keywords.json  the due, prod and code boxes on each v1
@@ -33,10 +35,15 @@ from .store_import import check_photos, photo_id, rect_box
 
 DESIGNS_CSV = store.DATA_DIR / "designs.csv"
 DESIGNS_PATH = store.DATA_DIR / "designs.json"
+DESIGNS_V3_CSV = store.DATA_DIR / "designs_v3.csv"
+DESIGNS_V3_PATH = store.DATA_DIR / "designs_v3.json"
 SEED = 0
 # SHA-256 of the split (split_digest), pasted in when results/store_designs.md
 # was first written (S4, 2026-11-03).
 SPLIT_SHA256: str | None = "4418c65be61a57e1f949b7beb3013b7843eeec2a349f70496bcce6a7d2af02ca"
+# v3's (split_v3), pasted in when its section of results/store_designs.md was
+# first written (S5b).
+SPLIT_V3_SHA256: str | None = "edd2c25cceeefa2a070c3b2bec0c19f17603380d173210560eae2763837858a8"
 
 
 def read_designs_csv(path: Path | None = None) -> list[list[str]]:
@@ -54,11 +61,13 @@ def _key(design: str) -> str:
     return "".join(design.casefold().split())
 
 
-def check_designs(rows: list[list[str]], photos: list[str]) -> list[str]:
+def check_designs(rows: list[list[str]], photos: list[str], known: set[str] = frozenset(),
+                  sets: str = "v1 or v2") -> list[str]:
     """Problems with the typed ids: every photo in `photos` exactly once,
     nothing else, no empty id, and no two ids that differ only in case or
     spaces (one design typed two ways would let it sit on both sides of the
-    split)."""
+    split), here or against the ids already `known` (v1's and v2's, when
+    v3's are typed). `sets` names the photos' sets, for the message."""
     problems, seen, ids = [], Counter(), {}
     for n, row in enumerate(rows, start=2):
         if len(row) != 2:
@@ -67,7 +76,7 @@ def check_designs(rows: list[list[str]], photos: list[str]) -> list[str]:
         photo, design = row
         seen[photo] += 1
         if photo not in photos:
-            problems.append(f"line {n}: not a photo of v1 or v2: {photo}")
+            problems.append(f"line {n}: not a photo of {sets}: {photo}")
         if not design:
             problems.append(f"line {n}: no design for {photo}")
         else:
@@ -76,6 +85,9 @@ def check_designs(rows: list[list[str]], photos: list[str]) -> list[str]:
     problems += [f"not listed: {p}" for p in sorted(set(photos) - set(seen))]
     problems += [f"one design typed {len(v)} ways? {' / '.join(sorted(v))}"
                  for v in ids.values() if len(v) > 1]
+    known_of = {_key(k): k for k in known}
+    problems += [f"{d} is the known design {known_of[_key(d)]} typed another way"
+                 for v in ids.values() for d in sorted(v) if _key(d) in known_of and d != known_of[_key(d)]]
     return problems
 
 
@@ -112,22 +124,10 @@ def val_count(n: int) -> int:
     return max((3 * n + 5) // 10, 1 if n >= 2 else 0)
 
 
-def split_v1(designs: dict[str, str], labels: dict[str, dict], seed: int = SEED) -> dict[str, str]:
-    """photo -> "train" or "val". Each design takes its photos' commonest
-    tag (other-face only if every photo is). Within each tag, the designs,
-    sorted by id and shuffled with `seed`, give round(0.3 x n) of themselves
-    to validation (at least 1 where a tag has 2 or more designs).
-
-    `labels` are v1's; a photo from outside v1's folders is refused, so v2
-    can't enter the split. One generator, seeded with `seed`, shuffles the
-    tags in store.TAGS order."""
-    outside = sorted(p for p in labels if p.split("/")[0] not in store.V1.folders)
-    if outside:
-        raise ValueError(f"only store set v1 is split; {len(outside)} photos from outside "
-                         f"its folders: {', '.join(outside)}")
-    missing = sorted(set(labels) - set(designs))
-    if missing:
-        raise ValueError(f"{len(missing)} v1 photos have no design: {', '.join(missing)}")
+def _by_design(designs: dict[str, str], labels: dict[str, dict], seed: int) -> set[str]:
+    """The designs S4's rule sends to validation: each design takes its
+    photos' commonest tag; within each tag, sorted by id and shuffled by one
+    generator seeded with `seed` (tags in store.TAGS order), round(0.3 x n)."""
     photos_of: dict[str, list[str]] = {}
     for photo in sorted(labels):
         photos_of.setdefault(designs[photo], []).append(photo)
@@ -139,7 +139,46 @@ def split_v1(designs: dict[str, str], labels: dict[str, dict], seed: int = SEED)
         group = sorted(by_tag.get(tag, []))
         rng.shuffle(group)
         val |= set(group[:val_count(len(group))])
+    return val
+
+
+def _only(store_set: store.StoreSet, labels: dict[str, dict], designs: dict[str, str]) -> None:
+    outside = sorted(p for p in labels if p.split("/")[0] not in store_set.folders)
+    if outside:
+        raise ValueError(f"only store set {store_set.version} is split here; {len(outside)} photos "
+                         f"from outside its folders: {', '.join(outside)}")
+    missing = sorted(set(labels) - set(designs))
+    if missing:
+        raise ValueError(f"{len(missing)} {store_set.version} photos have no design: {', '.join(missing)}")
+
+
+def split_v1(designs: dict[str, str], labels: dict[str, dict], seed: int = SEED) -> dict[str, str]:
+    """photo -> "train" or "val". Each design takes its photos' commonest
+    tag (other-face only if every photo is). Within each tag, the designs,
+    sorted by id and shuffled with `seed`, give round(0.3 x n) of themselves
+    to validation (at least 1 where a tag has 2 or more designs).
+
+    `labels` are v1's; a photo from outside v1's folders is refused, so v2
+    can't enter the split. One generator, seeded with `seed`, shuffles the
+    tags in store.TAGS order."""
+    _only(store.V1, labels, designs)
+    val = _by_design(designs, labels, seed)
     return {p: "val" if designs[p] in val else "train" for p in sorted(labels)}
+
+
+def split_v3(designs_v3: dict[str, str], labels_v3: dict[str, dict], designs: dict[str, str],
+             split: dict[str, str], seed: int = SEED) -> dict[str, str]:
+    """photo -> "train" or "val" for store set v3 (S5b, decision 6). A v3
+    photo whose design v1 has takes that design's side in v1's `split`; v3's
+    other designs are split among themselves by split_v1's rule. `designs`
+    and `split` are v1's (and v2's) frozen ids and v1's split, which don't
+    change; a photo from outside v3's folders is refused."""
+    _only(store.V3, labels_v3, designs_v3)
+    side = {designs[p]: part for p, part in split.items()}
+    new = {p: lab for p, lab in labels_v3.items() if designs_v3[p] not in side}
+    val = _by_design(designs_v3, new, seed)
+    return {p: side.get(designs_v3[p]) or ("val" if designs_v3[p] in val else "train")
+            for p in sorted(labels_v3)}
 
 
 def split_digest(split: dict[str, str]) -> str:
@@ -151,6 +190,18 @@ def v1_split() -> dict[str, str]:
     split = split_v1(read_designs(), store.labels(store.V1), SEED)
     if SPLIT_SHA256 is not None and split_digest(split) != SPLIT_SHA256:
         raise RuntimeError("v1's split differs from the one recorded in results/store_designs.md")
+    return split
+
+
+def v3_split() -> dict[str, str]:
+    """v3's split from its frozen ids and labels and v1's split, checked
+    against SPLIT_V3_SHA256."""
+    if store.DESIGNS_V3_SHA256 is None:
+        raise RuntimeError("v3's designs aren't frozen yet: run scripts/store_designs.py --version v3 --freeze")
+    designs_v3 = read_designs(DESIGNS_V3_PATH, store.DESIGNS_V3_SHA256)
+    split = split_v3(designs_v3, store.labels(store.V3), read_designs(), v1_split(), SEED)
+    if SPLIT_V3_SHA256 is not None and split_digest(split) != SPLIT_V3_SHA256:
+        raise RuntimeError("v3's split differs from the one recorded in results/store_designs.md")
     return split
 
 

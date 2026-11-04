@@ -70,10 +70,12 @@ TEST_SET_V2_SHA256: str | None = "f1fe6b8d1c953a100b2245c3a1401a82bcc6314796c814
 # v3's, a training set (M2b S5b): its photo list before labelling, then its
 # labels. results/store_set_v3.md.
 PHOTOS_V3_SHA256: str | None = "8b279416fe0eb857e2027bd6035db11e15ced51206aa094e92d5ec4a59accd2c"
-LABELS_V3_SHA256: str | None = None
+LABELS_V3_SHA256: str | None = "6b60780049d3ed53e0330eaf3d6819f95436974dcccfba37dc743321012fe901"
 # SHA-256 of data/store/designs.json, the pack design of every v1 and v2
 # photo, pasted in when it was frozen (M2b S4). results/store_designs.md.
 DESIGNS_SHA256: str | None = "fa888edb77c14123c5839044e7ac880aa8de2fc299ca0f8acdfd7376bc566f6e"
+# data/store/designs_v3.json's, v3's designs (M2b S5b), frozen apart from v1's and v2's.
+DESIGNS_V3_SHA256: str | None = "03647906d598a51f00a9a2ce8812fa25101db1adc04aa013e9b7b639961b1f65"
 
 
 @dataclass(frozen=True)

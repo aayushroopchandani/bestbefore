@@ -422,3 +422,60 @@ def test_a_sideways_box_snaps_along_its_column(load_script):
     script = load_script("draft_keywords")
     gray = ink_line((50, 60), (64, 74), (78, 88)).T.copy()         # the same line, reading down
     assert script.tighten(gray, (2, 40, 38, 98), along_x=False) == (10, 50, 30, 88)
+
+
+# --- Store set v3 (S5b) ---------------------------------------------------------
+
+V3_TAGS = {"pack01": ["clean"], "pack08": ["sideways", "sideways"],          # pack01 is in made-up v1-train or -val
+           "new1": ["clean", "clean"], "new2": ["clean"], "new3": ["sideways"], "new4": ["sideways"]}
+DESIGNS_V3 = {f"trainset3/{d}-{k}.jpg": d for d, tags in V3_TAGS.items() for k in range(len(tags))}
+LABELS_V3 = {p: label(V3_TAGS[d][int(p.split("-")[-1][0])]) for p, d in DESIGNS_V3.items()}
+
+
+def test_a_v3_id_typed_another_way_than_v1s_is_refused():
+    rows_v3 = rows({**DESIGNS_V3, "trainset3/pack01-0.jpg": "Pack01"})
+    problems = store_train.check_designs(rows_v3, sorted(DESIGNS_V3), set(DESIGNS.values()), "v3")
+    assert problems == ["Pack01 is the known design pack01 typed another way"]
+    assert store_train.check_designs(rows(DESIGNS_V3), sorted(DESIGNS_V3), set(DESIGNS.values()), "v3") == []
+    stray = rows(DESIGNS_V3) + [["samples1/pack01-0.jpg", "pack01"]]
+    assert store_train.check_designs(stray, sorted(DESIGNS_V3), set(DESIGNS.values()), "v3")[0].endswith(
+        "not a photo of v3: samples1/pack01-0.jpg")
+
+
+def test_v3_keeps_a_known_designs_side_and_splits_the_rest_by_the_rule():
+    split1 = store_train.split_v1(DESIGNS, LABELS)
+    split = store_train.split_v3(DESIGNS_V3, LABELS_V3, DESIGNS, split1)
+    for known in ("pack01", "pack08"):
+        v1_side = {part for p, part in split1.items() if DESIGNS[p] == known}
+        assert {split[p] for p, d in DESIGNS_V3.items() if d == known} == v1_side
+    new = {d for d in DESIGNS_V3.values() if d.startswith("new")}
+    val = {DESIGNS_V3[p] for p, part in split.items() if part == "val" and DESIGNS_V3[p] in new}
+    assert len(val) == 2                         # one of 2 clean designs, one of 2 sideways designs
+    assert store_train.split_v3(DESIGNS_V3, LABELS_V3, DESIGNS, split1) == split
+    assert store_train.split_v1(DESIGNS, LABELS) == split1        # v1's split doesn't move
+
+
+def test_only_v3s_photos_enter_v3s_split():
+    split1 = store_train.split_v1(DESIGNS, LABELS)
+    for stray in ("samples1/pack01-0.jpg", "testset2/x-0.jpeg"):
+        with pytest.raises(ValueError, match="only store set v3"):
+            store_train.split_v3({**DESIGNS_V3, stray: "pack01"}, {**LABELS_V3, stray: label("clean")},
+                                 DESIGNS, split1)
+
+
+def test_v3s_report_leaves_v1s_section_as_it_was(load_script, tmp_path, monkeypatch):
+    script = load_script("store_designs")
+    v1_text = "# Store pack designs and the v1 split\n\nv1's counts.\n"
+    monkeypatch.setattr(script, "SUMMARY", tmp_path / "store_designs.md")
+    (tmp_path / "store_designs.md").write_text(v1_text)
+    monkeypatch.setattr(store, "DESIGNS_V3_SHA256", "d" * 64)
+    monkeypatch.setattr(store, "LABELS_V3_SHA256", "e" * 64)
+    split1 = store_train.split_v1(DESIGNS, LABELS)
+    split = store_train.split_v3(DESIGNS_V3, LABELS_V3, DESIGNS, split1)
+    section = script.summary_v3(DESIGNS_V3, LABELS_V3, DESIGNS, split1, split, "2026-11-04", "f" * 64)
+    (tmp_path / "store_designs.md").write_text(v1_text + section)
+    again = (tmp_path / "store_designs.md").read_text().split(script.V3_SECTION, 1)[0]
+    assert again == v1_text
+    assert "| design new to v3 | 4 | 5 | 5 |" in section
+    names = {*DESIGNS_V3, *DESIGNS_V3.values(), *(p.split("/")[1] for p in DESIGNS_V3)}
+    assert not [n for n in names if n in section]
