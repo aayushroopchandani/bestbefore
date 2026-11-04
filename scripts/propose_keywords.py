@@ -1,8 +1,9 @@
-"""Propose keyword boxes on store set v1 with RapidOCR, as Label Studio
-predictions (docs/m2b-store-and-size.md, S5).
+"""Propose keyword boxes on a store set with RapidOCR, as Label Studio
+predictions (docs/m2b-store-and-size.md: S5 for v1, S5b for v3).
 
-    python scripts/propose_keywords.py            # data/store/keywords/: proposals, tasks, project
-    python scripts/propose_keywords.py --sheet    # and a sheet of them in data/store/runs/
+    python scripts/propose_keywords.py                 # v1: data/store/keywords/: proposals, tasks, project
+    python scripts/propose_keywords.py --sheet         # and a sheet of them in data/store/runs/
+    python scripts/propose_keywords.py --version v3    # v3: the same, in data/store/v3/keywords/
 
 Each v1 photo goes upright (load_upright) and shrunk to 1,000 px on its
 long side, as Scanify shrinks it (M0's best size for RapidOCR), through
@@ -20,9 +21,10 @@ and convention v1's date boxes are in. Written to data/store/keywords/:
 
 The sheet draws the proposals and the date boxes on each upright photo,
 and zoomed in round each date box, to check that both sit where they
-should before the review. Only store set v1: its photos are its folders'
-and must be its frozen labels'; nothing reads testset2/. Everything
-written names photos, so it stays under data/store/.
+should before the review. Only store sets v1 and v3, never v2 (the test
+set): a set's photos are its folders' and must be its frozen labels';
+nothing reads testset2/. Everything written names photos, so it stays
+under data/store/.
 """
 from __future__ import annotations
 
@@ -45,7 +47,7 @@ from bestbefore.sheets import FONT, grid, rows_of
 from bestbefore.tables import markdown_table
 
 LONG_SIDE = 1000
-TITLE = "Store v1 keywords"
+TITLE = "Store {set} keywords"
 
 INTERFACE = """<View>
   <Header value="Box each keyword as printed, with its colon or full stop, never its date. due: EXP. / Best Before: / Expiry Date :   prod: MFG: / Mfd(Date): / IMPORT:   code: Batch No.: K2311A / 14:32. No box for prices, weights, phone numbers, barcode digits, addresses or 12 months from Mfg."/>
@@ -55,7 +57,7 @@ INTERFACE = """<View>
     <Label value="prod" background="#2ca02c"/>
     <Label value="code" background="#9467bd"/>
   </RectangleLabels>
-  <Header value="v1's date boxes, for reference only: leave them as they are"/>
+  <Header value="{set}'s date boxes, for reference only: leave them as they are"/>
   <RectangleLabels name="date" toName="img">
     <Label value="expiry" background="#d62728"/>
     <Label value="mfg" background="#1f77b4"/>
@@ -64,11 +66,11 @@ INTERFACE = """<View>
 </View>
 """
 
-INSTRUCTIONS = """<h3>Keyword boxes on store set v1</h3>
+INSTRUCTIONS = """<h3>Keyword boxes on store set {set}</h3>
 <p>OCR has proposed keyword boxes. On every photo: keep, move or delete each one, add any it missed,
 then <b>Submit</b> (after changing a photo already submitted, <b>Update</b>). A photo with no keyword
 is submitted with none.</p>
-<p>The red, blue and grey boxes are v1's date boxes (expiry, mfg, other), for reference only: leave them
+<p>The red, blue and grey boxes are {set}'s date boxes (expiry, mfg, other), for reference only: leave them
 as they are.</p>
 <table>
 <tr><th>Label</th><th>Box</th><th>Examples</th></tr>
@@ -122,12 +124,12 @@ def ocr_lines(image: Image.Image) -> list[dict]:
             if score >= engine.text_score]
 
 
-def v1_photos() -> tuple[list[str], dict[str, dict]]:
-    """v1's photos from its folders, and its frozen labels, which must name
-    exactly the same photos."""
-    photos, labels = store.photos_on_disk(store.V1), store.labels(store.V1)
-    if sorted(labels) != photos or any(p.split("/")[0] not in store.V1.folders for p in photos):
-        raise SystemExit("store set v1's folders and its frozen labels name different photos")
+def set_photos(store_set: store.StoreSet) -> tuple[list[str], dict[str, dict]]:
+    """A set's photos from its folders, and its frozen labels, which must
+    name exactly the same photos."""
+    photos, labels = store.photos_on_disk(store_set), store.labels(store_set)
+    if sorted(labels) != photos or any(p.split("/")[0] not in store_set.folders for p in photos):
+        raise SystemExit(f"store set {store_set.version}'s folders and its frozen labels name different photos")
     return photos, labels
 
 
@@ -177,10 +179,12 @@ def sheet(photos: list[str], labels: dict[str, dict], proposed: dict[str, dict],
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--version", default="v1", help="the store set: v1 or v3 (never v2)")
     parser.add_argument("--sheet", action="store_true", help="also draw them, in data/store/runs/")
     args = parser.parse_args()
 
-    photos, labels = v1_photos()
+    store_set = store_train.keyword_set(args.version)
+    photos, labels = set_photos(store_set)
     root = store_photos_dir()
     proposed, read = {}, {}
     for k, photo in enumerate(photos, start=1):
@@ -194,17 +198,19 @@ def main() -> None:
         print(f"\r{k}/{len(photos)}", end="", file=sys.stderr, flush=True)
     print(file=sys.stderr)
 
-    out = store_train.KEYWORDS_DIR
+    out = store_train.keywords_dir(store_set)
     out.mkdir(parents=True, exist_ok=True)
     record = {"made": date.today().isoformat(), "long_side": LONG_SIDE, "model_version": store_train.MODEL_VERSION,
-              "test_set_sha256": store.TEST_SET_SHA256,
+              "test_set_sha256": store_set.test_set_sha256,
               "code_sha256": code_sha256(store_train, rapidocr_regex, sys.modules[__name__])}
     (out / "proposals.json").write_text(json.dumps({**record, "photos": proposed}, indent=1) + "\n")
     (out / "lines.json").write_text(json.dumps({**record, "photos": read}) + "\n")
     tasks = [store_train.keyword_task(p, tuple(proposed[p]["size"]), proposed[p]["boxes"], labels[p])
              for p in photos]
     (out / "tasks.json").write_text(json.dumps(tasks) + "\n")
-    project = {"title": TITLE, "label_config": INTERFACE, "expert_instruction": INSTRUCTIONS,
+    v = store_set.version
+    project = {"title": TITLE.format(set=v), "label_config": INTERFACE.format(set=v),
+               "expert_instruction": INSTRUCTIONS.format(set=v),
                "show_instruction": True, "show_skip_button": False, "show_collab_predictions": True,
                "model_version": store_train.MODEL_VERSION, "maximum_annotations": 1}
     (out / "project.json").write_text(json.dumps(project, indent=1) + "\n")
@@ -221,7 +227,8 @@ def main() -> None:
           f"{over} over a date box (IoU >= {store_train.OVER_DATE})")
     print(f"wrote {out}/: proposals.json, lines.json, tasks.json ({len(tasks)} tasks), project.json")
     if args.sheet:
-        run_dir = start_run("keyword-proposals", vars(args), root=store.RUNS_DIR)
+        run_dir = start_run("keyword-proposals" + ("" if store_set is store.V1 else f"-{v}"), vars(args),
+                            root=store.RUNS_DIR)
         sheet(photos, labels, proposed, run_dir)
         print(f"sheet: {run_dir}")
 

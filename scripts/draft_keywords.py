@@ -1,12 +1,13 @@
-"""Draft keyword boxes on store set v1 for the owner's review: OCR's
+"""Draft keyword boxes on a store set for the owner's review: OCR's
 proposals snapped to their ink, then Claude's edits from looking at each
 photo (docs/m2b-store-and-size.md, S5; changed 2026-11-03 at the owner's
-request, as S4's design ids were).
+request, as S4's design ids were; v3 in S5b).
 
-    python scripts/draft_keywords.py            # data/store/keywords/draft.json, draft_predictions.json
-    python scripts/draft_keywords.py --sheet    # and one picture per photo in data/store/runs/
+    python scripts/draft_keywords.py                 # v1: data/store/keywords/draft.json, draft_predictions.json
+    python scripts/draft_keywords.py --sheet         # and one picture per photo in data/store/runs/
+    python scripts/draft_keywords.py --version v3    # v3: the same in data/store/v3/keywords/
 
-Reads data/store/keywords/: lines.json and proposals.json (propose_keywords.py)
+Reads the set's keywords folder: lines.json and proposals.json (propose_keywords.py)
 and edits.json, Claude's edits per photo, a list of:
 
     {"op": "delete", "id": "kw3"}                       OCR's box is wrong
@@ -28,7 +29,8 @@ against each other; one added by eye gets cl1, cl2, ..., one from the second OCR
 (src "ocr2": RapidOCR again on the photo's dates area, enlarged, with
 lower detection thresholds) o1, o2, ... The draft goes to
 Label Studio as a second prediction (MODEL_VERSION below) beside OCR's.
-Only store set v1; everything written names photos, so it stays in data/store/.
+Only store sets v1 and v3, never v2; everything written names photos, so it
+stays in data/store/.
 """
 from __future__ import annotations
 
@@ -286,20 +288,24 @@ def sheet_picture(im: Image.Image, read: list[dict], ocr_size, boxes: list[dict]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--version", default="v1", help="the store set: v1 or v3 (never v2)")
     parser.add_argument("--sheet", action="store_true", help="also one picture per photo, in data/store/runs/")
     parser.add_argument("--only", nargs="*", help="draw only these photos (all are drafted)")
     args = parser.parse_args()
 
-    folder = store_train.KEYWORDS_DIR
+    store_set = store_train.keyword_set(args.version)
+    folder = store_train.keywords_dir(store_set)
     lines = json.loads((folder / "lines.json").read_text())
     proposals = json.loads((folder / "proposals.json").read_text())
     edits_path = folder / "edits.json"
     edits = json.loads(edits_path.read_text()) if edits_path.exists() else {}
-    labels = store.labels(store.V1)
-    photos = store.photos_on_disk(store.V1)
+    labels = store.labels(store_set)
+    photos = store.photos_on_disk(store_set)
     if sorted(lines["photos"]) != photos or sorted(proposals["photos"]) != photos or set(edits) - set(photos):
-        raise SystemExit("the OCR lines, proposals and edits must name exactly store set v1's photos")
-    run_dir = start_run("keyword-draft", vars(args), root=store.RUNS_DIR) if args.sheet else None
+        raise SystemExit(f"the OCR lines, proposals and edits must name exactly store set "
+                         f"{store_set.version}'s photos")
+    run_name = "keyword-draft" + ("" if store_set is store.V1 else f"-{store_set.version}")
+    run_dir = start_run(run_name, vars(args), root=store.RUNS_DIR) if args.sheet else None
     drafts, results, crops = {}, [], {}
     for k, photo in enumerate(photos, start=1):
         im = load_upright(store_photos_dir() / photo)

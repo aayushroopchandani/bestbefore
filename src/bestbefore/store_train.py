@@ -222,6 +222,26 @@ def v3_split() -> dict[str, str]:
 KEYWORD_LABELS = ("due", "prod", "code")
 KEYWORDS_DIR = store.DATA_DIR / "keywords"      # proposals, tasks, exports: they name photos
 KEYWORDS_PATH = store.DATA_DIR / "v1_keywords.json"
+# The sets that get keyword boxes: v1 (S5) and v3 (S5b); never v2, the test set.
+KEYWORD_SETS = ("v1", "v3")
+
+
+def keywords_dir(store_set: store.StoreSet) -> Path:
+    """A set's proposals, tasks and exports: v1's in data/store/keywords/,
+    another's in its own folder (data/store/v3/keywords/)."""
+    return KEYWORDS_DIR if store_set is store.V1 else store_set.data_dir / "keywords"
+
+
+def keywords_path(store_set: store.StoreSet) -> Path:
+    """A set's reviewed keyword boxes: v1_keywords.json, or keywords.json in its folder."""
+    return KEYWORDS_PATH if store_set is store.V1 else store_set.data_dir / "keywords.json"
+
+
+def keyword_set(version: str) -> store.StoreSet:
+    """The store set a keyword tool works on, refusing v2 (and anything else)."""
+    if version not in KEYWORD_SETS:
+        raise SystemExit(f"keyword boxes are for store sets {', '.join(KEYWORD_SETS)} only, not {version}")
+    return store.SETS[version]
 # The labelling interface's names, and the predictions' in Label Studio.
 IMAGE, KEYWORD_CONTROL, REFERENCE_CONTROL = "img", "keyword", "date"
 MODEL_VERSION = "rapidocr-1.2.3-keywords"
@@ -352,12 +372,12 @@ def regions(annotation: dict, control: str) -> list[dict]:
             if r.get("from_name") == control and r.get("type") == "rectanglelabels"]
 
 
-def check_reviewed(tasks: list[dict], photos: list[str]) -> list[str]:
+def check_reviewed(tasks: list[dict], photos: list[str], name: str = "store set v1") -> list[str]:
     """Every v1 photo once and nothing else, each with exactly one
     annotation, submitted (not skipped), and no draft left: Label Studio
     keeps a draft while boxes are drawn or changed, and only Submit (or
     Update) turns it into the annotation (M0, D5)."""
-    problems = check_photos([task_photo(t) for t in tasks], photos, "store set v1")
+    problems = check_photos([task_photo(t) for t in tasks], photos, name)
     for task in tasks:
         photo, done, every = task_photo(task), len(submitted(task)), len(task.get("annotations", []))
         if done != 1 or every != 1:
@@ -487,13 +507,21 @@ def overlap_bands(proposed: dict[str, list[dict]], final: dict[str, list[dict]])
     return bands
 
 
+def reviewed_on(tasks: list[dict]) -> str | None:
+    """The day of the review's last change (its latest annotation, UTC), so
+    the keyword file is dated by its export and rebuilds from it; None when
+    the export carries no dates."""
+    days = [a["updated_at"][:10] for t in tasks for a in submitted(t) if a.get("updated_at")]
+    return max(days) if days else None
+
+
 def keywords_file(boxes: dict[str, list[dict]], hashes: dict[str, str], date: str,
-                  dates: dict[str, list[dict]] | None = None) -> dict:
-    """v1_keywords.json's content: every v1 photo's keyword boxes (label and
+                  dates: dict[str, list[dict]] | None = None, version: str = "v1") -> dict:
+    """v1_keywords.json's content (or another set's): every photo's keyword boxes (label and
     0..1 xyxy of the upright photo, as its date boxes in v1's labels), the
     date boxes the reviewer added where v1's labels missed a date (v1's
     frozen labels don't change), and the hashes of what they were made from."""
-    return {"version": "v1", "imported": date, **hashes,
+    return {"version": version, "imported": date, **hashes,
             "photos": {p: [{"label": b["label"], "xyxy": b["xyxy"]} for b in boxes[p]]
                        for p in sorted(boxes)},
             "added_dates": {p: dates[p] for p in sorted(dates or {})}}

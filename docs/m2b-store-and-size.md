@@ -7,7 +7,8 @@ worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
 S10); S3 done 2026-11-03; S4 done 2026-11-03 (v2's labels frozen, pack
 designs frozen, v1 split: 25 expiries in validation); S5 done 2026-11-03
 (341 keyword boxes on v1, every photo reviewed); S5b added 2026-11-04
-(15 more store photos as store set v3). Next: S5b.
+(15 more store photos as store set v3); S5b done 2026-11-04 (v3 frozen:
+10 photos train, 5 validate, 61 keyword boxes). Next: S6.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -1359,6 +1360,92 @@ file (searched).
 `feat: store set v3 labelled, its designs and split frozen`,
 `feat: keyword boxes on store set v3`
 
+**Done 2026-11-04.** Store set v3 is 15 photos, every file frozen and
+loading with its hash: photo list `8b279416…`, labels `6b607800…`
+(`data/store/v3/train_set.json`), designs `03647906…`, split `edd2c25c…`,
+and 61 keyword boxes in `data/store/v3/keywords.json`. v1's `labels.json`,
+`designs.json`, split and `v1_keywords.json` are byte-identical to before,
+and v1's keyword file rebuilds byte for byte from its export with
+`--version v1`. Label Studio's projects 1 to 3 were fingerprinted before
+the first write and after the last, and are unchanged; project 4 too, from
+its labels' freeze on. 611 tests pass (602
+before). The first two commits each pass the suite on their own (604,
+608). What was found:
+
+- **The photos.** 15 HEIC, 4,032 × 3,024; no name matches a v1 or v2
+  photo, and no JPEG is byte-identical to one. Converted once by
+  `scripts/store_heic.py` (sips-316, macOS 26.6.2, quality 95) into
+  `trainset3/`; `data/store/v3/heic.json` keeps each HEIC's hash beside its
+  JPEG's. The script refuses to run while Scanify's git doesn't ignore
+  `trainset3/`: added to its `.git/info/exclude` first, confirmed with
+  `git check-ignore`, no tracked file of Scanify's changed. **14 of the 15
+  carry an EXIF turn** (13 a quarter, 1 a half), though `sips` reported
+  none on the HEICs: a contact sheet through `load_upright` showed all 15
+  the right way up, and every box was drawn on the upright frame (B2's
+  check 5).
+- **`store.V3`** is a `StoreSet` with `training=True`: its frozen labels
+  are `train_set.json` and their constant `LABELS_V3_SHA256`, so no file
+  calls it a test set; errors say "store set". The freeze script writes
+  `results/store_set_v3.md` (counts and hashes only).
+- **(changed, owner's request) Claude drafted the label fields**, as S4's
+  design ids. The owner drew every date box in project 4, `Store set v3`
+  (v1's interface and storage settings, 15 tasks: the frozen list) and
+  typed no field; Claude read every date from the owner's boxes at full
+  size and wrote the tag, expiry, mfg, format, derived and notes into the
+  owner's drafts through the API; the owner checked them in Label Studio,
+  and Claude submitted. **A misread was frozen, then fixed:** one lid's
+  `DOP: 10/23` was drafted as `10/25` and frozen (`bce9c59d…`); found at
+  full size while naming the designs, before anything used it. Its file
+  went to `data/store/backups/`, every other field was read again against
+  its full-size print (all held), and the labels were frozen again with a
+  history line saying why.
+- **(departure from B1, owner's call) A packing date as mfg.** One pack
+  (3 photos) prints "Packed on" and "Expire Date", no manufacture date.
+  B1 makes a packing date `other_date` with the mfg field blank; the owner
+  kept the box as `mfg` and had its field filled with the packed date,
+  2026-02-05. v1 and v2 stay as labelled.
+- **The labels:** 15 photos, every one with an expiry (7 to the day, 8 to
+  the month, 3 derived from a shelf life); sideways 8, clean 6,
+  small-print 1 (the small-print rule moved 1 from clean); 30 date boxes
+  (15 mfg, 12 expiry, 3 other).
+- **The designs** (Claude drafted, the owner approved, as S4): **9**, 2
+  of them v1's (4 photos, both in v1-train) and 7 new; none is in v2, so
+  v2's seen and unseen designs don't change. The freeze refuses an id
+  that differs from a v1 or v2 id only in case or spaces.
+- **The split:** the 4 photos of v1-train's designs train; v3's 7 new
+  designs split by S4's rule, 2 of 5 sideways and 1 of 2 clean to
+  validation. **10 photos train (8 expiries), 5 validate (4).** With v1's,
+  v1-train holds 80 photos and 64 expiries, v1-val 34 photos and 29
+  expiries (25 before).
+- **Keyword boxes.** The keyword tools take `--version v1|v3` and refuse
+  v2; v3's files are in `data/store/v3/keywords/`. OCR read 480 lines and
+  proposed **32 boxes on 12 photos**, none over a date. Claude looked at
+  all 15 at full size: 33 edits on 12 photos (19 boxes added by eye or
+  from an OCR line, 10 from the second OCR pass), a draft of **61 boxes on
+  14 photos**, loaded as project 5, `Store v3 keywords`, beside OCR's. The
+  owner changed 10 photos; Claude submitted all 15. **One check caught a
+  late edit:** the owner's open editor saved a draft on one photo 6 s
+  after the submit; check 1 refused the export, and at the owner's word
+  Claude copied that final version into the annotation and deleted the
+  draft. All four checks pass, and the import twice gives the same file
+  (now dated by the review's last change, not the day it runs).
+- **The keyword boxes:** `due` 17 on 14 photos, `prod` 25 on 14, `code`
+  19 on 12; 61 on 14 photos (the cap has no keyword).
+- **OCR's help**, by region id: of its 32 proposals, **kept 0, moved 32,
+  deleted 0; 29 added.** 16 of the 32 overlap their final box at IoU 0.5
+  or more. OCR found 32 of the 61 final keywords (52%; v1's 63%): v3 is
+  mostly stamped and sideways print, which it reads least.
+- **The keyword patterns miss three store words**: `Expire Date:`, `BBD:`
+  and `DOP:` (boxed by hand here). The patterns weren't changed, so v1's
+  proposals stay as made; adding them is in [Later](#later).
+- **Photo names.** The committed files were searched for every v1, v2 and
+  v3 photo name (and stem, 5 characters or more), the HEIC names and every
+  design name: none.
+- **Not checked:** whether the owner looked at the 5 keyword photos left
+  as drafted (Label Studio keeps no record of a view); the second OCR pass
+  as a committed script (its output is in `edits.json`); S6's use of v3 (it
+  isn't written yet); the learnings guide (not written).
+
 ### S6. v1 as training and validation data · laptop, then the cluster
 
 **Goal:** v1-train and v1-val exported, checked, and on the cluster
@@ -1696,13 +1783,15 @@ results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed
   comparable. **15 more store photos arrived on 2026-11-03** (HEIC, under
   `data/store/`, not yet looked at): their own training-only set beside v1,
   not added to it, so v1's frozen labels, designs and split stay as they
-  are (owner's OK); planned as store set v3 in S5b, before S6's export.
+  are (owner's OK); store set v3, done in S5b.
 - **A dates-only arm**: the detector trained without the `due`, `prod` and
   `code` classes, to measure whether they help or cost the `date` class
   (asked by the owner in S5; every run so far has all four, M1 decision 2).
   Only if dates turn out to be the bottleneck.
 - **Keyword boxes for new store photos** start from S5's tools: OCR's
   proposals snapped to their ink, then a second OCR pass on the date area.
+  The patterns could add `Expire`, `BBD` and `DOP` (S5b found them on
+  store packs), with v1's and v3's proposals kept as made.
 - **A mask of the pack** for generated blocks (M2's Later).
 - **k-fold validation by design**, if v1-val proves too noisy.
 - **A full retrain** of `s` (or `m`) from COCO on gen-v2's whole mix with

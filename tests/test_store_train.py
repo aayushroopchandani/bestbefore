@@ -479,3 +479,31 @@ def test_v3s_report_leaves_v1s_section_as_it_was(load_script, tmp_path, monkeypa
     assert "| design new to v3 | 4 | 5 | 5 |" in section
     names = {*DESIGNS_V3, *DESIGNS_V3.values(), *(p.split("/")[1] for p in DESIGNS_V3)}
     assert not [n for n in names if n in section]
+
+
+def test_keyword_tools_take_v1_or_v3_and_never_v2():
+    assert store_train.keyword_set("v1") is store.V1 and store_train.keyword_set("v3") is store.V3
+    with pytest.raises(SystemExit, match="not v2"):
+        store_train.keyword_set("v2")
+    assert store_train.keywords_dir(store.V1) == store_train.KEYWORDS_DIR
+    assert store_train.keywords_path(store.V1) == store_train.KEYWORDS_PATH
+    assert store_train.keywords_dir(store.V3) == store.DATA_DIR / "v3" / "keywords"
+    assert store_train.keywords_path(store.V3) == store.DATA_DIR / "v3" / "keywords.json"
+
+
+def test_the_keyword_file_is_dated_by_its_review():
+    tasks = export()
+    assert store_train.reviewed_on(tasks) is None
+    tasks[0]["annotations"][0]["updated_at"] = "2026-11-03T17:42:01.919561Z"
+    tasks[1]["annotations"][0]["updated_at"] = "2026-11-02T09:00:00Z"
+    assert store_train.reviewed_on(tasks) == "2026-11-03"
+    assert store_train.keywords_file({}, {}, "2026-11-03", version="v3")["version"] == "v3"
+
+
+def test_v3s_keyword_review_is_checked_against_v3s_photos():
+    photos = ["trainset3/a.jpg"]
+    task = {**reviewed("trainset3/a.jpg", []), "annotations": [{"result": [], "was_cancelled": False}]}
+    assert store_train.check_reviewed([task], photos, "store set v3") == []
+    stray = reviewed("samples1/a.jpg", [])
+    assert store_train.check_reviewed([task, stray], photos, "store set v3") == [
+        "samples1/a.jpg: labelled, but not in store set v3"]
