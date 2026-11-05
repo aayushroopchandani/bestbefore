@@ -1001,6 +1001,11 @@ def test_gen_v2s_shares_are_read_from_its_sidecars(pool):
 DECILES = (0.00659, 0.01118, 0.01296, 0.01451, 0.01573, 0.01736, 0.01974, 0.02181, 0.02559, 0.03247, 0.045)
 
 
+def _within(box: float, target: float) -> bool:
+    """The plan's tolerance, written out here rather than taken from make.fits."""
+    return abs(box - target) <= max(1.0, 0.05 * target)
+
+
 def test_gen_v2_is_m2s_spec_with_every_gap_filled_and_the_stores_sizes():
     from bestbefore.synth.spec import GEN_V2, V2Size
     assert GEN_V2 == replace(GEN, text=TEXT_V2, style=STYLE_V2, geometry=GEOMETRY_V2, v2=V2)
@@ -1040,7 +1045,10 @@ def _drawn_to_size(rng, style: str, geometry_spec, spec) -> tuple[bool | None, f
     drawn = make._sized(block, style, fonts.random_family(rng, "train"), target, 1.0, geometry, rng, spec)
     if drawn is None:
         return None, 0
-    assert drawn.sizing["fits"] == make.fits(drawn.sizing["reached"], target, V2.size)
+    first = next(i for i, t in enumerate(block.tokens) if t.cls == "date")
+    x1, y1, x2, y2 = drawn.boxes[first]
+    assert drawn.sizing["reached"] == min(x2 - x1, y2 - y1)                   # its first date's box, as drawn
+    assert drawn.sizing["fits"] == _within(drawn.sizing["reached"], target)
     return drawn.sizing["fits"], drawn.sizing["drawings"]
 
 
@@ -1064,6 +1072,48 @@ def test_a_block_drawn_to_a_target_lands_within_1px_or_5_percent():
             found = [_drawn_to_size(rng, style, _one_way(orientation), GEN_V2)[0] for _ in range(20)]
             cells[style, orientation] = np.mean([f for f in found if f is not None])
     assert min(cells.values()) >= 0.90, {k: v for k, v in cells.items() if v < 1}
+
+
+def _boxes_of(shorts: list[int], calls: list):
+    """A stand-in for make.draw_v2: each call's first date box has the next
+    short side of `shorts` (no ink once they run out); calls are logged as
+    (digits, seed)."""
+    def draw(block, style, family, size, geometry, seed, spec):
+        calls.append((size, seed))
+        short = shorts[len(calls) - 1] if len(calls) <= len(shorts) else None
+        return make.Drawing(None, (None if short is None else (0, 0, 3 * short, short), None), {})
+    return draw
+
+
+@pytest.mark.parametrize("shorts, kept, drawings, fits", [
+    ([30, 10], 10, 2, True),                    # the first correction fits: done
+    ([30, 15, 10], 10, 3, True),                # off, so corrected once more, from the same draws
+    ([30, 12, 14], 12, 3, False),               # still off: the closer drawing is kept
+])
+def test_a_try_corrects_once_more_while_off_and_keeps_its_closest_drawing(monkeypatch, shorts, kept, drawings, fits):
+    from bestbefore.synth.spec import GEN_V2
+    calls = []
+    monkeypatch.setattr(make, "draw_v2", _boxes_of(shorts, calls))
+    block = T.Block(((T.Token("08/2027", "date"), T.Token("EXP", None)),), "single")
+    d, sizing = make.draw_to_size(block, "solid", None, 10.0, FLAT, 77, GEN_V2)
+    assert (sizing["reached"], sizing["drawings"], sizing["fits"]) == (kept, drawings, fits)
+    assert d.boxes[0][3] == kept and {seed for _, seed in calls} == {77}
+    digits = [size for size, _ in calls]                                  # each at the size its box asks for
+    assert digits[0] == pytest.approx(10 / V2.size.provisional)
+    for k in range(1, len(calls)):
+        assert digits[k] == pytest.approx(digits[k - 1] * 10 / shorts[k - 1])
+
+
+def test_a_block_still_off_is_drawn_from_fresh_draws_and_keeps_its_closest(monkeypatch):
+    from bestbefore.synth.spec import GEN_V2
+    calls = []
+    monkeypatch.setattr(make, "draw_v2", _boxes_of([30, 14, 13, 30, 12, 13, 30, 16, 15], calls))
+    block = T.Block(((T.Token("08/2027", "date"),),), "single")
+    drawn = make._sized(block, "solid", None, 10.0, 1.0, FLAT, np.random.default_rng(0), GEN_V2)
+    seeds = [seed for _, seed in calls]
+    assert len(calls) == 9 and len(set(seeds)) == 3 and seeds[0] == seeds[2] != seeds[3]   # 3 tries, fresh each
+    assert (drawn.sizing["reached"], drawn.sizing["fits"], drawn.redraws) == (12, False, 1)   # the closest: try 2
+    assert (drawn.sizing["drawings"], drawn.sizing["tries"]) == (9, 3)
 
 
 @needs_fonts
@@ -1106,7 +1156,7 @@ def test_gen_v2_records_each_blocks_target_and_the_box_it_reached(pool):
             x1, y1, x2, y2 = first["box"]
             assert b["reached"] == round(min(x2 - x1, y2 - y1) / long_side, 5)    # the box, as written
             want = b["target"] * long_side * (GEN.compose.shrink if b["shrunk"] else 1.0)
-            assert b["fits"] == make.fits(min(x2 - x1, y2 - y1), want, V2.size)
+            assert b["fits"] == _within(min(x2 - x1, y2 - y1), want)
             assert b["drawings"] >= 2 and abs(b["print_height"] - b["size"] / long_side) < 1e-5
             rows.append(b["fits"])
             kept += 1
