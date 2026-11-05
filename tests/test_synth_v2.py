@@ -23,9 +23,10 @@ from multiprocessing import get_context
 import numpy as np
 import pytest
 
-from bestbefore.synth import fonts, render as R, text as T
-from bestbefore.synth.spec import (GEN, SET_SEEDS, STYLE, SYNTH_VAL, TEXT, TEXT_V2, V2, spec_dict, spec_hash,
-                                   strata_hash)
+from bestbefore.synth import compose, fonts, make, render as R, text as T, warp as W
+from bestbefore.synth.spec import (COMPOSE, GEN, GEOMETRY, GEOMETRY_V2, SET_SEEDS, STYLE, STYLE_V2, SYNTH_VAL, TEXT,
+                                   TEXT_V2, V2, spec_dict, spec_hash, strata_hash)
+from bestbefore.synth.warp import Geometry
 
 needs_fonts = pytest.mark.skipif(not fonts.fetched(), reason="fonts not fetched: python scripts/fetch_fonts.py")
 
@@ -91,13 +92,35 @@ def test_m2s_text_draws_exactly_what_it_drew():
 @needs_fonts
 @pytest.mark.parametrize("style", R.STYLES)
 def test_gen_v2s_print_changes_nothing_for_m2s_kinds(style):
+    """M2's kinds in M2's styles draw exactly as M2's under gen-v2's print,
+    but for dot-matrix: since S8 a gen-v2 dot-matrix block also draws its
+    nozzle rows, so only the draws before its first dot are M2's."""
     rng = np.random.default_rng(R.STYLES.index(style))
     for _ in range(15):
         block, family = T.random_block(rng), fonts.random_family(rng, "train")
         a, b = np.random.default_rng(1), np.random.default_rng(1)
         m2_layer = R.render(block, style, family, 12, a)
         v2_layer = R.render(block, style, family, 12, b, v2=V2.style)
+        if style == "dot-matrix":
+            v2_dots = {k: v for k, v in v2_layer.params["dots"].items() if k != "nozzle"}
+            assert m2_layer.params == v2_layer.params | {"dots": v2_dots}
+            continue
         assert m2_layer.params == v2_layer.params and np.array_equal(R.ink(m2_layer), R.ink(v2_layer))
+        assert a.bit_generator.state == b.bit_generator.state
+
+
+@needs_fonts
+@pytest.mark.parametrize("style", R.STYLES_V2)
+def test_gen_v2s_line_spacing_changes_nothing_for_m2s_kinds(style):
+    """S7's line spacing per kind, alone: M2's kinds draw the same with it
+    as without it, in every style, dot-matrix and the window included."""
+    rng = np.random.default_rng(10 + R.STYLES_V2.index(style))
+    for _ in range(15):
+        block, family = T.random_block(rng), fonts.random_family(rng, "train")
+        a, b = np.random.default_rng(1), np.random.default_rng(1)
+        plain = R.render(block, style, family, 12, a, v2=replace(V2.style, line_spacing=()))
+        spaced = R.render(block, style, family, 12, b, v2=V2.style)
+        assert plain.params == spaced.params and np.array_equal(R.ink(plain), R.ink(spaced))
         assert a.bit_generator.state == b.bit_generator.state
 
 
@@ -465,3 +488,503 @@ def test_every_gen_v2_box_holds_all_its_ink_and_touches_it(style):
         layer = R.render(block, style, fonts.random_family(rng, "train"), float(rng.choice([6, 9, 14, 24])), rng,
                          v2=V2.style)
         _boxes_hug_their_own_ink(block, layer)
+
+
+# === S8: gen-v2's print, geometry and ink ======================================================
+#
+# Nozzle rows, the laser window, upside-down blocks and worn patches; M2's
+# geometry, ink, print and defects draw exactly what they drew (digests
+# taken from M2's code before S8).
+
+M2_GEOMETRY_DIGEST = "a4aad09d28dc0c6fcae82b59f34df84577ca4b208c119c6c5571e84dc04a795e"
+M2_INK_DIGEST = "e9c01efae4c6844c44cbd1349d103234ca486cf0b5b06beee8a22dfba927cec9"
+M2_PRINT_DIGEST = "6622a64db7cb1dea6dea550087f6158c9b0a9a84bee5be185ab55ab92cb4e79e"
+# The pixels behind M2_PRINT_DIGEST: the laptop's builds (S8), as M2 S6 found
+# that another machine's draw a few pixels differently.
+PRINT_DIGEST_BUILDS = {"pillow": "12.3.0", "freetype": "2.14.3", "opencv": "5.0.0", "numpy": "2.4.6",
+                       "platform": "darwin-arm64"}
+V2_PRINT = replace(GEN, text=TEXT_V2, style=STYLE_V2, geometry=GEOMETRY_V2, v2=V2)   # gen-v2, M2's sizes
+FLAT = Geometry("upright", 0, 0.0)
+
+
+def _builds() -> dict:
+    import platform
+
+    import cv2
+    import PIL
+    from PIL import features
+    return {"pillow": PIL.__version__, "freetype": features.version("freetype2"), "opencv": cv2.__version__,
+            "numpy": np.__version__, "platform": f"{platform.system().lower()}-{platform.machine()}"}
+
+
+def test_m2s_geometry_and_ink_draw_exactly_what_they_drew():
+    rng = np.random.default_rng(23456)
+    digest = hashlib.sha256()
+    for _ in range(10_000):
+        digest.update(repr(W.random_geometry(rng).record()).encode())
+    digest.update(repr(rng.bit_generator.state).encode())
+    assert digest.hexdigest() == M2_GEOMETRY_DIGEST
+    rng = np.random.default_rng(34567)
+    digest = hashlib.sha256()
+    for _ in range(10_000):
+        style = R.STYLES[int(rng.integers(4))]
+        digest.update(repr(compose.choose_ink(rng, style, float(rng.random())).record()).encode())
+    digest.update(repr(rng.bit_generator.state).encode())
+    assert digest.hexdigest() == M2_INK_DIGEST
+
+
+@needs_fonts
+@pytest.mark.skipif(_builds() != PRINT_DIGEST_BUILDS, reason="the digest's pixels are the laptop's builds'")
+def test_m2s_print_and_ink_defects_draw_exactly_what_they_drew():
+    """120 of M2's blocks in M2's styles, warped, with their ink defects:
+    every layer's record, boxes and pixels, and the generator's state."""
+    rng = np.random.default_rng(45678)
+    digest = hashlib.sha256()
+    for _ in range(120):
+        block = T.random_block(rng)
+        style = R.random_style(rng)
+        family = fonts.random_family(rng, "train")
+        geometry = W.random_geometry(rng)
+        layer = W.apply(R.render(block, style, family, float(rng.uniform(5, 30)), rng), geometry)
+        layer, record = compose.defects(layer, style, [t.cls is not None for t in block.tokens], rng)
+        small = R.shrink(layer)
+        digest.update(repr((sorted(layer.params.items(), key=str), record, R.boxes(small))).encode())
+        digest.update(np.ascontiguousarray(R.ink(small)).tobytes())
+    digest.update(repr(rng.bit_generator.state).encode())
+    assert digest.hexdigest() == M2_PRINT_DIGEST
+
+
+def test_gen_v2s_print_and_geometry_need_v2():
+    family = fonts.FAMILIES[0]
+    block = T.Block(((T.Token("EXP", "due"), T.Token("08/2027", "date")),), "single")
+    with pytest.raises(ValueError, match="needs gen-v2"):
+        R.render(block, "window", family, 10, np.random.default_rng(0))
+    with pytest.raises(ValueError, match="unknown style"):
+        R.render(block, "stencil", family, 10, np.random.default_rng(0), v2=V2.style)
+    with pytest.raises(ValueError, match="needs gen-v2"):
+        compose.choose_ink(np.random.default_rng(0), "window", 0.5)
+    with pytest.raises(ValueError, match="upside-down"):
+        W.random_geometry(np.random.default_rng(0), GEOMETRY_V2)
+    assert {name for name, _ in STYLE_V2.styles} == set(R.STYLES_V2)
+    assert dict(STYLE_V2.styles)["dot-matrix"] == dict(STYLE.styles)["dot-matrix"]     # the plan keeps it
+
+
+# --- Nozzle rows ---------------------------------------------------------------------------------
+
+def test_nozzle_rows_drop_1_or_2_rows_inside_a_digit_with_their_share():
+    rng = np.random.default_rng(50)
+    grids = [int(r) for r in rng.choice(STYLE.dot_rows, 10_000)]
+    drawn = [(rows, R.nozzle_rows(rng, V2.style, rows)) for rows in grids]
+    dropped = [(rows, d) for rows, d in drawn if d]
+    assert abs(len(dropped) / len(drawn) - V2.style.nozzle) < 0.03
+    assert abs(np.mean([len(d) == 1 for _, d in dropped]) - 0.5) < 0.03
+    for rows, d in dropped:
+        assert list(d) == sorted(set(d)) and all(1 <= r <= rows - 2 for r in d)    # never a top or bottom row
+    for rows in STYLE.dot_rows:                                     # every inside row comes up
+        assert {r for n, d in dropped if n == rows for r in d} == set(range(1, rows - 1))
+
+
+@pytest.mark.parametrize("radius, blur", [(0.40, 0.20), (0.48, 0.35)])      # crisp, and the spec's fattest
+def test_dotify_puts_no_dot_on_a_skipped_row(radius, blur):
+    """A covered block 7 pitches tall, dots on every cell: with rows 2 and 4
+    skipped, every other dot is as before, and the skipped rows' centre
+    lines hold no ink, even beside the spec's fattest, blurriest dots."""
+    pitch = 8.0
+    p = {"pitch_x": pitch, "pitch_y": pitch, "cover": 0.4, "drop": 0.0, "jitter": 0.0,
+         "kernel": R._dot_kernel(radius * pitch, blur * pitch)}
+    cov = R.Sprite(0, 0, np.ones((56, 80), np.float32))
+    full = R.dotify(cov, 0.0, p, np.random.default_rng(0))
+    gaps = R.dotify(cov, 0.0, p | {"skip": (2, 4)}, np.random.default_rng(0))
+    assert (full.x, full.y, full.alpha.shape) == (gaps.x, gaps.y, gaps.alpha.shape)
+    assert (gaps.alpha <= full.alpha + 1e-6).all()
+    for r in range(7):
+        line = gaps.alpha[round((r + 0.5) * pitch) - gaps.y]
+        assert (line.max() < R.INK) if r in (2, 4) else (line.max() > 0.5), r
+
+
+def _line_tokens(block: T.Block) -> list[list[int]]:
+    """Each line's token indices, in Block.tokens order."""
+    out, k = [], 0
+    for line in block.lines:
+        out.append(list(range(k, k + len(line))))
+        k += len(line)
+    return out
+
+
+@needs_fonts
+@pytest.mark.parametrize("rows", STYLE.dot_rows)
+def test_a_dropped_dot_row_leaves_every_line_and_its_tokens_box_holds_the_rest(rows):
+    """The same dot-matrix block with nozzle rows and without (one seed): the
+    same dots but the dropped rows', no ink where those were (crisp dots,
+    still, so neighbours don't blur into the gap), a loss in every line,
+    and every box still on its token's remaining ink."""
+    crisp = replace(STYLE, dot_rows=(rows,), dot_radius=(0.32, 0.32), dot_blur=(0.15, 0.15), dot_jitter=0.0)
+    dropping, keeping = replace(V2.style, nozzle=1.0), replace(V2.style, nozzle=0.0)
+    rng = np.random.default_rng(60 + rows)
+    blocks = _blocks(30, seed=60 + rows, spec=replace(TEXT_V2, kinds=(("panel", 0.5), ("dense-panel", 0.5))))
+    for block in blocks:
+        family, seed = fonts.random_family(rng, "train"), int(rng.integers(1 << 30))
+        size = float(rng.choice([10, 16, 24]))
+        whole = R.render(block, "dot-matrix", family, size, np.random.default_rng(seed), crisp, keeping)
+        gappy = R.render(block, "dot-matrix", family, size, np.random.default_rng(seed), crisp, dropping)
+        assert gappy.params["dots"]["nozzle"] and not whole.params["dots"]["nozzle"]
+        assert whole.params | {"dots": None} == gappy.params | {"dots": None}
+        assert (whole.width, whole.height) == (gappy.width, gappy.height)     # dropping rows moves nothing
+        a, b = R.ink(whole), R.ink(gappy)
+        assert (b <= a + 1e-5).all()
+        removed = a - b
+        assert (b[removed >= 0.5] < R.INK).all()
+        pitch = whole.params["line_spacing"] * whole.params["px"]   # rounded in the record: lines to 1 px
+        starts, shapes = [], set()
+        for n, line in enumerate(_line_tokens(block)):
+            sprites = [whole.tokens[i] for i in line if whole.tokens[i] is not None]
+            x0, y0 = min(s.x for s in sprites), min(s.y for s in sprites)
+            x1 = max(s.x + s.alpha.shape[1] for s in sprites)
+            y1 = max(s.y + s.alpha.shape[0] for s in sprites)
+            assert removed[y0:y1, x0:x1].max() >= 0.5                # every line lost its rows' dots
+            heights = set()                                          # the same rows in every token and line:
+            for i in line:                                           # the heights of the dots it lost
+                s, t = whole.tokens[i], gappy.tokens[i]
+                if s is not None and t is not None:
+                    ys = np.flatnonzero(((s.alpha - t.alpha) >= 0.5).any(axis=1))
+                    if len(ys):
+                        heights.add(tuple(ys + s.y))
+            assert len(heights) == 1, heights                        # within a line, exactly
+            (h,) = heights
+            starts.append(h[0] - round(n * pitch))
+            shapes.add(tuple(np.array(h) - h[0]))
+        assert len(shapes) == 1 and max(starts) - min(starts) <= 1, (shapes, starts)
+        _boxes_hug_their_own_ink(block, gappy)
+
+
+@needs_fonts
+def test_with_the_specs_own_dots_nozzle_rows_only_take_ink_away():
+    rng = np.random.default_rng(65)
+    for block in _blocks(40, seed=65):
+        family, seed, size = fonts.random_family(rng, "train"), int(rng.integers(1 << 30)), float(rng.uniform(6, 24))
+        whole = R.render(block, "dot-matrix", family, size, np.random.default_rng(seed), STYLE,
+                         replace(V2.style, nozzle=0.0))
+        gappy = R.render(block, "dot-matrix", family, size, np.random.default_rng(seed), STYLE,
+                         replace(V2.style, nozzle=1.0))
+        assert (whole.width, whole.height) == (gappy.width, gappy.height)
+        assert (R.ink(gappy) <= R.ink(whole) + 1e-5).all()
+        assert R.ink(gappy).sum() < R.ink(whole).sum()
+        _boxes_hug_their_own_ink(block, gappy)
+
+
+# --- The laser window ---------------------------------------------------------------------------
+
+def test_window_looks_follow_their_shares_and_ranges():
+    rng = np.random.default_rng(70)
+    drawn = [R.window_params(rng, V2.style) for _ in range(10_000)]
+    assert abs(np.mean([w["dots"] for w in drawn]) - V2.style.window_dots) < 0.03
+    colours = Counter(tuple(w["colour"]) for w in drawn)
+    assert set(colours) == set(V2.style.window_colours)
+    assert all(abs(n / len(drawn) - 0.25) < 0.03 for n in colours.values())
+    for name in ("pad", "corner", "soft", "glow", "glow_spread"):
+        lo, hi = getattr(V2.style, f"window_{name}")
+        assert all(lo <= w[name] <= hi for w in drawn), name
+    assert V2.style.window_glow[1] < R.INK
+    assert all(compose.luminance(c) < 0.25 for c in V2.style.window_colours)       # a dark printed rectangle
+
+
+def test_a_glow_alone_is_never_ink():
+    dot = R.Sprite(40, 40, np.pad(np.ones((6, 6), np.float32), 2))
+    lit = R.laser(dot, soft=0.0, glow=V2.style.window_glow[1], spread=12.0)
+    outside = np.ones_like(lit.alpha, bool)
+    outside[dot.y - lit.y:dot.y - lit.y + 10, dot.x - lit.x:dot.x - lit.x + 10] = False
+    assert 0 < lit.alpha[outside].max() <= V2.style.window_glow[1] < R.INK
+    assert lit.alpha[dot.y - lit.y + 5, dot.x - lit.x + 5] == pytest.approx(1.0)
+
+
+@needs_fonts
+@pytest.mark.parametrize("dots", [False, True])
+def test_a_windows_text_is_lighter_than_its_rectangle(dots):
+    style = replace(V2.style, window_dots=float(dots))
+    rng = np.random.default_rng(71 + dots)
+    for block in _blocks(20, seed=71 + dots):
+        layer = R.shrink(R.render(block, "window", fonts.random_family(rng, "train"), float(rng.choice([12, 16, 24])),
+                                  rng, v2=style))
+        assert layer.params["window"]["dots"] is dots and ("dots" in layer.params) is dots
+        ink = R.ink(layer)
+        rectangle = compose._canvas(layer.backing, layer.height, layer.width)
+        strokes, bare = ink >= 0.8 * ink.max(), (rectangle >= 0.99) & (ink < 0.01)
+        assert ink.max() > 0.25 and bare.any()                       # M2's faintest dots peak near 0.3
+        for grey in (40.0, 220.0):                                   # on a dark pack and on a light one
+            photo = np.full((layer.height, layer.width, 3), grey, np.float32)
+            compose.blend(photo, layer, 0, 0, compose.choose_ink(rng, "window", grey / 255, v2=V2.compose),
+                          compose.Surface(photo.copy()))
+            lum = photo @ compose.LUMA / 255
+            # light strokes on a dark window: at least 0.8 x 0.75 x (0.75 - 0.25) of their alpha lighter
+            assert lum[strokes].min() > lum[bare].max() + 0.25 * ink.max()
+
+
+@needs_fonts
+@pytest.mark.parametrize("dots", [False, True])
+def test_every_window_box_holds_all_its_ink_and_touches_it(dots):
+    style = replace(V2.style, window_dots=float(dots))
+    rng = np.random.default_rng(73 + dots)
+    blocks = _blocks(15, 73, _only("dense-panel")) + _blocks(15, 74, _only("line-pair")) + _blocks(20, 75)
+    for block in blocks:
+        layer = R.render(block, "window", fonts.random_family(rng, "train"), float(rng.choice([6, 9, 14, 24])), rng,
+                         v2=style)
+        _boxes_hug_their_own_ink(block, layer)
+
+
+@needs_fonts
+def test_white_strokes_on_a_white_pack_are_measured_on_their_window():
+    """The floor on faint ink measures a window's strokes against its dark
+    rectangle, what they are seen on: white strokes on a white pack change
+    its pixels less than they stand out from their window."""
+    white = replace(V2.compose, window_ink=(1.0, 1.0))
+    solid = replace(COMPOSE, opacity=(1.0, 1.0))
+    block = T.Block(((T.Token("EXP", "due"), T.Token("08/2027", "date")),), "single")
+    layer = R.shrink(R.render(block, "window", fonts.families("train")[0], 16, np.random.default_rng(0),
+                              v2=replace(V2.style, window_dots=0.0)))
+    photo = np.full((layer.height + 20, layer.width + 20, 3), 252.0, np.float32)
+    before = photo.copy()
+    inks, shown = make.ink_block(photo, layer, block, "window", 10, 10, compose.Surface(before),
+                                 np.random.default_rng(1), solid, white)
+    assert len(inks) == 1 and shown >= COMPOSE.visible
+    region = (slice(10, 10 + layer.height), slice(10, 10 + layer.width))
+    against = compose.backdrop(before, layer, 10, 10, compose.Surface(before))
+    assert shown == pytest.approx(min(compose.ink_change(against, photo[region], s) for s in layer.tokens))
+    assert shown > min(compose.ink_change(before[region], photo[region], s) for s in layer.tokens) + 0.1
+
+
+# --- Upside-down blocks --------------------------------------------------------------------------
+
+def test_upside_down_blocks_take_their_share_turned_a_half_turn():
+    rng = np.random.default_rng(80)
+    drawn = [W.random_geometry(rng, GEOMETRY_V2, V2.geometry) for _ in range(10_000)]
+    for name, share in GEOMETRY_V2.orientation:
+        assert abs(np.mean([g.orientation == name for g in drawn]) - share) < 0.03, name
+    upside = [g for g in drawn if g.orientation == "upside-down"]
+    assert {g.quarter for g in upside} == {2} and all(abs(g.angle) <= V2.geometry.upside_down_angle for g in upside)
+    assert max(abs(g.angle) for g in upside) > 0.9 * V2.geometry.upside_down_angle
+    assert {g.quarter for g in drawn if g.orientation == "sideways"} == {1, 3}
+    assert GEOMETRY_V2.surface == GEOMETRY.surface and GEOMETRY_V2.perspective == GEOMETRY.perspective
+
+
+def _half_turned(box, size):
+    (x1, y1, x2, y2), (w, h) = box, size
+    return (w - x2, h - y2, w - x1, h - y1)
+
+
+@needs_fonts
+@pytest.mark.parametrize("style", R.STYLES_V2)
+def test_a_half_turn_maps_every_box_exactly(style):
+    rng = np.random.default_rng(81 + R.STYLES_V2.index(style))
+    for block in _blocks(8, seed=81):
+        layer = R.render(block, style, fonts.random_family(rng, "train"), float(rng.choice([7, 16])), rng,
+                         v2=V2.style)
+        small, turned = R.shrink(layer), R.shrink(W.turn(layer, 2))
+        assert R.boxes(turned) == tuple(None if b is None else _half_turned(b, (small.width, small.height))
+                                        for b in R.boxes(small))
+        assert np.array_equal(R.ink(W.turn(layer, 2)), np.rot90(R.ink(layer), 2))
+        # Through the whole warp, upside down at 0 degrees is upright at 0 degrees turned a half turn.
+        up = R.shrink(W.apply(layer, FLAT))
+        down = R.shrink(W.apply(layer, Geometry("upside-down", 2, 0.0)))
+        assert R.boxes(down) == tuple(None if b is None else _half_turned(b, (up.width, up.height))
+                                      for b in R.boxes(up))
+
+
+# --- Worn patches --------------------------------------------------------------------------------
+
+def _dated_layer() -> tuple[T.Block, R.Layer]:
+    """A made-up block drawn at 4x, no font needed: a word and a date on
+    each of two lines, each token a filled bar."""
+    block = T.Block(((T.Token("EXP", "due"), T.Token("08/2027", "date")),
+                     (T.Token("MFG", "prod"), T.Token("08/2025", "date"))), "pair")
+    rects = [(8, 8, 60, 48), (80, 8, 260, 48), (8, 72, 60, 112), (80, 72, 260, 112)]
+    sprites = tuple(R.aligned(R.Sprite(x1, y1, np.ones((y2 - y1, x2 - x1), np.float32)), 4) for x1, y1, x2, y2 in rects)
+    return block, R.Layer(272, 120, 4, sprites, None, {"size": 10.0, "px": 56, "line_spacing": 1.4})
+
+
+def test_worn_patches_take_their_share_on_solid_dot_matrix_and_window_print():
+    block, layer = _dated_layer()
+    rng = np.random.default_rng(90)
+    for style in ("label", "embossed"):
+        assert compose.random_wear(rng, layer, block, style, V2.compose) is None
+    for style in V2.compose.worn_styles:
+        drawn = [compose.random_wear(rng, layer, block, style, V2.compose) for _ in range(10_000)]
+        assert abs(np.mean([w.on for w in drawn]) - V2.compose.worn) < 0.03, style
+        assert {w.token for w in drawn} == {1, 3}                         # on a date, either one
+        char, line = 10.0 * 4, 1.4 * 56
+        for w in drawn:
+            x1, _, x2, _ = R.ink_box(layer.tokens[w.token])
+            assert x1 <= w.cx <= x2
+            assert 1.0 <= w.width / char <= 3.0 and 1.0 <= w.height / line <= 2.0 and 0.6 <= w.fade <= 0.95
+
+
+def test_a_patch_fades_by_its_fade_over_its_core_and_nothing_beyond_its_edge():
+    block, layer = _dated_layer()
+    patch = compose.Wear(True, 1, 170.0, 28.0, 80.0, 100.0, 0.8, 0.25)
+    worn = compose.wear(layer, patch)
+    for s, t in zip(layer.tokens, worn.tokens):
+        assert (t.x, t.y, t.alpha.shape) == (s.x, s.y, s.alpha.shape)
+    date = worn.tokens[1]
+    ys, xs = np.mgrid[:date.alpha.shape[0], :date.alpha.shape[1]] + 0.5
+    ys, xs = ys + date.y, xs + date.x
+    core = (np.abs(xs - 170) <= 40 * 0.75) & (np.abs(ys - 28) <= 50 * 0.75)
+    beyond = (np.abs(xs - 170) >= 40) | (np.abs(ys - 28) >= 50)
+    ink = layer.tokens[1].alpha > 0
+    assert np.allclose(date.alpha[core & ink], 0.2)
+    assert np.array_equal(date.alpha[beyond], layer.tokens[1].alpha[beyond])
+    assert np.array_equal(worn.tokens[0].alpha, layer.tokens[0].alpha)      # the word is clear of it
+
+
+def _worn(share: float, **more):
+    return replace(V2_PRINT, v2=replace(V2, compose=replace(V2.compose, worn=share, **more)))
+
+
+@needs_fonts
+@pytest.mark.parametrize("style", V2.compose.worn_styles)
+def test_a_worn_blocks_boxes_are_its_unworn_twins_and_its_patch_holds_60_to_95_percent_less_ink(style):
+    rng = np.random.default_rng(91 + V2.compose.worn_styles.index(style))
+    for i, block in enumerate(_blocks(24, seed=91)):
+        family, seed = fonts.random_family(rng, "train"), int(rng.integers(1 << 60))
+        size = float(rng.choice([12, 18, 26]))
+        geometry = FLAT if i % 2 == 0 else W.random_geometry(rng, GEOMETRY_V2, V2.geometry)
+        clean = make.draw_v2(block, style, family, size, geometry, seed, _worn(0.0))
+        worn = make.draw_v2(block, style, family, size, geometry, seed, _worn(1.0))
+        assert worn.boxes == clean.boxes                                   # the ink before the wear
+        assert clean.defects["worn"] is None and worn.defects["worn"] is not None
+        assert {k: v for k, v in clean.defects.items() if k != "worn"} == \
+            {k: v for k, v in worn.defects.items() if k != "worn"}
+        a, b = R.ink(clean.layer), R.ink(worn.layer)
+        assert a.shape == b.shape and (b <= a + 1e-5).all() and b.sum() < a.sum()
+        if style == "window":                                              # its dark rectangle isn't ink
+            assert np.array_equal(clean.layer.backing.alpha, worn.layer.backing.alpha)
+        if geometry is FLAT:                                               # its core, as drawn
+            inked = a > 0.05
+            least = float((b[inked] / a[inked]).min())
+            fade = worn.defects["worn"]["fade"]
+            assert least == pytest.approx(1 - fade, abs=0.01) and 0.05 - 0.01 <= least <= 0.40 + 0.01
+
+
+@needs_fonts
+def test_a_date_worn_to_nothing_gets_its_block_drawn_again():
+    """A patch over the whole block, fading it by 99%: every draw wears a
+    boxed token to nothing, so the block is drawn again and again, and
+    then skipped rather than boxed round nothing."""
+    gone = _worn(1.0, worn_width=(80.0, 80.0), worn_height=(12.0, 12.0), worn_fade=(0.99, 0.99))
+    block = T.Block(((T.Token("EXP", "due"), T.Token("08/2027", "date")),), "single")
+    family = fonts.families("train")[0]
+    d = make.draw_v2(block, "solid", family, 14, FLAT, 5, gone)
+    assert d.worn_out and all(b is not None for b in d.boxes)            # its boxes from before the wear
+    assert make._draw(block, "solid", family, 14, 1.0, FLAT, np.random.default_rng(6), gone) is None
+    kept = make._draw(block, "solid", family, 14, 1.0, FLAT, np.random.default_rng(6), _worn(1.0))
+    assert kept is not None and kept.redraws == 0 and kept.defects["worn"] is not None
+
+
+# --- Whole gen-v2 photos (M2's sizes until S8's second part) -----------------------------------------
+
+@pytest.fixture(scope="module")
+def pool(tmp_path_factory):
+    """Three made-up backgrounds, as test_synth_compose.py's: 1,200 and 1,800
+    px (both fit small print; the second is shrunk to 1,600) and 700 px."""
+    from PIL import Image
+
+    from bestbefore.samples import Box
+    from bestbefore.synth.compose import Background, Backgrounds
+    root = tmp_path_factory.mktemp("backgrounds")
+    made = []
+    for name, (w, h), boxes, seed in (
+            ("train_real", (1200, 900), (Box("date", (0.1, 0.1, 0.3, 0.14)),), 1),
+            ("train_synth_clean", (1300, 1800), (Box("code", (0.4, 0.4, 0.6, 0.43)),), 2),
+            ("train_synth_clean", (700, 500), (), 3)):
+        rng = np.random.default_rng(seed)
+        coarse = rng.uniform(40, 230, (6, 8, 3)).astype(np.uint8)
+        im = np.asarray(Image.fromarray(coarse).resize((w, h), Image.Resampling.BICUBIC), np.float32)
+        path = root / f"{seed}.jpg"
+        Image.fromarray(np.clip(im + rng.normal(0, 6, im.shape), 0, 255).astype(np.uint8)).save(path, quality=92)
+        made.append(Background(name, path, w, h, boxes))
+    return Backgrounds({"train_real": (made[0],), "train_synth_clean": tuple(made[1:])})
+
+
+@needs_fonts
+def test_gen_v2_photos_box_every_date_inside_and_come_out_the_same(pool):
+    seen = Counter()
+    for i in range(40):
+        made = make.make_one(i, V2_PRINT, pool, 7)
+        assert make.make_one(i, V2_PRINT, pool, 7).jpeg == made.jpeg
+        s = made.sidecar
+        w, h = s["size"]
+        for b in s["blocks"]:
+            x, y, bw, bh = b["place"]
+            assert b["lines"] >= 1
+            for t in b["tokens"]:
+                assert t["cls"] is None or t["box"] is not None, t
+                if t["box"]:
+                    x1, y1, x2, y2 = t["box"]
+                    assert x <= x1 < x2 <= x + bw and y <= y1 < y2 <= y + bh
+                if t["cls"] == "date":
+                    assert isinstance(t["space_before"], bool)
+            seen[b["style"]] += 1
+            seen[b["geometry"]["orientation"]] += 1
+            seen["worn"] += b["defects"].get("worn") is not None
+        assert made.labels == make.label_text(s)
+    assert {"window", "upside-down"} <= set(seen) and seen["worn"]
+    m2 = make.make_one(3, GEN, pool, 7).sidecar                     # M2's sidecar keeps its shape
+    assert all("lines" not in b and all("space_before" not in t for t in b["tokens"]) for b in m2["blocks"])
+
+
+def _placed(kind: str, style: str, tokens: list[tuple], lines: int = 1, **record) -> dict:
+    """A made-up placed block as the sidecar keeps it: tokens (text, cls)
+    or (text, "date", role, space_before)."""
+    out = {"kind": kind, "style": style, "lines": lines, "render": {}, "defects": {"worn": record.get("worn")},
+           "tokens": [{"text": t[0], "cls": t[1]} | ({"role": t[2], "space_before": t[3]} if t[1] == "date" else {})
+                      for t in tokens]}
+    if style == "dot-matrix":
+        out["render"]["dots"] = {"nozzle": record.get("nozzle", [])}
+    if style == "window":
+        out["render"]["window"] = {"dots": record.get("dots", False)}
+    return out
+
+
+def test_gen_v2s_share_rows_count_what_they_should():
+    placed = [
+        _placed("line-pair", "solid", [("MFG:", "prod"), ("02/2025", "date", "mfg", False), ("|", None),
+                                       ("EXP", "due"), ("02/2027", "date", "expiry", True)], worn={"fade": 0.8}),
+        _placed("dense-panel", "dot-matrix", [("MFG", "prod"), ("01/25", "date", "mfg", True), ("L 12345", "code"),
+                                              ("8901234567890", None), ("IMPORT:", "prod"),
+                                              ("03/25", "date", "import", True), ("EXP:", "due"),
+                                              ("01/27", "date", "expiry", False)], lines=5, nozzle=[3]),
+        _placed("panel", "window", [("EXP", "due"), ("05/2026", "date", "expiry", True),
+                                    ("USP Rs. 1.50/g", None)], lines=2, dots=True),
+        _placed("single", "dot-matrix", [("05/2026", "date", "expiry", True)]),
+        _placed("pair", "label", [("MFG", "prod"), ("05/2024", "date", "mfg", True), ("EXP", "due"),
+                                  ("05/2026", "date", "expiry", True)], lines=2, worn={"fade": 0.7}),
+        _placed("range", "solid", [("BB", "due"), ("05/2024", "date", "mfg", True), ("-", None),
+                                   ("05/2026", "date", "expiry", False)]),
+    ]
+    rows = {}
+    make._v2_shares(lambda what, spec, hits: rows.__setitem__(what, (spec, list(hits))), placed, V2_PRINT)
+    # glued: every date after a word, its space; a range's second date follows its dash, so isn't counted
+    assert rows["glued: of words printed before a date"] == (0.3, [True, False, False, False, True, False,
+                                                                   False, False, False])
+    assert rows["line-pairs: an import date"][1] == [False]
+    assert [rows[f"line-pairs: separator {sep!r}"][1] for sep in V2.text.separators] == [[True], [False], [False],
+                                                                                         [False]]
+    assert rows["dense panels: an import line"][1] == [True]
+    assert [rows[f"dense panels: {n} more lines"][1] for n in (3, 4, 5)] == [[True], [False], [False]]
+    assert rows["panels' other lines: codes"][1] == [True, False, False]
+    assert rows["distractors: barcode numbers"] == (0.2, [True, False])
+    assert rows["distractors: unit prices"] == (0.2, [False, True])
+    assert rows["dot-matrix: nozzle rows"] == (0.15, [True, False])
+    assert rows["windows: dotified"] == (0.3, [True])
+    assert rows["worn patch (solid, dot-matrix, window)"] == (0.1, [True, False, False, False, False])  # no label
+
+
+@needs_fonts
+def test_gen_v2s_shares_are_read_from_its_sidecars(pool):
+    rows = {r["what"]: r for r in make.shares([make.make_one(i, V2_PRINT, pool, 8).sidecar for i in range(30)],
+                                              V2_PRINT)}
+    for what in ("style: window", "orientation: upside-down", "glued: of words printed before a date",
+                 "line-pairs: an import date", "dense panels: an import line", "distractors: barcode numbers",
+                 "dot-matrix: nozzle rows", "windows: dotified", "worn patch (solid, dot-matrix, window)"):
+        assert what in rows and rows[what]["n"] > 0, what
+    assert rows["kind: line-pair"]["spec"] == 0.10 and rows["style: window"]["spec"] == 0.10
+    m2_rows = make.shares([make.make_one(i, GEN, pool, 8).sidecar for i in range(5)], GEN)
+    assert not any(r["what"].startswith(("glued", "dot-matrix: nozzle", "worn")) for r in m2_rows)

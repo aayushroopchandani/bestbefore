@@ -3,15 +3,17 @@ the renderer by eye (docs/m2-synthetic-generator.md, S4; gen-v2's text,
 docs/m2b-store-and-size.md, S7).
 
     python scripts/render_sheet.py               # sheet.png
-    python scripts/render_sheet.py --v2          # gen-v2's new text, in render-sheet-v2
+    python scripts/render_sheet.py --v2          # gen-v2's new text and print, in render-sheet-v2
     python scripts/render_sheet.py --time 1000   # also time 1000 random blocks
 
-Rows are the print styles, dot-matrix once per row count (7, 9). Columns
-are the format families (--v2: gen-v2's new forms, glued words, line-pairs
-and dense panels). Each cell is one block in a training font, at a normal
+Rows are the print styles, dot-matrix once per row count (7, 9); --v2 adds
+gen-v2's print (S8): the laser window, plain and dotified, and dot-matrix
+with nozzle rows. Columns are the format families (--v2: gen-v2's new
+forms, glued words, line-pairs and dense panels). Each cell is one block in a training font, at a normal
 size (digits 22 px) above the same block as small print (digits 8 px,
 shown 3x with its pixels kept). Boxes: date red, due blue, prod green, code
-magenta; text with no box has none. Nothing from ExpDate is on it.
+magenta; text with no box has none. A window's strokes are light on its
+dark rectangle. Nothing from ExpDate is on it.
 
 --time draws blocks as the spec does (kind, format, style, font) at print
 heights from the plan's size bands on a photo of --long-side pixels, and
@@ -54,6 +56,12 @@ FAMILIES = {      # the plan's format families, each forced through the text spe
 ROWS = (("solid", STYLE), *((f"dot-matrix, {n} rows", replace(STYLE, dot_rows=(n,)))
                             for n in STYLE.dot_rows),
         ("label", STYLE), ("embossed", STYLE))
+# gen-v2's print (M2b S8), each with the gen-v2 print it is forced through.
+ROWS_V2 = (("window", STYLE, replace(V2.style, window_dots=0.0)),
+           ("window, dotified", STYLE, replace(V2.style, window_dots=1.0)),
+           *((f"dot-matrix, {n} rows, nozzle rows", replace(STYLE, dot_rows=(n,)), replace(V2.style, nozzle=1.0))
+             for n in STYLE.dot_rows))
+WINDOW_INK = 235.0      # a window's strokes, light grey
 
 
 def _only(kind: str):
@@ -71,16 +79,19 @@ COLUMNS_V2 = {    # gen-v2's new forms (M2b S7), each forced through its text sp
 
 
 def paint(layer: R.Layer) -> Image.Image:
-    """The layer over plain grey: a label's sticker, then the ink, black, or
-    for embossed white where lit and black in shade."""
+    """The layer over plain grey: a label's sticker or a window's dark
+    rectangle, then the ink, black, light grey on a window, or for embossed
+    white where lit and black in shade."""
     canvas = np.full((layer.height, layer.width, 3), GREY, np.float32)
+    window = "window" in layer.params
     if layer.backing is not None:
         s = layer.backing
         h, w = s.alpha.shape
-        window = canvas[s.y:s.y + h, s.x:s.x + w]
-        window += (np.asarray(layer.params["label"]["colour"], np.float32) - window) * s.alpha[..., None]
+        under = canvas[s.y:s.y + h, s.x:s.x + w]
+        colour = layer.params["window" if window else "label"]["colour"]
+        under += (np.asarray(colour, np.float32) - under) * s.alpha[..., None]
     tone = R.tone(layer)
-    colour = 0.0 if tone is None else 255.0 * tone[..., None]
+    colour = WINDOW_INK if window else 0.0 if tone is None else 255.0 * tone[..., None]
     canvas += (colour - canvas) * R.ink(layer)[..., None]
     return Image.fromarray(np.clip(canvas + 0.5, 0, 255).astype(np.uint8))
 
@@ -121,14 +132,16 @@ def sheet(seed: int, v2: bool = False) -> Image.Image:
     width = CELL_W_V2 if v2 else CELL_W
     train = fonts.families("train")
     rows = []
-    for r, (name, spec) in enumerate(ROWS):
+    styles = [(name, spec, V2.style) for name, spec in ROWS] + list(ROWS_V2) if v2 else \
+        [(name, spec, None) for name, spec in ROWS]
+    for r, (name, spec, v2_style) in enumerate(styles):
         style = name.split(",")[0]
         cells = []
         for c, (text_spec, v2_text) in enumerate(columns.values()):
             rng = np.random.default_rng([seed, r, c])
             block = T.random_block(rng, text_spec, v2_text)
             family = train[(r * len(columns) + c) % len(train)]     # every font shows up
-            cells.append(cell(block, style, spec, family, [seed, r, c, 1], V2.style if v2 else None, width))
+            cells.append(cell(block, style, spec, family, [seed, r, c, 1], v2_style, width))
         height = max(c.height for c in cells) + 22
         row = Image.new("RGB", (len(cells) * (width + 10), height), "white")
         ImageDraw.Draw(row).text((2, 2), name.upper(), fill="black", font=FONT)

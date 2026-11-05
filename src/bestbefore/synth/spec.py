@@ -192,17 +192,53 @@ class V2Text:
 
 @dataclass(frozen=True)
 class V2Style:
-    """gen-v2's print (S7: line spacing per kind)."""
+    """gen-v2's print: line spacing per kind (S7); nozzle rows and the laser
+    window (S8). The window's share sits in StyleSpec.styles (STYLE_V2)."""
     line_spacing: tuple[tuple[str, Range], ...] = (("dense-panel", (1.0, 1.2)),)   # em; other kinds StyleSpec's
+    # Nozzle rows (S8): a clogged print head leaves whole rows of dots out.
+    nozzle: float = 0.15                    # dot-matrix blocks with rows left out
+    nozzle_rows: tuple[int, ...] = (1, 2)   # how many, each equally likely: the same rows in every line
+    # The laser window (S8): a dark printed rectangle with light strokes, slightly soft, a faint glow.
+    window_colours: tuple[RGB, ...] = ((24, 24, 27), (30, 45, 110), (25, 70, 45), (90, 55, 30))
+    #                                   near-black,   dark blue,     dark green,   dark brown
+    window_dots: float = 0.30               # windows whose text is dotified
+    # Left open by the plan, fixed in S8 (lengths in em, as the label's):
+    window_pad: Range = (0.3, 0.8)          # the rectangle's margin around the text
+    window_corner: Range = (0.0, 0.1)       # its corner radius
+    window_soft: Range = (0.01, 0.03)       # sigma of the strokes' softness (M2's ink spread comes on top)
+    window_glow: Range = (0.06, 0.15)       # the glow's strength, under render.INK: a glow alone is never ink
+    window_glow_spread: Range = (0.10, 0.25)    # the glow's sigma
+
+
+@dataclass(frozen=True)
+class V2Geometry:
+    """gen-v2's geometry (S8): blocks turned upside down. Their share sits in
+    GeometrySpec.orientation (GEOMETRY_V2), beside M2's own."""
+    upside_down_angle: float = 8.0          # 180 degrees, then within this either way, as sideways
+
+
+@dataclass(frozen=True)
+class V2Compose:
+    """gen-v2's ink (S8): worn patches, rubbed or smeared over part of a
+    date, and a laser window's light strokes."""
+    worn: float = 0.10                      # of solid, dot-matrix and window blocks: a worn patch
+    worn_styles: tuple[str, ...] = ("solid", "dot-matrix", "window")
+    worn_width: Range = (1.0, 3.0)          # characters across (a character: the digits' height, as M2's density)
+    worn_height: Range = (1.0, 2.0)         # lines tall ("up to two"; a line: the block's line pitch)
+    worn_fade: Range = (0.60, 0.95)         # the ink fades by this much at its core
+    # Left open by the plan, fixed in S8:
+    worn_edge: Range = (0.15, 0.35)         # its soft edge, a share of its half width and half height
+    window_ink: Range = (0.75, 1.0)         # a window's strokes: a grey of this luminance (light grey to white)
 
 
 @dataclass(frozen=True)
 class V2Spec:
     """Everything gen-v2 adds to M2's spec, by the part of GenSpec it
-    extends. S8 adds its print (nozzle rows, the window) to `style`, and
-    parts for the upside-down blocks, the sizes and the worn patches."""
+    extends: its text (S7), print, geometry and ink (S8)."""
     text: V2Text = V2Text()
     style: V2Style = V2Style()
+    geometry: V2Geometry = V2Geometry()
+    compose: V2Compose = V2Compose()
 
 
 @dataclass(frozen=True)
@@ -232,6 +268,12 @@ GEN = GenSpec()
 # pair and panel blocks; range and relative as M2's.
 TEXT_V2 = replace(TEXT, kinds=(("single", 0.25), ("pair", 0.30), ("panel", 0.15), ("dense-panel", 0.10),
                                ("line-pair", 0.10), ("range", 0.05), ("relative", 0.05)))
+# gen-v2's print and geometry (S8): the window takes its 10% from solid
+# print, upside-down blocks theirs from upright ones; dot-matrix keeps 35%.
+STYLE_V2 = replace(STYLE, styles=(("solid", 0.30), ("dot-matrix", 0.35), ("label", 0.15), ("embossed", 0.10),
+                                  ("window", 0.10)))
+GEOMETRY_V2 = replace(GEOMETRY, orientation=(("upright", 0.45), ("tilted", 0.15), ("sideways", 0.30),
+                                             ("upside-down", 0.10)))
 V2 = V2Spec()
 
 # Photo i of a set is drawn from numpy.random.default_rng([seed, i]).

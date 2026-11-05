@@ -13,7 +13,8 @@ The steps, in the order a pack is printed, turned and photographed:
 
   surface   flat; a cylinder (a can or bottle: the text compresses towards
             its edges); or a bend (a cap or jar: the lines arc)
-  turn      a quarter turn for sideways text: numpy.rot90, exact
+  turn      a quarter turn for sideways text, a half turn for gen-v2's
+            upside-down blocks (M2b S8): numpy.rot90, exact
   view      the angle left over, and the perspective: one homography
 
 A sprite's pixel (u, v) is the point (x + u, y + v) of the layer. Patches
@@ -33,7 +34,7 @@ import numpy as np
 
 from . import render
 from .render import Layer, Sprite
-from .spec import GEOMETRY, GeometrySpec
+from .spec import GEOMETRY, GeometrySpec, V2Geometry
 from .text import pick
 
 _MARGIN = 2         # pixels around a new patch beyond its sprite's reach
@@ -44,8 +45,8 @@ Points = Callable[[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]
 @dataclass(frozen=True)
 class Geometry:
     """How one block is turned and bent."""
-    orientation: str                # upright, tilted or sideways
-    quarter: int                    # quarter turns anticlockwise: 1 or 3 when sideways, else 0
+    orientation: str                # upright, tilted or sideways; gen-v2's upside-down
+    quarter: int                    # quarter turns anticlockwise: 1 or 3 when sideways, 2 upside down, else 0
     angle: float                    # the turn after the quarter turns
     surface: str = "flat"           # flat, cylinder or bend
     arc: float = 0.0                # cylinder, bend: how much of a circle the block's width covers
@@ -68,14 +69,22 @@ class Geometry:
         return out
 
 
-def random_geometry(rng: np.random.Generator, spec: GeometrySpec = GEOMETRY) -> Geometry:
-    """An orientation, a surface and maybe a perspective, each by its share."""
+def random_geometry(rng: np.random.Generator, spec: GeometrySpec = GEOMETRY,
+                    v2: V2Geometry | None = None) -> Geometry:
+    """An orientation, a surface and maybe a perspective, each by its share.
+    An upside-down block (gen-v2's, whose share only GEOMETRY_V2 holds)
+    needs gen-v2's geometry; without it every draw is M2's."""
+    if v2 is None and any(name == "upside-down" for name, _ in spec.orientation):
+        raise ValueError("upside-down blocks need gen-v2's geometry (v2)")
     orientation = pick(rng, spec.orientation)
     quarter = 0
     if orientation == "upright":
         angle = rng.uniform(-spec.upright_angle, spec.upright_angle)
     elif orientation == "tilted":
         angle = rng.uniform(*spec.tilt_angle) * (1 if rng.random() < 0.5 else -1)
+    elif orientation == "upside-down":
+        quarter = 2
+        angle = rng.uniform(-v2.upside_down_angle, v2.upside_down_angle)
     else:
         quarter = 1 if rng.random() < 0.5 else 3
         angle = rng.uniform(-spec.sideways_angle, spec.sideways_angle)

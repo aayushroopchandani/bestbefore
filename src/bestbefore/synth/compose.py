@@ -16,6 +16,10 @@
                over and its text multiplied; embossed text darkens the
                surface in its shade and lightens it where lit
 
+gen-v2's ink (spec.V2Compose, M2b S8) adds a laser window's light strokes,
+laid over its dark rectangle, and worn patches: ink rubbed away over part
+of a date, faded by 60 to 95% there. Without it every draw is M2's.
+
 Photos are float32 RGB arrays, 0 to 255, blended in place. Every random
 choice comes from the numpy Generator passed in.
 """
@@ -25,7 +29,7 @@ import colorsys
 import math
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from pathlib import Path
 
@@ -40,7 +44,7 @@ from ..samples import Box
 from ..yolo import list_ids
 from . import render
 from .render import Layer, Sprite
-from .spec import COMPOSE, SIZE, ComposeSpec, Shares, SizeSpec
+from .spec import COMPOSE, SIZE, ComposeSpec, Shares, SizeSpec, V2Compose
 from .text import choice, pick
 
 LUMA = np.array([0.299, 0.587, 0.114])      # Rec. 601, as OpenCV's grey
@@ -239,7 +243,7 @@ def overlaps(rects: np.ndarray, r: Rect) -> bool:
 @dataclass(frozen=True)
 class Ink:
     """How a block is laid on the photo."""
-    mode: str                                 # dark (multiplied), light (laid over), label, relief
+    mode: str                                 # dark (multiplied), light (laid over), label, relief; window
     colour: tuple[float, float, float]        # RGB 0..255; a label's text black, a relief's highlight white
     opacity: float = 1.0
     colourful: bool = False
@@ -257,18 +261,24 @@ def luminance(rgb) -> float:
 
 
 def choose_ink(rng: np.random.Generator, style: str, surface: float,
-               spec: ComposeSpec = COMPOSE) -> Ink:
+               spec: ComposeSpec = COMPOSE, v2: V2Compose | None = None) -> Ink:
     """The ink for a block on a surface of mean luminance `surface` (0..1).
     An embossed block has none (its light and shade); a label's text is
-    black on its sticker. Otherwise dark ink on a light surface, light ink
+    black on its sticker, a laser window's (gen-v2's, `v2`) a light grey on
+    its dark rectangle. Otherwise dark ink on a light surface, light ink
     on a dark one, colourful with share spec.colourful; with share
     spec.low_contrast its luminance then moves to just `gap` from the
     surface's, as blended at its opacity."""
     if style == "embossed":
         return Ink("relief", (255.0, 255.0, 255.0))
+    if style == "window" and v2 is None:
+        raise ValueError("a window's ink needs gen-v2's (v2)")
     opacity = float(rng.uniform(*spec.opacity))
     if style == "label":
         return Ink("label", tuple(float(c) for c in spec.dark_inks[0]), opacity)
+    if style == "window":
+        grey = float(rng.uniform(*v2.window_ink)) * 255
+        return Ink("window", (grey, grey, grey), opacity)
     mode = "dark" if surface >= spec.light_surface else "light"
     colourful = bool(rng.random() < spec.colourful)
     if colourful:
@@ -298,18 +308,20 @@ def at_luminance(colour: np.ndarray, target: float) -> np.ndarray:
 # --- Ink defects (at 4x, before shrinking) ---------------------------------------------------------------
 
 def defects(layer: Layer, style: str, boxed: Sequence[bool], rng: np.random.Generator,
-            spec: ComposeSpec = COMPOSE) -> tuple[Layer, dict]:
+            spec: ComposeSpec = COMPOSE, field_rng: np.random.Generator | None = None) -> tuple[Layer, dict]:
     """Ink defects on a block drawn at 4x: uneven density (lighter in
     places, about a character apart), a slight spread (not on a label's
     crisp thermal print), and now and then a scratch through one boxed
     token. They change the drawn ink, so the boxes, made after, include
-    them. An embossed block has no ink, and none."""
+    them. An embossed block has no ink, and none. `field_rng` (gen-v2's)
+    draws the density's field, whose size follows the block's: then a
+    drawing at another size draws every other defect the same."""
     if style == "embossed":
         return layer, {}
     k = layer.scale
     char = layer.params["size"]                                # a digit's height, final pixels
     density = float(rng.uniform(*spec.density))
-    field = _smooth_field(rng, layer.width // k, layer.height // k, char)
+    field = _smooth_field(rng if field_rng is None else field_rng, layer.width // k, layer.height // k, char)
     spread = 0.0 if style == "label" else float(rng.uniform(*spec.spread))
     scratched = None
     if rng.random() < spec.scratch:
@@ -334,6 +346,74 @@ def defects(layer: Layer, style: str, boxed: Sequence[bool], rng: np.random.Gene
             tokens.append(Sprite(s.x, s.y, alpha))
     record = {"density": round(density, 3), "spread": round(spread, 3), "scratch": scratched}
     return render.assemble(tokens, layer.backing, k, layer.params), record
+
+
+# --- Worn patches (gen-v2, S8) ------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Wear:
+    """A worn patch on a block drawn at 4x, in its print's own frame (before
+    any warp), centred on one of its dates: `width` x `height` drawn pixels,
+    its ink fading by `fade` over its core and less towards its soft edge
+    (`edge` of its half width and half height)."""
+    on: bool
+    token: int              # the date it is centred on, in Block.tokens order
+    cx: float
+    cy: float
+    width: float
+    height: float
+    fade: float
+    edge: float
+
+    def record(self, k: int) -> dict:
+        """For the sidecar, in final pixels of the print's frame."""
+        return {"token": self.token, "centre": [round(self.cx / k, 1), round(self.cy / k, 1)],
+                "size": [round(self.width / k, 1), round(self.height / k, 1)], "fade": round(self.fade, 3),
+                "edge": round(self.edge, 3)}
+
+
+def random_wear(rng: np.random.Generator, layer: Layer, block, style: str, spec: V2Compose) -> Wear | None:
+    """A worn patch for a block drawn at 4x, `on` with share spec.worn on
+    solid, dot-matrix and window print (None on others): 1 to 3
+    characters wide (a character the digits' height, as the density's) and
+    1 to 2 lines tall, centred on a date picked uniformly, somewhere along
+    it. Every number is drawn whether it is on or not."""
+    if style not in spec.worn_styles:
+        return None
+    dates = [i for i, (t, s) in enumerate(zip(block.tokens, layer.tokens)) if t.cls == "date" and s is not None]
+    if not dates:
+        return None
+    on = bool(rng.random() < spec.worn)
+    i = int(choice(rng, dates))
+    x1, y1, x2, y2 = render.ink_box(layer.tokens[i])
+    char, line = layer.params["size"] * layer.scale, layer.params["line_spacing"] * layer.params["px"]
+    return Wear(on, i, float(rng.uniform(x1, x2)), (y1 + y2) / 2, float(rng.uniform(*spec.worn_width)) * char,
+                float(rng.uniform(*spec.worn_height)) * line, float(rng.uniform(*spec.worn_fade)),
+                float(rng.uniform(*spec.worn_edge)))
+
+
+def wear(layer: Layer, w: Wear) -> Layer:
+    """The layer with the patch's ink faded: every token's alpha times
+    1 - fade x the patch's mask (1 over its core, falling smoothly to 0 at
+    its edge). The sprites keep their places and sizes, so the worn layer
+    warps exactly as the unworn one does; a label's or window's backing
+    isn't ink, and stays."""
+    def worn(s: Sprite | None) -> Sprite | None:
+        if s is None:
+            return None
+        h, ww = s.alpha.shape
+        mx = _plateau(s.x + np.arange(ww) + 0.5, w.cx, w.width / 2, w.edge)
+        my = _plateau(s.y + np.arange(h) + 0.5, w.cy, w.height / 2, w.edge)
+        if not mx.any() or not my.any():
+            return s
+        return replace(s, alpha=(s.alpha * (1 - w.fade * np.outer(my, mx))).astype(np.float32))
+    return replace(layer, tokens=tuple(worn(s) for s in layer.tokens))
+
+
+def _plateau(u: np.ndarray, centre: float, half: float, edge: float) -> np.ndarray:
+    """1 within half x (1 - edge) of centre, 0 at half and beyond, a smoothstep between."""
+    t = np.clip((half - np.abs(u - centre)) / (edge * half), 0, 1)
+    return (t * t * (3 - 2 * t)).astype(np.float32)
 
 
 def _smooth_field(rng: np.random.Generator, w: int, h: int, cell: float) -> np.ndarray:
@@ -370,19 +450,36 @@ def blend(photo: np.ndarray, layer: Layer, x: int, y: int, ink: Ink, surface: Su
     region = photo[y:y + h, x:x + w]
     shade = surface.shading(x, y, w, h)[..., None] if ink.mode != "dark" else None
     if layer.backing is not None:
-        sticker = np.asarray(layer.params["label"]["colour"], np.float32)
-        a = _canvas(layer.backing, h, w)[..., None]
-        region += a * (sticker * shade - region)
+        _lay_backing(region, layer, shade)
     a = (render.ink(layer) * ink.opacity)[..., None]
     colour = np.asarray(ink.colour, np.float32)
     if ink.mode == "relief":
         lit = render.tone(layer)[..., None]
         region *= 1 - a * (1 - lit)
         region += a * lit * (colour * shade - region)
-    elif ink.mode == "light":
+    elif ink.mode in ("light", "window"):                    # a window's strokes: light, over its rectangle
         region += a * (colour * shade - region)
     else:                                                    # dark ink, a label's text
         region *= 1 - a * (1 - colour / 255)
+
+
+def _lay_backing(region: np.ndarray, layer: Layer, shade: np.ndarray) -> None:
+    """A label's sticker or a laser window's dark rectangle laid over the
+    region, in the light falling on it."""
+    colour = np.asarray(layer.params["window" if "window" in layer.params else "label"]["colour"], np.float32)
+    a = _canvas(layer.backing, layer.height, layer.width)[..., None]
+    region += a * (colour * shade - region)
+
+
+def backdrop(photo: np.ndarray, layer: Layer, x: int, y: int, surface: Surface) -> np.ndarray:
+    """The block's region with only its backing laid on (a copy): what a
+    laser window's strokes are seen against, so the floor on faint ink
+    measures them there rather than on the bare surface."""
+    h, w = layer.height, layer.width
+    region = photo[y:y + h, x:x + w].copy()
+    if layer.backing is not None:
+        _lay_backing(region, layer, surface.shading(x, y, w, h)[..., None])
+    return region
 
 
 def ink_change(before: np.ndarray, after: np.ndarray, s: Sprite) -> float:

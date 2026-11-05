@@ -19,8 +19,15 @@ block would.
               side, and the ink is the light and the shade on the relief's
               slopes (`tone` says which)
 
-gen-v2's print (spec.V2Style, M2b S7) spaces a dense panel's lines closer;
-without it every draw is M2's. Every random choice comes from the numpy
+gen-v2's print (spec.V2Style, M2b) spaces a dense panel's lines closer
+(S7), leaves whole rows of dots out of some dot-matrix blocks, and adds a
+fifth style (S8):
+
+  window      a laser mark: light, slightly soft strokes with a faint glow
+              on a dark printed rectangle, dotified now and then; the
+              rectangle is no token's ink and gets no box
+
+Without it every draw is M2's. Every random choice comes from the numpy
 Generator passed in.
 """
 from __future__ import annotations
@@ -38,7 +45,8 @@ from .spec import STYLE, Range, StyleSpec, V2Style
 from .text import Block, choice, pick
 
 INK = 0.25          # a pixel is ink when at least a quarter of it is covered
-STYLES = ("solid", "dot-matrix", "label", "embossed")
+STYLES = ("solid", "dot-matrix", "label", "embossed")     # M2's
+STYLES_V2 = (*STYLES, "window")                           # gen-v2's print adds the laser window (S8)
 _GLYPH_PAD = 2      # blank pixels around each glyph's bitmap, so none is cut off
 
 
@@ -93,12 +101,19 @@ def render(block: Block, style: str, family: Family, size: float,
     """The block in a print style and a font family, its digits `size`
     final pixels tall, drawn at spec.supersample times that size. Every
     line starts at the same left edge, as a coding printer prints. `v2`
-    (gen-v2's print) sets the line spacing of some kinds; without it, every
-    draw is M2's."""
-    if style not in STYLES:
-        raise ValueError(f"unknown style {style!r}; one of {', '.join(STYLES)}")
+    (gen-v2's print) sets the line spacing of some kinds, drops nozzle rows
+    from dot-matrix print and draws the window style; without it, every
+    draw is M2's. Every choice of the block's look is drawn before its
+    first glyph's dots, so the same draws at another size look the same."""
+    allowed = STYLES if v2 is None else STYLES_V2
+    if style not in allowed:
+        if style in STYLES_V2:
+            raise ValueError(f"the {style} style needs gen-v2's print (v2)")
+        raise ValueError(f"unknown style {style!r}; one of {', '.join(allowed)}")
     k = spec.supersample
-    bold = style in ("dot-matrix", "embossed") or bool(rng.random() < spec.bold)
+    window = window_params(rng, v2) if style == "window" else None
+    dotted = style == "dot-matrix" or bool(window and window["dots"])
+    bold = style in ("dot-matrix", "embossed") or dotted or bool(rng.random() < spec.bold)
     face = family.face(bold)
     px = max(1, round(k * size / fonts.digit_height(face)))
     font = fonts.load(face, px)
@@ -108,9 +123,12 @@ def render(block: Block, style: str, family: Family, size: float,
               "weight": "bold" if face is family.bold else "regular",
               "size": round(size, 3), "px": px, "letter_spacing": round(tracking / px, 4),
               "line_spacing": round(line_pitch / px, 4)}
-    if style == "dot-matrix":
+    if dotted:
         digit_top = fonts.digit_band(face)[0] * px            # the grid's rows span the digits
         dots, params["dots"] = dot_params(rng, spec, fonts.digit_height(face) * px)
+        if style == "dot-matrix" and v2 is not None:
+            dots["skip"] = nozzle_rows(rng, v2, params["dots"]["rows"])
+            params["dots"]["nozzle"] = list(dots["skip"])
     elif style == "embossed":
         relief = {"soft": rng.uniform(*spec.emboss_soft) * px,
                   "strength": rng.uniform(*spec.emboss_strength),
@@ -119,6 +137,9 @@ def render(block: Block, style: str, family: Family, size: float,
                             "strength": round(relief["strength"], 3),
                             "light_deg": round(math.degrees(relief["light"]), 1),
                             "raised": relief["raised"]}
+    if window is not None:
+        params["window"] = {"dots": window["dots"], "colour": window["colour"],
+                            **{n: round(window[n], 4) for n in ("pad", "corner", "soft", "glow", "glow_spread")}}
 
     glyphs: dict[str, _Glyph] = {}
     space = font.getlength(" ")
@@ -136,16 +157,20 @@ def render(block: Block, style: str, family: Family, size: float,
                 placed.append((glyphs[ch], round(x)))
                 x += glyphs[ch].advance + tracking
             ink = _stamp(placed, baseline)
-            if ink is not None and style == "dot-matrix":
+            if ink is not None and dotted:
                 ink = dotify(ink, baseline + digit_top, dots, rng)
             elif ink is not None and style == "embossed":
                 ink = emboss(ink, **relief)
+            if ink is not None and window is not None:          # dots keep their own blur, and only glow
+                ink = laser(ink, 0.0 if dotted else window["soft"] * px, window["glow"], window["glow_spread"] * px)
             sprites.append(None if ink is None else aligned(ink, k))
 
     backing = None
     if style == "label":
         backing, params["label"] = _sticker([s for s in sprites if s], px, spec, rng)
         backing = aligned(backing, k)
+    elif window is not None:
+        backing = aligned(_rectangle([s for s in sprites if s], window["pad"] * px, window["corner"] * px), k)
     return assemble(sprites, backing, k, params)
 
 
@@ -218,6 +243,19 @@ def dot_params(rng: np.random.Generator, spec: StyleSpec, digit_px: float) -> tu
                   "drop": round(drop, 4), "blur": round(blur, 3)}
 
 
+def nozzle_rows(rng: np.random.Generator, v2: V2Style, rows: int) -> tuple[int, ...]:
+    """The rows of dots a clogged print head leaves out of every line of a
+    dot-matrix block (gen-v2, S8), counted from the digits' top row (0):
+    with share v2.nozzle, 1 or 2 of the rows inside a digit's height,
+    never its top or bottom row, so the gap stays inside its token's box;
+    else none. All three numbers are drawn either way, so whether rows
+    drop changes no other draw."""
+    drop = bool(rng.random() < v2.nozzle)
+    count = int(choice(rng, v2.nozzle_rows))
+    picked = rng.choice(np.arange(1, rows - 1), size=count, replace=False)
+    return tuple(sorted(int(r) for r in picked)) if drop else ()
+
+
 def _dot_kernel(radius: float, blur: float) -> np.ndarray:
     """One dot: an anti-aliased disc, blurred (the inkjet look)."""
     half = math.ceil(radius + 4 * blur) + 1
@@ -232,7 +270,8 @@ def dotify(cov: Sprite, grid_top: float, p: dict, rng: np.random.Generator) -> S
     """The token's text as dots. The grid starts at the line's left edge
     (x = 0) and at the top of its digits; a dot goes on every cell the text
     covers by at least p["cover"], unless dropped, and lands a little off
-    its grid point."""
+    its grid point. p["skip"] (gen-v2's nozzle rows) names whole rows,
+    counted from the digits' top, that get no dot at all."""
     px_, py_ = p["pitch_x"], p["pitch_y"]
     h, w = cov.alpha.shape
     j0, j1 = math.floor(cov.x / px_), math.ceil((cov.x + w) / px_)
@@ -253,6 +292,11 @@ def dotify(cov: Sprite, grid_top: float, p: dict, rng: np.random.Generator) -> S
     half = kernel.shape[0] // 2
     x0, y0 = cx.min() - half, cy.min() - half
     alpha = np.zeros((cy.max() + half + 1 - y0, cx.max() + half + 1 - x0), np.float32)
+    if p.get("skip"):           # after every dot is drawn and the sprite sized, so the dots left, and
+        kept = ~np.isin(i0 + rows, p["skip"])      # where the sprite lies, are as without it
+        if not kept.any():
+            return None
+        cx, cy = cx[kept], cy[kept]
     np.add.at(alpha, (cy - y0, cx - x0), 1.0)
     alpha = cv2.filter2D(alpha, -1, kernel, borderType=cv2.BORDER_CONSTANT)
     return Sprite(int(x0), int(y0), np.clip(alpha, 0, 1))
@@ -284,15 +328,45 @@ def _sticker(sprites: list[Sprite], px: int, spec: StyleSpec,
     pad = rng.uniform(*spec.label_pad) * px
     corner = rng.uniform(*spec.label_corner) * px
     colour = choice(rng, spec.label_colours)
+    return _rectangle(sprites, pad, corner), {"pad": round(pad / px, 3), "corner": round(corner / px, 3),
+                                              "colour": list(colour)}
+
+
+def _rectangle(sprites: list[Sprite], pad: float, corner: float) -> Sprite:
+    """A rounded rectangle under all the sprites, `pad` beyond them (drawn
+    pixels): a label's sticker, a laser window's dark print."""
     x0 = math.floor(min(s.x for s in sprites) - pad)
     y0 = math.floor(min(s.y for s in sprites) - pad)
     x1 = math.ceil(max(s.x + s.alpha.shape[1] for s in sprites) + pad)
     y1 = math.ceil(max(s.y + s.alpha.shape[0] for s in sprites) + pad)
     im = Image.new("L", (x1 - x0, y1 - y0))
     ImageDraw.Draw(im).rounded_rectangle((0, 0, x1 - x0 - 1, y1 - y0 - 1), radius=corner, fill=255)
-    sticker = Sprite(x0, y0, np.asarray(im, dtype=np.float32) / 255)
-    return sticker, {"pad": round(pad / px, 3), "corner": round(corner / px, 3),
-                     "colour": list(colour)}
+    return Sprite(x0, y0, np.asarray(im, dtype=np.float32) / 255)
+
+
+# --- Laser window (gen-v2, S8) -----------------------------------------------------
+
+def window_params(rng: np.random.Generator, v2: V2Style) -> dict:
+    """A laser window's look, drawn before any of its text: whether its
+    text is dotified, the dark rectangle's margin, corner and colour, and
+    the strokes' softness and glow (lengths in em)."""
+    return {"dots": bool(rng.random() < v2.window_dots),
+            "pad": float(rng.uniform(*v2.window_pad)), "corner": float(rng.uniform(*v2.window_corner)),
+            "colour": [int(c) for c in choice(rng, v2.window_colours)],
+            "soft": float(rng.uniform(*v2.window_soft)), "glow": float(rng.uniform(*v2.window_glow)),
+            "glow_spread": float(rng.uniform(*v2.window_glow_spread))}
+
+
+def laser(cov: Sprite, soft: float, glow: float, spread: float) -> Sprite:
+    """A laser mark's strokes: slightly soft (blurred by `soft`), with a
+    faint glow round them (the strokes blurred by `spread`, `glow` at most,
+    which is under INK, so a glow alone is never ink). Lengths in drawn
+    pixels."""
+    m = math.ceil(4 * max(soft, spread)) + 2
+    a = np.pad(cov.alpha, m)
+    strokes = cv2.GaussianBlur(a, (0, 0), soft, borderType=cv2.BORDER_CONSTANT) if soft > 0 else a
+    halo = glow * cv2.GaussianBlur(a, (0, 0), spread, borderType=cv2.BORDER_CONSTANT)
+    return Sprite(cov.x - m, cov.y - m, (1 - (1 - strokes) * (1 - halo)).astype(np.float32))
 
 
 # --- Shrinking, ink and boxes ------------------------------------------------------

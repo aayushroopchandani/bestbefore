@@ -9,6 +9,16 @@ and the caller writes the sidecar.
 
 The label lines come in the sidecar's order: every boxed token, block by
 block, then the background's own boxes. So the two always match.
+
+gen-v2 (a spec with v2, docs/m2b-store-and-size.md, M2b S8) draws its
+text, print, geometry and ink with spec.v2's parts. Each try at drawing a
+block takes one number from the photo's generator and draws everything
+from it (draw_v2): its render, its ink defects, their density field and a
+worn patch each from a generator of their own, so the same number draws
+the same block at any size. The defects are laid on in the print's own
+frame, before the warp, and a worn patch after them, so a worn block and
+its unworn twin share every other draw: its boxes come from the twin, the
+ink before the wear. Without v2 every draw is M2's.
 """
 from __future__ import annotations
 
@@ -28,7 +38,7 @@ from ..samples import Box, Sample
 from . import camera, compose, fonts, render, text, warp
 from .compose import Backgrounds, Surface
 from .render import Layer
-from .spec import ComposeSpec, GenSpec
+from .spec import ComposeSpec, GenSpec, V2Compose
 from .text import Block, Token
 from .warp import Geometry
 
@@ -41,6 +51,15 @@ class Drawn:
     defects: dict
     redraws: int            # earlier draws that lost a boxed token's ink
     scale: float = 1.0      # of its size: spec.compose.shrink once no place was free
+
+
+@dataclass(frozen=True)
+class Drawing:
+    """One drawing of a gen-v2 block at one size, from one seed (draw_v2)."""
+    layer: Layer            # at its final size: worn, if its patch is on
+    boxes: tuple            # per token, from the ink before any wear
+    defects: dict
+    worn_out: bool = False  # the wear took all of a boxed token's ink
 
 
 @dataclass(frozen=True)
@@ -123,22 +142,23 @@ def _block(band: str, size: float, photo: np.ndarray, surface: Surface, taken: l
            spec: GenSpec, clock: Clock) -> tuple[dict | None, dict | None]:
     """One block drawn, placed and inked onto the photo: its sidecar record,
     or None and why it was skipped (then the photo is left as it was)."""
-    c = spec.compose
-    block = text.random_block(rng, spec.text)
+    c, v2 = spec.compose, spec.v2
+    block = text.random_block(rng, spec.text, None if v2 is None else v2.text)
     style = render.random_style(rng, spec.style)
     family = fonts.random_family(rng, spec.fonts)
-    geometry = warp.random_geometry(rng, spec.geometry)
+    geometry = warp.random_geometry(rng, spec.geometry, None if v2 is None else v2.geometry)
     drawn, spot = _place(block, style, family, size, geometry, surface, taken, rng, spec, clock)
     skip = {"kind": block.kind, "style": style, "band": band, "size": round(size, 2)}
     if spot is None:
         return None, skip | {"why": "no free place" if drawn else "a boxed token kept no ink"}
     (x, y), layer = spot, drawn.layer
     with clock("blend"):
-        inks, shown = ink_block(photo, layer, block, style, x, y, surface, rng, c)
+        inks, shown = ink_block(photo, layer, block, style, x, y, surface, rng, c,
+                                None if v2 is None else v2.compose)
     if shown < c.visible:
         return None, skip | {"why": "its ink stayed too faint", "inks": [i.record() for i in inks]}
     height, width = photo.shape[:2]
-    return {
+    record = {
         "kind": block.kind, "style": style, "family": family.name, "weight": layer.params["weight"],
         "band": band, "size": round(size * drawn.scale, 2),
         "print_height": round(size * drawn.scale / max(width, height), 5),
@@ -147,8 +167,11 @@ def _block(band: str, size: float, photo: np.ndarray, surface: Surface, taken: l
         "geometry": geometry.record(), "defects": drawn.defects, "ink": inks[-1].record(),
         "faint_inks": [i.record() for i in inks[:-1]], "shown": round(shown, 4),
         "place": [x, y, layer.width, layer.height],
-        "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]])
-                   for t, b in zip(block.tokens, drawn.boxes)]}, None
+        "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]], v2 is not None)
+                   for t, b in zip(block.tokens, drawn.boxes)]}
+    if v2 is not None:
+        record["lines"] = len(block.lines)
+    return record, None
 
 
 def _place(block: Block, style: str, family: fonts.Family, size: float, geometry: Geometry,
@@ -182,6 +205,11 @@ def _draw(block: Block, style: str, family: fonts.Family, size: float, scale: fl
     without its box."""
     boxed = [t.cls is not None for t in block.tokens]
     for attempt in range(spec.compose.redraws):
+        if spec.v2 is not None:
+            d = draw_v2(block, style, family, size * scale, geometry, int(rng.integers(2**63)), spec)
+            if not d.worn_out and all(box is not None for box, b in zip(d.boxes, boxed) if b):
+                return Drawn(d.layer, d.boxes, d.defects, attempt, scale)
+            continue
         layer = warp.apply(render.render(block, style, family, size * scale, rng, spec.style), geometry)
         layer, defects = compose.defects(layer, style, boxed, rng, spec.compose)
         layer = render.shrink(layer)
@@ -191,36 +219,70 @@ def _draw(block: Block, style: str, family: fonts.Family, size: float, scale: fl
     return None
 
 
+def draw_v2(block: Block, style: str, family: fonts.Family, size: float, geometry: Geometry, seed: int,
+            spec: GenSpec) -> Drawing:
+    """A gen-v2 block drawn whole from one seed, its digits `size` final
+    pixels tall: rendered at 4x with gen-v2's print, its ink defects laid
+    on in the print's own frame, then maybe a worn patch, then warped,
+    shrunk and boxed. Its render, defects, their density field and its
+    wear each draw from their own generator of the seed, so the same seed
+    makes the same choices at any size, and a worn block is its unworn
+    twin with the patch's ink faded: its boxes are the twin's, the ink
+    before the wear (the plan's one exception to boxes from the ink)."""
+    v2 = spec.v2
+    r_render, r_defects, r_field, r_wear = (np.random.default_rng([seed, part]) for part in range(4))
+    boxed = [t.cls is not None for t in block.tokens]
+    layer = render.render(block, style, family, size, r_render, spec.style, v2.style)
+    layer, defects = compose.defects(layer, style, boxed, r_defects, spec.compose, field_rng=r_field)
+    patch = compose.random_wear(r_wear, layer, block, style, v2.compose)
+    unworn = render.shrink(warp.apply(layer, geometry))
+    boxes = render.boxes(unworn)
+    if style != "embossed":
+        defects = defects | {"worn": patch.record(layer.scale) if patch is not None and patch.on else None}
+    if patch is None or not patch.on:
+        return Drawing(unworn, boxes, defects)
+    worn = render.shrink(warp.apply(compose.wear(layer, patch), geometry))
+    lost = any(b and render.ink_box(s) is None for s, b in zip(worn.tokens, boxed))
+    return Drawing(worn, boxes, defects, lost)
+
+
 def ink_block(photo: np.ndarray, layer: Layer, block: Block, style: str, x: int, y: int, surface: Surface,
-              rng: np.random.Generator, c: ComposeSpec) -> tuple[list[compose.Ink], float]:
+              rng: np.random.Generator, c: ComposeSpec,
+              v2: V2Compose | None = None) -> tuple[list[compose.Ink], float]:
     """Lay the block onto the photo at (x, y), and check that every boxed
     token shows: its ink must change the photo by at least c.visible
     (compose.ink_change), or the block is taken off again and gets a fresh
     ink, c.inks in all. An embossed block's one "ink" is its relief, so it gets no
-    other. Returns the inks drawn, the last on the photo, and how much the
-    faintest boxed token shows; the photo is left as it was if that is
-    still under c.visible."""
+    other. A laser window's strokes (gen-v2's, `v2`) are measured against
+    their dark rectangle, which is what they show on. Returns the inks
+    drawn, the last on the photo, and how much the faintest boxed token
+    shows; the photo is left as it was if that is still under c.visible."""
     h, w = layer.height, layer.width
     before = photo[y:y + h, x:x + w].copy()
+    against = compose.backdrop(photo, layer, x, y, surface) if style == "window" else before
     boxed = [s for s, t in zip(layer.tokens, block.tokens) if t.cls is not None and s is not None]
     luminance = surface.luminance(x, y, w, h)
     inks, shown = [], 0.0
     for _ in range(1 if style == "embossed" else c.inks):
-        inks.append(compose.choose_ink(rng, style, luminance, c))
+        inks.append(compose.choose_ink(rng, style, luminance, c, v2))
         compose.blend(photo, layer, x, y, inks[-1], surface)
-        shown = min((compose.ink_change(before, photo[y:y + h, x:x + w], s) for s in boxed), default=1.0)
+        shown = min((compose.ink_change(against, photo[y:y + h, x:x + w], s) for s in boxed), default=1.0)
         if shown >= c.visible:
             break
         photo[y:y + h, x:x + w] = before
     return inks, shown
 
 
-def _token(t: Token, box: list[int] | None) -> dict:
+def _token(t: Token, box: list[int] | None, v2: bool = False) -> dict:
     """A token for the sidecar; its box in photo pixels (ends exclusive),
-    or None when it has no ink (a distractor may lose its)."""
+    or None when it has no ink (a distractor may lose its). A gen-v2 date
+    also says whether a space is printed before it (False: glued to its
+    word, or a range's second date)."""
     out = {"text": t.text, "cls": t.cls, "box": box}
     if t.cls == "date":
         out |= {"role": t.role, "format": t.format, "parts": list(t.parts)}
+        if v2:
+            out["space_before"] = t.space_before
     return out
 
 
@@ -321,4 +383,43 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
         row(f"camera: {name}", getattr(cam, name), [name in s["camera"] for s in sidecars])
     row("camera: noise (and every dim photo)", cam.noise + (1 - cam.noise) * cam.dim,
         ["noise" in s["camera"] for s in sidecars])
+    if spec.v2 is not None:
+        _v2_shares(row, placed, spec)
     return rows
+
+
+def _v2_shares(row, placed: Sequence[dict], spec: GenSpec) -> None:
+    """gen-v2's own shares (M2b S7, S8), over the placed blocks, whose
+    tokens and records the sidecar keeps: the glued dates, the line-pairs'
+    and dense panels' forms, the new distractors, nozzle rows, dotified
+    windows and worn patches."""
+    v2 = spec.v2
+    glued = [not t["space_before"] for b in placed for prev, t in zip(b["tokens"], b["tokens"][1:])
+             if t["cls"] == "date" and prev["cls"] in ("due", "prod")]
+    row("glued: of words printed before a date", v2.text.glued, glued)
+    pairs = [b for b in placed if b["kind"] == "line-pair"]
+    row("line-pairs: an import date", v2.text.pair_import,
+        [any(t.get("role") == "import" for t in b["tokens"]) for b in pairs])
+    for sep in v2.text.separators:
+        row(f"line-pairs: separator {sep!r}", 1 / len(v2.text.separators),
+            [b["tokens"][2]["text"] == sep.strip() for b in pairs])
+    dense = [b for b in placed if b["kind"] == "dense-panel"]
+    row("dense panels: an import line", v2.text.dense_import,
+        [any(t.get("role") == "import" for t in b["tokens"]) for b in dense])
+    lo, hi = v2.text.dense_lines
+    for n in range(lo, hi + 1):
+        row(f"dense panels: {n} more lines", 1 / (hi - lo + 1), [b["lines"] - 2 == n for b in dense])
+    extra = [t for b in placed if b["kind"] in ("panel", "dense-panel") for t in b["tokens"]
+             if t["cls"] in ("code", None)]
+    row("panels' other lines: codes", spec.text.panel_codes, [t["cls"] == "code" for t in extra])
+    distractors = [t["text"] for t in extra if t["cls"] is None]
+    every = len(text.DISTRACTORS) + len(text.DISTRACTORS_V2)
+    row("distractors: barcode numbers", 2 / every,
+        [t.replace(" ", "").isdigit() and len(t.replace(" ", "")) == 13 for t in distractors])
+    row("distractors: unit prices", 2 / every, [t.startswith(("USP", "Unit Sale Price")) for t in distractors])
+    row("dot-matrix: nozzle rows", v2.style.nozzle,
+        [bool(b["render"]["dots"]["nozzle"]) for b in placed if b["style"] == "dot-matrix"])
+    row("windows: dotified", v2.style.window_dots, [b["render"]["window"]["dots"] for b in placed
+                                                    if b["style"] == "window"])
+    row("worn patch (solid, dot-matrix, window)", v2.compose.worn,
+        [b["defects"]["worn"] is not None for b in placed if b["style"] in v2.compose.worn_styles])
