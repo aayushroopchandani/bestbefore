@@ -479,11 +479,15 @@ def blend(photo: np.ndarray, layer: Layer, x: int, y: int, ink: Ink, surface: Su
 
 
 def _lay_backing(region: np.ndarray, layer: Layer, shade: np.ndarray) -> None:
-    """A label's sticker or a laser window's dark rectangle laid over the
-    region, in the light falling on it."""
-    colour = np.asarray(layer.params["window" if "window" in layer.params else "label"]["colour"], np.float32)
+    """A label's sticker laid over the region, in the light falling on it;
+    a laser window's dark rectangle printed on it, multiplying it as dark
+    ink does, so the pack's texture and light show through (laid over like
+    a sticker, it looked pasted on: S8's look)."""
     a = _canvas(layer.backing, layer.height, layer.width)[..., None]
-    region += a * (colour * shade - region)
+    if "window" in layer.params:
+        region *= 1 - a * (1 - np.asarray(layer.params["window"]["colour"], np.float32) / 255)
+        return
+    region += a * (np.asarray(layer.params["label"]["colour"], np.float32) * shade - region)
 
 
 def backdrop(photo: np.ndarray, layer: Layer, x: int, y: int, surface: Surface) -> np.ndarray:
