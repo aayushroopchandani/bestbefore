@@ -11,7 +11,8 @@ designs frozen, v1 split: 25 expiries in validation); S5 done 2026-11-03
 10 photos train, 5 validate, 61 keyword boxes); S6 done 2026-11-04 (v1
 and v3 exported, 80 photos train in 4 turns, 34 validate, on the cluster
 and checked; 3 label problems found, then fixed at the owner's word, and
-exported and copied again). Next: S7.
+exported and copied again); S7 done 2026-11-05 (gen-v2's text and
+line spacing, M2's generator unmoved). Next: S8.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -1696,6 +1697,187 @@ distractors.
 
 **Check:** 20 deliberate bugs, one at a time, all caught (as M2 S4).
 **Commit:** `feat: generator v2 text: glued keywords, two dates on a line, dense panels, import words`
+
+**Done 2026-11-05.** Code `fe17238` (one commit); 663 tests pass (628 before:
+35 new in `tests/test_synth_v2.py`, and one check added to
+`tests/test_synth_batch.py`), and the commit passes alone, in a worktree with
+the laptop's data and nothing skipped. What was found:
+
+- **M2's generator didn't move.** `spec_hash(GEN)` is still `3fc14178…` and
+  the strata's `ba77f1bd…`. S5's 500-photo sample, made again with `GEN` in
+  memory, gives its 500 JPEGs, label files and sidecar lines byte for byte,
+  both with M2's code before any change and with S7's (about 10 s on 4
+  processes; now a test, which writes nothing). The render sheet (seed 0) is
+  S4's, `e1aa1311…`, before and after. And M2's text draws exactly what it
+  drew: a digest of 10,000 blocks and of the random generator's state after
+  them, taken from M2's code before any change (`c74bec80…`), is pinned by a
+  test, so one draw more or fewer fails it. Nothing of M2's was written: its
+  photos, strata, lists and models were only read.
+- **`V2Spec`** is `GenSpec.v2`, `None` in M2's specs. Its parts follow
+  `GenSpec`'s: `text` (`V2Text`) and `style` (`V2Style`, the line spacing per
+  kind), so S8 adds its print (nozzle rows, the window) to `style` and parts
+  for the upside-down blocks, the sizes and the worn patches beside them.
+  `spec.spec_dict` leaves `v2` out when it is `None`; the hash, the strata's
+  hash and the manifests (`batch.check_set`, `generate.py --set`) all go
+  through it, so a check run again on M2's sets would write M2's spec as
+  before, without a `"v2": null` (a test). A spec with a `V2Spec` hashes
+  differently, every number of it included. The new kinds' shares sit in
+  `TextSpec.kinds`, as M2's do: `TEXT_V2` holds the plan's seven, and
+  `text.random_block` refuses them without gen-v2's text. `GEN_V2` waits for
+  S8, which has the sizes.
+- **The rupee sign: `Rs.`** 4 of the 20 families have no glyph for it: Open
+  Sans, Barlow Condensed, Roboto Mono and Share Tech Mono, all training
+  families (the 4 held-out ones have it). So the new distractors print
+  `Rs.`, as the plan's examples do and M2's `MRP Rs.` already did;
+  `V2Text.currency` holds it, and a test reads every face's character map.
+  The two new characters, `|` and `&`, are in all 24 files; `text.CHARSET`
+  holds 69 characters (67 before), which M2's font check tests in every
+  face.
+- **Details fixed while writing** (by rule: no share of the plan changed,
+  and none came from a store photo):
+  - **Glued, per word and date.** First whether the date is glued (30%),
+    then its word: one of the 15 of the 26 words that end in `:` or `.` if
+    it is, any word if not. So the 30% holds over every word printed before
+    a date: a line-pair's two pairs each (the plan's own example glues one
+    and not the other), and ranges' and relative blocks' mfg lines too.
+  - **A line-pair is one line**: the mfg date with the expiry or, half the
+    time, an import date; the mfg pair first 80% (`TextSpec.mfg_first`, as
+    a pair's lines); between them ` | `, two spaces, ` / ` or `, `, each a
+    quarter. ` / ` is spaced, so a slash isn't printed into a numeric date,
+    and `, ` stands against the first date. The mark is a token with no box,
+    an empty one for two spaces. A line-pair with an import date prints no
+    expiry.
+  - **A dense panel's import line is one of its 3 to 5 extra lines** (the
+    plan's brackets list it among them), placed anywhere, as a panel's extra
+    lines are; the rest are codes and distractors, half each.
+  - **An import date** is 1 to 6 whole months after mfg
+    (`V2Text.import_months`; the plan's example is a month apart), always in
+    a month before the expiry's, its day kept as `add_months` keeps it, in
+    the block's format.
+  - **Distractors: every template equally likely**, M2's six and the four
+    new (barcode numbers run together or spaced 1-6-6, and two unit prices),
+    so 40% of gen-v2's distractor lines are new; M2's text keeps its six.
+    A barcode number is 12 random digits and their EAN-13 check digit; a
+    unit price is Rs. 0.10 to 9.99 per g or ml (`USP Rs. 1.50/g`), the long
+    form with one decimal (`Unit Sale Price: Rs. 1.5 per ml`), the shapes of
+    the plan's examples.
+  - **M2's draws keep their order.** Every new choice is drawn only with
+    gen-v2's text. One rewrite would have moved M2's stream without changing
+    a single token's meaning: a panel's extra line drawn inside the call
+    that inserts it is drawn after its place, not before. It is drawn first,
+    as M2 drew it; bug 5 below shows the digest catches that.
+  - **`make.py` is unchanged**, so nothing draws gen-v2 photos yet. The plan
+    gives `make.py` to S8 with the sizes; S8 passes `spec.v2`'s parts to
+    `text.random_block` and `render.render`.
+  - `scripts/render_sheet.py --v2` draws the new forms (run name
+    `render-sheet-v2`); without the flag it draws M2's sheet, the same
+    bytes.
+- **Shares**, as the tests measure them (`tests/test_synth_v2.py`): over
+  10,000 blocks of `TEXT_V2`, and the new kinds' own over 10,000 of each.
+  Every one is within 1.4 points of its spec:
+
+  | Share | Spec | Measured |
+  |---|---:|---:|
+  | kind: single / pair / panel / dense panel / line-pair / range / relative | 25 / 30 / 15 / 10 / 10 / 5 / 5% | 25.1 / 29.4 / 15.1 / 10.2 / 10.3 / 4.7 / 5.4% |
+  | glued, of the 16,044 words printed before a date | 30% | 30.6% |
+  | distractor lines (3,237): barcode / unit price | 20 / 20% | 20.4 / 19.0% |
+  | a panel's or dense panel's other lines: codes | 50% | 50.6% |
+  | month word / full name / a day on numbers / on words / an ordinal | 45 / 50 / 70 / 40 / 50% | 45.1 / 49.9 / 69.4 / 40.9 / 48.6% |
+  | case of month words: upper / title / lower | 50 / 45 / 5% | 50.1 / 44.8 / 5.1% |
+  | a single date with its word; the mfg line first | 70%; 80% | 69.3%; 80.0% |
+  | line-pairs: an import date / the mfg pair first / glued | 50 / 80 / 30% | 50.1 / 80.1 / 30.2% |
+  | line-pairs: ` \| `, two spaces, ` / `, `, ` | 25% each | 24.7 / 24.8 / 25.0 / 25.5% |
+  | dense panels: an import line / 3, 4, 5 more lines / codes / mfg first | 50 / 33.3 each / 50 / 80% | 50.2 / 34.0, 32.5, 33.5 / 50.3 / 79.4% |
+
+  M2's month-word and format shares hold in gen-v2's text, as the plan
+  asks; the dot-matrix share is S8's (styles).
+- **The new kinds' own shares over 10,000 of each**, as M2 S4 measured the
+  ranges': at 10% of 10,000 blocks, 3 points is under 2 standard errors. A
+  first run measured a dense panel's import share over its 1,000 dense
+  panels at 46.4%; over 10,000 it is 50.3% (another seed: 50.2% in the
+  table).
+- **M2's text test counts every relative block as mfg first** (its one
+  date is the mfg), so it holds pair, panel and relative blocks to 81.7%
+  where the spec says 80%, inside its 3 points. S7's test compares the
+  mfg line's place with the expiry's or the shelf life's instead; M2's test
+  is left as it is.
+- **Boxes come from the ink** (tests, every style, digits 6 to 24 px): each
+  boxed token's box holds all of its own ink, found another way (its 4x
+  sprite alone, shrunk by a plain mean), and touches it within 1 px; a
+  glued date's box holds none of its word's ink but for one boundary column
+  they may share, and the word's box ends where the date's starts; a
+  line-pair gives two date boxes and two keyword boxes, left to right and
+  apart, its separator unboxed; import words are `prod`, their dates role
+  `import`.
+- **Dense panels at 1.0 to 1.2 em**: in 11 of 600 (1.8%), two boxes on
+  neighbouring lines overlap, by 3 px at most, 4 of the overlapping pairs
+  with a date in them; M2's panels, at 1.2 to 1.6 em, 0 of 600 (a scratch
+  measure, every style, digits 6 to 24 px). Each box is still its own
+  token's ink (the tests).
+- **By eye, the render sheet with the new kinds** (`render_sheet.py --v2`,
+  `results/runs/20261105-144434-render-sheet-v2/`, from `fe17238` with a
+  clean tree, SHA-256 `482eec78…`; the same bytes as the copy looked at
+  before the commit). Rows are M2's print styles, columns a glued pair, a
+  line-pair with the expiry, a line-pair with an import date, a dense panel,
+  and a dense panel with its import line and distractors only, each normal
+  size over small print. Every date, `due`, `prod` and `code` token has its
+  box, tight on its ink at both sizes in all five rows, and no separator or
+  distractor has one (barcode numbers, unit prices, phone numbers, weights,
+  licence numbers). Glued words read as printed against their dates, each
+  date's box starting where its word's ends. Dense panels are plainly
+  tighter than M2's panels; at 1.0 em their lines nearly touch,
+  condensed and embossed ones most. `&` and `|` draw in every font shown.
+  As M2 S4 found for Oswald, 7-row dot-matrix in condensed fonts is hard to
+  read, and there a colon and a full stop look alike (`Unit Sale Price:`).
+  The sheet crops the longest line-pairs at its 900 px cells (the sheet's
+  cell, not the drawing). M2's sheet, drawn again from the same commit, is
+  S4's (`e1aa1311…`).
+- **The tests catch what they should.** 20 deliberate bugs, one at a time,
+  each caught by the synth tests: the glue share inverted; a glued word
+  drawn from every word; a glued date keeping its space; M2's text drawing
+  a glue decision too; M2's panel line placed before it is drawn; `v2:
+  None` kept in M2's spec as data; the line-pair separator boxed as a code;
+  a line-pair's import date in place of its mfg date; a line-pair's mfg
+  pair always first; the word after `, ` losing its space; an import word
+  boxed `due`; a dense panel's import date given the role `mfg`; an import
+  date allowed in the expiry's month; a dense panel's extra lines as a
+  panel's, 1 to 3; its import line on top of its 3 to 5; line spacing per
+  kind ignored; a dense panel's spacing for every kind; the new distractors
+  never drawn; a barcode's check digit weighted 3, 1, 3 …; and the rupee
+  sign printed though fonts lack it. M2's two stream bugs fail the pinned
+  digest and the 500-photo sample, the hash bug the hash test and M2's
+  batch check. Two side catches were chance, and are recorded:
+  - with bug 9's one draw fewer, a box test's 40 random blocks held no
+    dense panel, which its own guard caught; that test now draws its dense
+    panels and line-pairs on purpose;
+  - with bug 4, M2's own check failed the batch tests' 6-photo set: its
+    "month-word dates: a day printed" fell outside 3 standard errors. The
+    dates of one block share a format, so they aren't independent draws,
+    and on so few the bound is tight. True of M2's check before S7; it
+    matters for S8's and S9's small gen-v2 test sets.
+
+  Every patched file was put back from a copy and compared by SHA-256
+  after each run; the tree is as before.
+- **Searched**: S7's changes (every added line, the new test file and this
+  record among them) for every v1, v2 and v3 photo name (and stem, 5
+  characters or more), the HEIC names, every design id and every word of
+  one (4 characters or more): no name and no id; 4 common English words of
+  design ids match (such as `white`). The words, distractors and examples in
+  the code and tests are made up.
+- **Not checked:** gen-v2's text through warp, ink, camera and the sidecar
+  (`make.py` is S8's), so neither a v2 block on a photo nor its sidecar
+  record (whether a date is glued isn't kept anywhere yet: the sidecar
+  keeps tokens, not their spaces); whether the new kinds look pasted (S8's
+  look, beside store crops); the cluster's pixels for the new kinds; how
+  much time the new kinds add (S8 times a photo); the learnings guide (not
+  written).
+- **For S8:** `make._block` passes `spec.v2.text` to `text.random_block` and
+  `spec.v2.style` to `render.render`, and only when `spec.v2` is set, so
+  M2's sidecars stay as they are; the sidecar marks each glued date (its
+  `space_before`), so the sample's table can measure the glued share;
+  `make.shares` adds gen-v2's rows (glued, import in line-pairs and dense
+  panels, the separators, dense panels' lines, the new distractors).
+  `GEN_V2 = replace(GEN, text=TEXT_V2, ..., v2=V2Spec(...))`.
 
 ### S8. Generator v2, part 2: print and geometry · laptop
 
