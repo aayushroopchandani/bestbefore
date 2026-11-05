@@ -18,11 +18,15 @@ worn patch each from a generator of their own, so the same number draws
 the same block at any size. The defects are laid on in the print's own
 frame, before the warp, and a worn patch after them, so a worn block and
 its unworn twin share every other draw: its boxes come from the twin, the
-ink before the wear. Without v2 every draw is M2's.
+ink before the wear. Its size is the store's (spec.V2Size): a target for
+its first date's box, drawn before the background, which a first drawing
+measures and a second, from the same number, hits (draw_to_size). Without
+v2 every draw is M2's.
 """
 from __future__ import annotations
 
 import io
+import math
 import time
 from collections import Counter
 from collections.abc import Sequence
@@ -51,6 +55,7 @@ class Drawn:
     defects: dict
     redraws: int            # earlier draws that lost a boxed token's ink
     scale: float = 1.0      # of its size: spec.compose.shrink once no place was free
+    sizing: dict | None = None      # gen-v2's: the digits drawn, and the first date's box measured and reached
 
 
 @dataclass(frozen=True)
@@ -102,8 +107,13 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
     c = spec.compose
     with clock("background"):
         # Sizes first: a photo with small print gets a background of at least min_side_small.
-        heights = [compose.print_height(rng, spec.size) for _ in range(2 if rng.random() < c.two_blocks else 1)]
-        small = any(band == "small" for band, _ in heights)
+        wanted = range(2 if rng.random() < c.two_blocks else 1)
+        if spec.v2 is None:
+            heights = [compose.print_height(rng, spec.size) for _ in wanted]
+            small = any(band == "small" for band, _ in heights)
+        else:                       # gen-v2: a decile of the store's date sizes and a target in it, per block
+            heights = [compose.store_size(rng, spec.v2.size) for _ in wanted]
+            small = any(target < spec.v2.size.small for _, target in heights)
         bg = pool.pick(rng, spec.backgrounds, c.min_side_small if small else c.min_side)
         photo = compose.load_photo(bg, c.max_side)
     height, width = photo.shape[:2]
@@ -111,9 +121,9 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
         surface = Surface(photo, c)
     taken = compose.box_rects(bg.boxes, width, height)
     blocks, skipped = [], []
-    for band, fraction in heights:
+    for want in heights:
         for _ in range(c.block_tries):
-            placed, skip = _block(band, fraction * max(width, height), photo, surface, taken, rng, spec, clock)
+            placed, skip = _block(want, max(width, height), photo, surface, taken, rng, spec, clock)
             if placed is None:
                 skipped.append(skip)
                 continue
@@ -138,17 +148,27 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
     return Made(name, jpeg, label_text(sidecar), sidecar)
 
 
-def _block(band: str, size: float, photo: np.ndarray, surface: Surface, taken: list, rng: np.random.Generator,
-           spec: GenSpec, clock: Clock) -> tuple[dict | None, dict | None]:
+def _block(want: tuple, long_side: int, photo: np.ndarray, surface: Surface, taken: list,
+           rng: np.random.Generator, spec: GenSpec, clock: Clock) -> tuple[dict | None, dict | None]:
     """One block drawn, placed and inked onto the photo: its sidecar record,
-    or None and why it was skipped (then the photo is left as it was)."""
+    or None and why it was skipped (then the photo is left as it was).
+    `want` is M2's (band, print height: the digits') or gen-v2's (decile,
+    target: its first date's box), as shares of the photo's long side."""
     c, v2 = spec.compose, spec.v2
     block = text.random_block(rng, spec.text, None if v2 is None else v2.text)
     style = render.random_style(rng, spec.style)
     family = fonts.random_family(rng, spec.fonts)
     geometry = warp.random_geometry(rng, spec.geometry, None if v2 is None else v2.geometry)
+    if v2 is None:
+        band, fraction = want
+        size = fraction * long_side                 # the digits' height
+    else:
+        decile, target = want
+        band = "small" if target < v2.size.small else "normal"
+        size = target * long_side                   # the first date's box, its short side
     drawn, spot = _place(block, style, family, size, geometry, surface, taken, rng, spec, clock)
-    skip = {"kind": block.kind, "style": style, "band": band, "size": round(size, 2)}
+    skip = ({"kind": block.kind, "style": style, "band": band, "size": round(size, 2)} if v2 is None else
+            {"kind": block.kind, "style": style, "band": band, "decile": decile, "target": round(target, 5)})
     if spot is None:
         return None, skip | {"why": "no free place" if drawn else "a boxed token kept no ink"}
     (x, y), layer = spot, drawn.layer
@@ -158,10 +178,11 @@ def _block(band: str, size: float, photo: np.ndarray, surface: Surface, taken: l
     if shown < c.visible:
         return None, skip | {"why": "its ink stayed too faint", "inks": [i.record() for i in inks]}
     height, width = photo.shape[:2]
+    digits = size * drawn.scale if v2 is None else drawn.sizing["digits"]
     record = {
         "kind": block.kind, "style": style, "family": family.name, "weight": layer.params["weight"],
-        "band": band, "size": round(size * drawn.scale, 2),
-        "print_height": round(size * drawn.scale / max(width, height), 5),
+        "band": band, "size": round(digits, 2),
+        "print_height": round(digits / max(width, height), 5),
         "shrunk": drawn.scale < 1, "redraws": drawn.redraws,
         "render": {k: v for k, v in layer.params.items() if k not in ("style", "family", "weight", "size")},
         "geometry": geometry.record(), "defects": drawn.defects, "ink": inks[-1].record(),
@@ -170,7 +191,9 @@ def _block(band: str, size: float, photo: np.ndarray, surface: Surface, taken: l
         "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]], v2 is not None)
                    for t, b in zip(block.tokens, drawn.boxes)]}
     if v2 is not None:
-        record["lines"] = len(block.lines)
+        record |= {"lines": len(block.lines), "decile": decile, "target": round(target, 5),
+                   "reached": round(drawn.sizing["reached"] / max(width, height), 5),
+                   "fits": drawn.sizing["fits"], "drawings": drawn.sizing["drawings"]}
     return record, None
 
 
@@ -202,14 +225,12 @@ def _draw(block: Block, style: str, family: fonts.Family, size: float, scale: fl
     boxed from its ink. A boxed token whose ink is all gone at this size
     has no box, so then the block is drawn again, spec.compose.redraws
     times in all; None if every draw lost a box. A date is never written
-    without its box."""
+    without its box. `size` is M2's digits' height, or gen-v2's target for
+    its first date's box (_sized), in photo pixels."""
+    if spec.v2 is not None:
+        return _sized(block, style, family, size * scale, scale, geometry, rng, spec)
     boxed = [t.cls is not None for t in block.tokens]
     for attempt in range(spec.compose.redraws):
-        if spec.v2 is not None:
-            d = draw_v2(block, style, family, size * scale, geometry, int(rng.integers(2**63)), spec)
-            if not d.worn_out and all(box is not None for box, b in zip(d.boxes, boxed) if b):
-                return Drawn(d.layer, d.boxes, d.defects, attempt, scale)
-            continue
         layer = warp.apply(render.render(block, style, family, size * scale, rng, spec.style), geometry)
         layer, defects = compose.defects(layer, style, boxed, rng, spec.compose)
         layer = render.shrink(layer)
@@ -217,6 +238,75 @@ def _draw(block: Block, style: str, family: fonts.Family, size: float, scale: fl
         if all(box is not None for box, b in zip(boxes, boxed) if b):
             return Drawn(layer, boxes, defects, attempt, scale)
     return None
+
+
+def _sized(block: Block, style: str, family: fonts.Family, target: float, scale: float, geometry: Geometry,
+           rng: np.random.Generator, spec: GenSpec) -> Drawn | None:
+    """gen-v2's block drawn to its target: up to spec.compose.redraws tries,
+    each from fresh draws (one number from the photo's generator) and each
+    ended as soon as its first date's box fits (draw_to_size). It keeps the
+    drawing closest to the target among those that kept every boxed
+    token's ink: a box that grows in steps may fit no size. None if no try
+    kept that ink. Its `redraws` is the try it kept, counted from 0."""
+    best, sizing, drawings = None, {}, 0
+    for attempt in range(spec.compose.redraws):
+        d, found = draw_to_size(block, style, family, target, geometry, int(rng.integers(2**63)), spec)
+        drawings += found["drawings"]
+        if d is not None and (best is None or abs(found["reached"] - target) < abs(sizing["reached"] - target)):
+            best, sizing, kept = d, found, attempt
+        if d is not None and found["fits"]:
+            break
+    if best is None:
+        return None
+    return Drawn(best.layer, best.boxes, best.defects, kept, scale,
+                 sizing | {"drawings": drawings, "tries": attempt + 1})
+
+
+def draw_to_size(block: Block, style: str, family: fonts.Family, target: float, geometry: Geometry, seed: int,
+                 spec: GenSpec) -> tuple[Drawing | None, dict]:
+    """gen-v2's sizes (spec.V2Size): the block drawn from one seed so its
+    first date's box, its short side, is `target` final pixels. A first
+    drawing at a provisional size (the digits at the target over
+    spec.v2.size.provisional) has that box measured after the bending and
+    turning; the block is then drawn again from the same seed, so with the
+    same choices, at the size that gives the box the target, and, while the
+    box still misses it by more than 1 px or 5%, once more
+    (spec.v2.size.corrections drawings in all). Returns the drawing closest
+    to the target among those that kept every boxed token's ink (None if
+    none did) and its sizes: the digits drawn, its first date's box in
+    final pixels, whether that fits, and how many drawings it took."""
+    v = spec.v2.size
+    boxed = [t.cls is not None for t in block.tokens]
+    first = next(i for i, t in enumerate(block.tokens) if t.cls == "date")
+    digits = target / v.provisional
+    d = draw_v2(block, style, family, digits, geometry, seed, spec)
+    best, sizing, n = None, {}, 1
+    if d.boxes[first] is not None:
+        measured = _short(d.boxes[first])
+        for _ in range(v.corrections):
+            digits *= target / measured
+            d = draw_v2(block, style, family, digits, geometry, seed, spec)
+            n += 1
+            if d.boxes[first] is None:          # its date lost its ink at this size
+                break
+            measured = _short(d.boxes[first])
+            whole = not d.worn_out and all(box is not None for box, b in zip(d.boxes, boxed) if b)
+            if whole and (best is None or abs(measured - target) < abs(sizing["reached"] - target)):
+                best, sizing = d, {"digits": digits, "reached": measured, "fits": fits(measured, target, v)}
+            if fits(measured, target, v):
+                break
+    return best, sizing | {"drawings": n}
+
+
+def fits(box: float, target: float, v) -> bool:
+    """Whether a first date's box (its short side) is within
+    v.tolerance_px pixels or v.tolerance of its target."""
+    return abs(box - target) <= max(v.tolerance_px, v.tolerance * target)
+
+
+def _short(box: tuple[int, int, int, int]) -> int:
+    """A box's short side: as the store measures its dates' size."""
+    return min(box[2] - box[0], box[3] - box[1])
 
 
 def draw_v2(block: Block, style: str, family: fonts.Family, size: float, geometry: Geometry, seed: int,
@@ -238,7 +328,7 @@ def draw_v2(block: Block, style: str, family: fonts.Family, size: float, geometr
     unworn = render.shrink(warp.apply(layer, geometry))
     boxes = render.boxes(unworn)
     if style != "embossed":
-        defects = defects | {"worn": patch.record(layer.scale) if patch is not None and patch.on else None}
+        defects = defects | {"worn": patch.record() if patch is not None and patch.on else None}
     if patch is None or not patch.on:
         return Drawing(unworn, boxes, defects)
     worn = render.shrink(warp.apply(compose.wear(layer, patch), geometry))
@@ -329,6 +419,30 @@ def write_one(made: Made, images: Path) -> Path:
 
 # --- The spec, measured on what was made -----------------------------------------------------------
 
+SIZE_BANDS = ((0.015, "under 1.5%"), (0.025, "1.5-2.5%"), (math.inf, "2.5% and up"))   # the store's (M2b, Cause 4)
+
+
+def date_sizes(sidecars: Sequence[dict]) -> list[float]:
+    """Every generated date's size as the store measures its own: its box's
+    short side over its photo's long side (the backgrounds' own dates
+    aside)."""
+    out = []
+    for s in sidecars:
+        long_side = max(s["size"])
+        out += [_short(t["box"]) / long_side for b in s["blocks"] for t in b["tokens"]
+                if t["cls"] == "date" and t["box"]]
+    return out
+
+
+def size_bands(sizes: Sequence[float]) -> dict:
+    """Sizes in the store's bands, as shares, and their median."""
+    v, out, lo = np.asarray(sizes, dtype=float), {"dates": len(sizes)}, 0.0
+    for top, name in SIZE_BANDS:
+        out[name] = round(float(np.mean((v >= lo) & (v < top))), 4) if len(v) else None
+        lo = top
+    out["median"] = round(float(np.median(v)), 5) if len(v) else None
+    return out
+
 def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     """Every share the spec sets, as drawn in these photos: rows of
     {what, spec, measured, n}. Text, style and size count every block drawn,
@@ -347,9 +461,14 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     row("photos with 2 blocks", spec.compose.two_blocks, [s["wanted"] == 2 for s in sidecars])
     for name, share in spec.backgrounds:
         row(f"background from {name}", share, [s["background"]["list"] == name for s in sidecars])
-    for field, table in (("kind", spec.text.kinds), ("style", spec.style.styles), ("band", spec.size.bands)):
+    tables = (("kind", spec.text.kinds), ("style", spec.style.styles))
+    for field, table in tables + ((("band", spec.size.bands),) if spec.v2 is None else ()):
         for name, share in table:
             row(f"{field}: {name}", share, [b[field] == name for b in drawn])
+    if spec.v2 is not None:                     # gen-v2's sizes: each decile of v1-train's date sizes alike
+        n = len(spec.v2.size.deciles) - 1
+        for k in range(n):
+            row(f"size: decile {k + 1} of {n}", 1 / n, [b["decile"] == k for b in drawn])
     g = spec.geometry
     for name, share in g.orientation:
         row(f"orientation: {name}", share, [b["geometry"]["orientation"] == name for b in placed])

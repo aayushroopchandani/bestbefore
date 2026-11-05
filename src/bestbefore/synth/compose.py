@@ -44,7 +44,7 @@ from ..samples import Box
 from ..yolo import list_ids
 from . import render
 from .render import Layer, Sprite
-from .spec import COMPOSE, SIZE, ComposeSpec, Shares, SizeSpec, V2Compose
+from .spec import COMPOSE, SIZE, ComposeSpec, Shares, SizeSpec, V2Compose, V2Size
 from .text import choice, pick
 
 LUMA = np.array([0.299, 0.587, 0.114])      # Rec. 601, as OpenCV's grey
@@ -151,6 +151,15 @@ def print_height(rng: np.random.Generator, spec: SizeSpec = SIZE) -> tuple[str, 
     band = pick(rng, spec.bands)
     lo, hi = getattr(spec, band)
     return band, float(np.exp(rng.uniform(math.log(lo), math.log(hi))))
+
+
+def store_size(rng: np.random.Generator, spec: V2Size) -> tuple[int, float]:
+    """gen-v2's size for a block (S8): one of the ten bands between
+    v1-train's date deciles, uniformly, and a target log-uniform inside it,
+    for its first date's box: the short side over the photo's long side."""
+    k = int(rng.integers(len(spec.deciles) - 1))
+    lo, hi = spec.deciles[k], spec.deciles[k + 1]
+    return k, float(np.exp(rng.uniform(math.log(lo), math.log(hi))))
 
 
 # --- The surface ---------------------------------------------------------------------------------
@@ -353,23 +362,27 @@ def defects(layer: Layer, style: str, boxed: Sequence[bool], rng: np.random.Gene
 @dataclass(frozen=True)
 class Wear:
     """A worn patch on a block drawn at 4x, in its print's own frame (before
-    any warp), centred on one of its dates: `width` x `height` drawn pixels,
-    its ink fading by `fade` over its core and less towards its soft edge
-    (`edge` of its half width and half height)."""
+    any warp), centred on one of its dates, `along` of the way across its
+    ink: `chars` characters wide and `lines` lines tall, its ink fading by
+    `fade` over its core and less towards its soft edge (`edge` of its half
+    width and half height). The same patch at any size; `cx`, `cy`,
+    `width` and `height` are it in this drawing's pixels."""
     on: bool
     token: int              # the date it is centred on, in Block.tokens order
+    along: float
+    chars: float
+    lines: float
+    fade: float
+    edge: float
     cx: float
     cy: float
     width: float
     height: float
-    fade: float
-    edge: float
 
-    def record(self, k: int) -> dict:
-        """For the sidecar, in final pixels of the print's frame."""
-        return {"token": self.token, "centre": [round(self.cx / k, 1), round(self.cy / k, 1)],
-                "size": [round(self.width / k, 1), round(self.height / k, 1)], "fade": round(self.fade, 3),
-                "edge": round(self.edge, 3)}
+    def record(self) -> dict:
+        """For the sidecar: the patch as drawn, the same at any size."""
+        return {"token": self.token, "along": round(self.along, 3), "chars": round(self.chars, 3),
+                "lines": round(self.lines, 3), "fade": round(self.fade, 3), "edge": round(self.edge, 3)}
 
 
 def random_wear(rng: np.random.Generator, layer: Layer, block, style: str, spec: V2Compose) -> Wear | None:
@@ -385,11 +398,13 @@ def random_wear(rng: np.random.Generator, layer: Layer, block, style: str, spec:
         return None
     on = bool(rng.random() < spec.worn)
     i = int(choice(rng, dates))
+    along, chars = float(rng.random()), float(rng.uniform(*spec.worn_width))
+    lines = float(rng.uniform(*spec.worn_height))
+    fade, edge = float(rng.uniform(*spec.worn_fade)), float(rng.uniform(*spec.worn_edge))
     x1, y1, x2, y2 = render.ink_box(layer.tokens[i])
     char, line = layer.params["size"] * layer.scale, layer.params["line_spacing"] * layer.params["px"]
-    return Wear(on, i, float(rng.uniform(x1, x2)), (y1 + y2) / 2, float(rng.uniform(*spec.worn_width)) * char,
-                float(rng.uniform(*spec.worn_height)) * line, float(rng.uniform(*spec.worn_fade)),
-                float(rng.uniform(*spec.worn_edge)))
+    return Wear(on, i, along, chars, lines, fade, edge, x1 + along * (x2 - x1), (y1 + y2) / 2, chars * char,
+                lines * line)
 
 
 def wear(layer: Layer, w: Wear) -> Layer:

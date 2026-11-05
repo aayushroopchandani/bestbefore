@@ -2,12 +2,15 @@
 S5 and S6).
 
     python scripts/generate.py --set gen-sample --count 500 --workers 4   # S5: a sample to look at
+    python scripts/generate.py --set gen-v2-sample --count 500 --workers 4   # M2b S8: gen-v2's, to look at
     python scripts/generate.py --tasks 0-50 --workers 24                  # S6: gen (tasks 0-49), synth-val (50)
     python scripts/generate.py --check --workers 24 --release m2          # S6: check, vouch, release
 
 Everything goes under $GENERATED_DIR/m2/: gen/images/<list>/NNNNNN.jpg,
 their labels in gen/labels/<list>/, the sidecars in gen/sidecars/, lists/
-and manifests/ (synth/batch.py has the layout). Photo i comes from
+and manifests/ (synth/batch.py has the layout); gen-v2's sets (M2b) the
+same way under $GENERATED_DIR/m2b/, drawn with spec.GEN_V2, so M2's don't
+change. Photo i comes from
 default_rng([set seed, i]) alone, so any split into tasks, runs or worker
 processes writes the same bytes. Each worker uses one CPU (OpenCV's own
 threads off).
@@ -29,27 +32,31 @@ import sys
 import time
 from dataclasses import asdict
 
-from bestbefore import derived, m2
+from bestbefore import derived, m2, m2b
 from bestbefore.runs import code_sha256, start_run, write_json
 from bestbefore.synth import batch, fonts, make
-from bestbefore.synth.spec import GEN, SET_SEEDS, spec_dict, spec_hash
+from bestbefore.synth.spec import SET_SEEDS, spec_dict, spec_hash
 
 
 def sample(name: str, count: int, workers: int) -> None:
-    """S5's sample: photos 0 to count - 1 of a set drawn with GEN, one sidecar."""
+    """A sample to look at (S5's gen-sample with GEN, M2b S8's gen-v2-sample
+    with GEN_V2): photos 0 to count - 1 of the set, one sidecar."""
+    home, spec = batch.home(name), batch.LAYOUT.spec(name, 0)[0]
     start = time.time()
     pools = batch.load_pools([name])
     loaded = time.time() - start
     images = batch.images_dir(name)
     for folder in (images, derived.label_path(images / "x.jpg").parent):     # no photo from an earlier run stays
         shutil.rmtree(folder, ignore_errors=True)
-    run_dir = start_run(f"m2-generate-{name}", {"set": name, "count": count, "workers": workers,
-                                                "seed": SET_SEEDS[name], "root": m2.root()}, seed=SET_SEEDS[name])
+    milestone = "m2b" if home is m2b else "m2"
+    run_dir = start_run(f"{milestone}-generate-{name}", {"set": name, "count": count, "workers": workers,
+                                                         "seed": SET_SEEDS[name], "root": home.root()},
+                        seed=SET_SEEDS[name])
     record = json.loads((run_dir / "run.json").read_text())
 
     start = time.time()
     sidecars, per_photo = [], []
-    sidecar = m2.sidecar_path(m2.GENERATED_SETS[name])
+    sidecar = home.sidecar_path(home.GENERATED_SETS[name])
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     with sidecar.open("w") as out:
         for line, seconds, _ in batch.produce([(name, i) for i in range(count)], workers, pools):
@@ -60,27 +67,31 @@ def sample(name: str, count: int, workers: int) -> None:
 
     pool = pools[name]
     summary = {
-        "set": name, "list": m2.GENERATED_SETS[name], "seed": SET_SEEDS[name], **batch.counts(sidecars),
-        "listed": derived.write_list(m2.list_path(m2.GENERATED_SETS[name]),
+        "set": name, "list": home.GENERATED_SETS[name], "seed": SET_SEEDS[name], **batch.counts(sidecars),
+        "listed": derived.write_list(home.list_path(home.GENERATED_SETS[name]),
                                      [images / make.image_name(i) for i in range(count)]),
-        "spec_sha256": spec_hash(GEN), "spec": spec_dict(GEN),
-        "backgrounds": {n: len(pool.eligible(n, GEN.compose.min_side)) for n, _ in GEN.backgrounds},
-        "backgrounds_small_print": {n: len(pool.eligible(n, GEN.compose.min_side_small)) for n, _ in GEN.backgrounds},
-        "fonts": {face.file: fonts.SHA256[face.file] for f in fonts.families(GEN.fonts) for face in fonts.faces(f)},
+        "spec_sha256": spec_hash(spec), "spec": spec_dict(spec),
+        "backgrounds": {n: len(pool.eligible(n, spec.compose.min_side)) for n, _ in spec.backgrounds},
+        "backgrounds_small_print": {n: len(pool.eligible(n, spec.compose.min_side_small))
+                                    for n, _ in spec.backgrounds},
+        "fonts": {face.file: fonts.SHA256[face.file] for f in fonts.families(spec.fonts) for face in fonts.faces(f)},
         "git_commit": record["git_commit"], "git_dirty": record["git_dirty"], "run": run_dir.name,
         "code_sha256": code_sha256(*batch.CODE),
         "timing": {**batch.timing(per_photo), "workers": workers, "wall_seconds": round(wall, 1),
                    "backgrounds_loaded_seconds": round(loaded, 1)},
-        "shares": batch.checked_shares(sidecars, GEN),
+        "shares": batch.checked_shares(sidecars, spec),
     }
-    m2.manifest_path(name).parent.mkdir(parents=True, exist_ok=True)
-    write_json(m2.manifest_path(name), summary)
+    if spec.v2 is not None:             # gen-v2's dates, measured as the store measures its own (Cause 4)
+        summary["date_sizes"] = make.size_bands(make.date_sizes(sidecars))
+    home.manifest_path(name).parent.mkdir(parents=True, exist_ok=True)
+    write_json(home.manifest_path(name), summary)
     write_json(run_dir / "summary.json", summary)
     table = batch.shares_table(summary["shares"])
     (run_dir / "shares.md").write_text(table + "\n")
     print(table)
     print(json.dumps({k: summary[k] for k in ("photos", "blocks", "skipped", "redrawn", "fresh_ink", "shrunk",
-                                              "boxes", "generated_dates", "timing")}, indent=2))
+                                              "boxes", "generated_dates", "date_sizes", "timing") if k in summary},
+                     indent=2))
     print(run_dir)
 
 
@@ -140,8 +151,8 @@ def check(workers: int, release: str | None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--set", choices=[s for s in m2.GENERATED_SETS if s not in batch.SETS],
-                      help="a sample of --count photos (S5)")
+    mode.add_argument("--set", choices=[s for s in (*m2.GENERATED_SETS, *m2b.GENERATED_SETS) if s not in batch.SETS],
+                      help="a sample of --count photos (S5; M2b S8)")
     mode.add_argument("--tasks", help='S6\'s tasks, e.g. "0-50" or "0-4,50"')
     mode.add_argument("--check", action="store_true", help="check every set and vouch for it (S6)")
     parser.add_argument("--count", type=int, help="with --set")

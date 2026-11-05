@@ -232,13 +232,34 @@ class V2Compose:
 
 
 @dataclass(frozen=True)
+class V2Size:
+    """gen-v2's sizes (S8), like the store's (Cause 4): each block is drawn
+    so its first date's box, its short side over the photo's long side as
+    the store measures its dates, follows v1-train's dates: one of the ten
+    bands between their deciles, uniformly, then log-uniform inside it.
+    Replaces M2's two bands (SizeSpec), which set the digits' height."""
+    # v1-train's 169 dates, v3's training part included (scripts/store_sizes.py, 2026-11-05): aggregates
+    # only, the two ends clipped to M2's floor and ceiling, 0.6% (8 px at 1,280 px input) and 4.5%.
+    deciles: tuple[float, ...] = (0.00659, 0.01118, 0.01296, 0.01451, 0.01573, 0.01736, 0.01974, 0.02181,
+                                  0.02559, 0.03247, 0.045)
+    provisional: float = 1.3        # a first drawing's digits: the target over this (M2 S5's upright ratio)
+    # Changed 2026-11-05 (S8, owner's call): a box off by more than this after its first correction is
+    # corrected once more from the same draws, then drawn afresh, ComposeSpec.redraws tries in all.
+    corrections: int = 2            # drawings from the same draws that correct its size, the second only while off
+    tolerance_px: float = 1.0       # a first date's box within this many pixels of its target,
+    tolerance: float = 0.05         #   or within this share of it, fits
+    small: float = 0.015            # a target under this is small print: a background of at least min_side_small
+
+
+@dataclass(frozen=True)
 class V2Spec:
     """Everything gen-v2 adds to M2's spec, by the part of GenSpec it
-    extends: its text (S7), print, geometry and ink (S8)."""
+    extends: its text (S7), print, geometry, ink and sizes (S8)."""
     text: V2Text = V2Text()
     style: V2Style = V2Style()
     geometry: V2Geometry = V2Geometry()
     compose: V2Compose = V2Compose()
+    size: V2Size = V2Size()
 
 
 @dataclass(frozen=True)
@@ -275,9 +296,14 @@ STYLE_V2 = replace(STYLE, styles=(("solid", 0.30), ("dot-matrix", 0.35), ("label
 GEOMETRY_V2 = replace(GEOMETRY, orientation=(("upright", 0.45), ("tilted", 0.15), ("sideways", 0.30),
                                              ("upside-down", 0.10)))
 V2 = V2Spec()
+# gen-v2 (M2b S8): M2's generator with every gap filled, its sizes like the
+# store's. Everything it doesn't name is M2's spec.
+GEN_V2 = replace(GEN, text=TEXT_V2, style=STYLE_V2, geometry=GEOMETRY_V2, v2=V2)
 
 # Photo i of a set is drawn from numpy.random.default_rng([seed, i]).
-SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3}
+# gen-v2-sample is M2b S8's 500 photos to look at (gen-v2 and synth-val-v2,
+# 4 and 5, are S9's).
+SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3, "gen-v2-sample": 6}
 
 
 # --- synth-val's strata (S6) ------------------------------------------------------------------

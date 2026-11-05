@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import derived, expdate, m2, store, yolo
+from . import derived, expdate, m2, m2b, store, yolo
 from .config import expdate_dir
 from .samples import Sample
 
@@ -13,11 +13,11 @@ from .samples import Sample
 # and in 2 x 2 grids (M2's hard validation sets, scripts/derive_sets.py).
 # gen-sample, gen, synth-val: generated photos (scripts/generate.py), read
 # with their sidecars, so synth-val's targets load as exp and its strata as
-# tags.
+# tags; gen-v2-sample: M2b's, under $GENERATED_DIR/m2b/.
 # store: store test set v1 (store.V1), the retailer's photos that M0 to
 # M2 were tested on.
 DERIVED = m2.DERIVED_SETS
-GENERATED = m2.GENERATED_SETS
+GENERATED = {**m2.GENERATED_SETS, **m2b.GENERATED_SETS}
 NAMES = (*expdate.SPLITS, "real-val", *DERIVED, *GENERATED, "store")
 
 
@@ -30,7 +30,8 @@ def load_set(name: str) -> list[Sample]:
     if name in DERIVED:
         return derived.load_yolo_set(m2.list_path(DERIVED[name]))
     if name in GENERATED:
-        return derived.load_yolo_set(m2.list_path(GENERATED[name]), m2.sidecar_path(GENERATED[name]))
+        home = m2b if name in m2b.GENERATED_SETS else m2
+        return derived.load_yolo_set(home.list_path(GENERATED[name]), home.sidecar_path(GENERATED[name]))
     if name == "store":
         return store.load_samples(store.V1)
     raise ValueError(f"unknown set {name!r}; one of {', '.join(NAMES)}")

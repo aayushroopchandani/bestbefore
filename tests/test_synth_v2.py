@@ -813,13 +813,14 @@ def test_worn_patches_take_their_share_on_solid_dot_matrix_and_window_print():
         char, line = 10.0 * 4, 1.4 * 56
         for w in drawn:
             x1, _, x2, _ = R.ink_box(layer.tokens[w.token])
-            assert x1 <= w.cx <= x2
-            assert 1.0 <= w.width / char <= 3.0 and 1.0 <= w.height / line <= 2.0 and 0.6 <= w.fade <= 0.95
+            assert x1 <= w.cx <= x2 and w.cx == pytest.approx(x1 + w.along * (x2 - x1))
+            assert w.width == pytest.approx(w.chars * char) and w.height == pytest.approx(w.lines * line)
+            assert 1.0 <= w.chars <= 3.0 and 1.0 <= w.lines <= 2.0 and 0.6 <= w.fade <= 0.95
 
 
 def test_a_patch_fades_by_its_fade_over_its_core_and_nothing_beyond_its_edge():
     block, layer = _dated_layer()
-    patch = compose.Wear(True, 1, 170.0, 28.0, 80.0, 100.0, 0.8, 0.25)
+    patch = compose.Wear(True, 1, 0.5, 2.0, 1.2, 0.8, 0.25, cx=170.0, cy=28.0, width=80.0, height=100.0)
     worn = compose.wear(layer, patch)
     for s, t in zip(layer.tokens, worn.tokens):
         assert (t.x, t.y, t.alpha.shape) == (s.x, s.y, s.alpha.shape)
@@ -988,3 +989,222 @@ def test_gen_v2s_shares_are_read_from_its_sidecars(pool):
     assert rows["kind: line-pair"]["spec"] == 0.10 and rows["style: window"]["spec"] == 0.10
     m2_rows = make.shares([make.make_one(i, GEN, pool, 8).sidecar for i in range(5)], GEN)
     assert not any(r["what"].startswith(("glued", "dot-matrix: nozzle", "worn")) for r in m2_rows)
+
+
+# === S8, part 2: sizes like the store's =======================================================
+#
+# Each block's first date's box follows v1-train's date sizes: a target
+# drawn from their deciles, hit by drawing the block, measuring the box and
+# drawing it again from the same draws (corrected once more while off, then
+# from fresh draws: the owner's call, 2026-11-05).
+
+DECILES = (0.00659, 0.01118, 0.01296, 0.01451, 0.01573, 0.01736, 0.01974, 0.02181, 0.02559, 0.03247, 0.045)
+
+
+def test_gen_v2_is_m2s_spec_with_every_gap_filled_and_the_stores_sizes():
+    from bestbefore.synth.spec import GEN_V2, V2Size
+    assert GEN_V2 == replace(GEN, text=TEXT_V2, style=STYLE_V2, geometry=GEOMETRY_V2, v2=V2)
+    assert (GEN_V2.size, GEN_V2.compose, GEN_V2.camera, GEN_V2.fonts, GEN_V2.backgrounds) == \
+        (GEN.size, GEN.compose, GEN.camera, GEN.fonts, GEN.backgrounds)          # the rest is M2's
+    assert V2Size().deciles == DECILES and len(DECILES) == 11 and list(DECILES) == sorted(DECILES)
+    assert DECILES[0] >= 0.006 and DECILES[-1] == 0.045                        # M2's floor and ceiling
+    assert spec_dict(GEN_V2)["v2"]["size"]["deciles"] == DECILES
+    assert spec_hash(GEN_V2) != GEN_SHA256 and spec_hash(GEN) == GEN_SHA256
+    assert SET_SEEDS["gen-v2-sample"] == 6 and len(set(SET_SEEDS.values())) == len(SET_SEEDS)
+
+
+def test_targets_follow_v1_trains_deciles():
+    from bestbefore.synth.spec import V2Size
+    rng = np.random.default_rng(100)
+    drawn = [compose.store_size(rng, V2Size()) for _ in range(10_000)]
+    for k in range(10):
+        inside = [t for d, t in drawn if d == k]
+        assert abs(len(inside) / len(drawn) - 0.1) < 0.03, k
+        lo, hi = DECILES[k], DECILES[k + 1]
+        assert all(lo <= t <= hi for t in inside)
+        assert abs(np.median(np.log(inside)) - (np.log(lo) + np.log(hi)) / 2) < 0.1 * (np.log(hi) - np.log(lo))
+    assert abs(np.median([t for _, t in drawn]) - DECILES[5]) < 0.0005         # the store's median, 1.736%
+
+
+def _one_way(orientation: str):
+    return replace(GEOMETRY_V2, orientation=((orientation, 1.0),))
+
+
+def _drawn_to_size(rng, style: str, geometry_spec, spec) -> tuple[bool | None, float]:
+    """A random gen-v2 block drawn to a target as gen-v2 draws one, on a
+    photo of 1,000 to 1,600 px: whether its box fits (None if every try
+    lost its ink, when make_one skips it), and its drawings."""
+    block = T.random_block(rng, TEXT_V2, V2.text)
+    geometry = W.random_geometry(rng, geometry_spec, V2.geometry)
+    target = compose.store_size(rng, V2.size)[1] * float(rng.choice([1000, 1280, 1600]))
+    drawn = make._sized(block, style, fonts.random_family(rng, "train"), target, 1.0, geometry, rng, spec)
+    if drawn is None:
+        return None, 0
+    assert drawn.sizing["fits"] == make.fits(drawn.sizing["reached"], target, V2.size)
+    return drawn.sizing["fits"], drawn.sizing["drawings"]
+
+
+@needs_fonts
+def test_a_block_drawn_to_a_target_lands_within_1px_or_5_percent():
+    """At least 99% of blocks drawn as gen-v2 draws them land within 1 px or
+    5% of their target (the owner's call, 2026-11-05: a box of dots or relief
+    grows in steps, so a few fit no size and keep their closest drawing).
+    Every style and orientation, 20 blocks each, at least 90%: a guard,
+    as 20 blocks can't tell 95% from 90%; S8's record measures each on 100
+    or more (all 95% or more, tilted embossed print the least)."""
+    from bestbefore.synth.spec import GEN_V2
+    rng = np.random.default_rng(101)
+    drawn = [_drawn_to_size(rng, R.random_style(rng, GEN_V2.style), GEOMETRY_V2, GEN_V2) for _ in range(500)]
+    fits = [f for f, _ in drawn if f is not None]
+    assert len(fits) >= 0.98 * len(drawn) and np.mean(fits) >= 0.99, (len(fits), np.mean(fits))
+    assert np.mean([n for f, n in drawn if f is not None]) < 2.3                # about 2.15 drawings a block
+    cells = {}
+    for style in R.STYLES_V2:
+        for orientation, _ in GEOMETRY_V2.orientation:
+            found = [_drawn_to_size(rng, style, _one_way(orientation), GEN_V2)[0] for _ in range(20)]
+            cells[style, orientation] = np.mean([f for f in found if f is not None])
+    assert min(cells.values()) >= 0.90, {k: v for k, v in cells.items() if v < 1}
+
+
+@needs_fonts
+@pytest.mark.parametrize("style", R.STYLES_V2)
+def test_the_corrections_make_the_first_drawings_choices(style):
+    """Drawn again at another size from the same seed, a block keeps its
+    font, weight, spacing, dots, window, relief, label and ink defects: only
+    its size changes. The ink is chosen once, after the last drawing."""
+    from bestbefore.synth.spec import GEN_V2
+    rng = np.random.default_rng(102 + R.STYLES_V2.index(style))
+    for block in _blocks(12, seed=102):
+        family, seed = fonts.random_family(rng, "train"), int(rng.integers(1 << 62))
+        geometry = W.random_geometry(rng, GEOMETRY_V2, V2.geometry)
+        a = make.draw_v2(block, style, family, float(rng.uniform(5, 12)), geometry, seed, _worn(0.5))
+        b = make.draw_v2(block, style, family, float(rng.uniform(14, 30)), geometry, seed, _worn(0.5))
+        drop = ("size", "px")
+        assert {k: v for k, v in a.layer.params.items() if k not in drop} == \
+            {k: v for k, v in b.layer.params.items() if k not in drop}
+        assert a.defects == b.defects
+        target = compose.store_size(rng, V2.size)[1] * 1280
+        kept, sizing = make.draw_to_size(block, style, family, target, geometry, seed, GEN_V2)
+        if kept is not None:                    # the drawing kept is the seed's own, at the digits it records
+            again = make.draw_v2(block, style, family, sizing["digits"], geometry, seed, GEN_V2)
+            assert again.boxes == kept.boxes and np.array_equal(R.ink(again.layer), R.ink(kept.layer))
+
+
+@needs_fonts
+def test_gen_v2_records_each_blocks_target_and_the_box_it_reached(pool):
+    from bestbefore.synth.spec import GEN_V2
+    rows, kept, skipped = [], 0, 0
+    for i in range(40):
+        s = make.make_one(i, GEN_V2, pool, 9).sidecar
+        long_side = max(s["size"])
+        if any(b["target"] < V2.size.small for b in s["blocks"] + s["skipped"]):
+            assert max(s["background"]["size"]) >= GEN.compose.min_side_small     # small print, M2's rule
+        for b in s["blocks"]:
+            lo, hi = DECILES[b["decile"]], DECILES[b["decile"] + 1]
+            assert lo <= b["target"] <= hi and b["band"] == ("small" if b["target"] < 0.015 else "normal")
+            first = next(t for t in b["tokens"] if t["cls"] == "date")
+            x1, y1, x2, y2 = first["box"]
+            assert b["reached"] == round(min(x2 - x1, y2 - y1) / long_side, 5)    # the box, as written
+            want = b["target"] * long_side * (GEN.compose.shrink if b["shrunk"] else 1.0)
+            assert b["fits"] == make.fits(min(x2 - x1, y2 - y1), want, V2.size)
+            assert b["drawings"] >= 2 and abs(b["print_height"] - b["size"] / long_side) < 1e-5
+            rows.append(b["fits"])
+            kept += 1
+        for k in s["skipped"]:
+            assert {"decile", "target"} <= set(k) and "size" not in k
+            skipped += 1
+    assert kept > 40 and np.mean(rows) >= 0.95
+
+
+@needs_fonts
+def test_gen_v2s_size_shares_are_its_deciles_and_its_bands_are_the_stores(pool):
+    from bestbefore.synth.spec import GEN_V2
+    sidecars = [make.make_one(i, GEN_V2, pool, 10).sidecar for i in range(20)]
+    rows = {r["what"]: r for r in make.shares(sidecars, GEN_V2)}
+    assert [rows[f"size: decile {k} of 10"]["spec"] for k in range(1, 11)] == [0.1] * 10
+    assert not any(what.startswith("band:") for what in rows)                  # M2's bands are not gen-v2's
+    sizes = make.date_sizes(sidecars)
+    assert len(sizes) == sum(t["cls"] == "date" and t["box"] is not None for s in sidecars for b in s["blocks"]
+                             for t in b["tokens"])
+    bands = make.size_bands(sizes)
+    assert bands["dates"] == len(sizes) and sum(bands[k] for k in ("under 1.5%", "1.5-2.5%", "2.5% and up")) == \
+        pytest.approx(1.0, abs=1e-3)
+    m2_rows = {r["what"] for r in make.shares([make.make_one(i, GEN, pool, 10).sidecar for i in range(5)], GEN)}
+    assert {"band: normal", "band: small"} <= m2_rows and not any(w.startswith("size: decile") for w in m2_rows)
+
+
+# --- scripts/store_sizes.py: v1-train's dates only -----------------------------------------------------
+
+def _fake_export(root, monkeypatch):
+    """A made-up store export (made-up numbers for names): two training
+    photos, one validation photo, each with dates and a keyword box, its
+    manifest naming every file with its SHA-256, as S6's export has it."""
+    from PIL import Image
+    folders = {"train": {"train_0": 0, "train_90": 1, "train_180": 2, "train_270": 3}, "val": {"val": 0}}
+    photos = {"v1-0001": ("train", (1600, 1200), [("0", 0.40, 0.50, 0.30, 0.020), ("1", 0.2, 0.5, 0.1, 0.02),
+                                                    ("0", 0.40, 0.60, 0.010, 0.25)]),
+              "v1-0002": ("train", (1000, 800), [("0", 0.5, 0.5, 0.2, 0.05)]),
+              "v1-0003": ("val", (1200, 900), [("0", 0.5, 0.5, 0.3, 0.30)])}
+    files, counts = {}, {name: 0 for part in folders.values() for name in part}
+    manifest = {"photos": {}, "settings": {"folders": folders, "lists": {"train": "train.txt", "val": "val.txt"}}}
+    lines = {"train": [], "val": []}
+    for name, (part, size, boxes) in photos.items():
+        manifest["photos"][name] = {"part": part, "labels": ["expiry" if c == "0" else "due" for c, *_ in boxes]}
+        for folder in folders[part]:
+            image, labels = root / "images" / folder / f"{name}.jpg", root / "labels" / folder / f"{name}.txt"
+            for f in (image, labels):
+                f.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", size if folders[part][folder] % 2 == 0 else size[::-1], "white").save(image)
+            labels.write_text("".join(f"{c} {x} {y} {w} {h}\n" for c, x, y, w, h in boxes))
+            for f in (image, labels):
+                files[f.relative_to(root).as_posix()] = hashlib.sha256(f.read_bytes()).hexdigest()
+            counts[folder] += 1
+            lines[part].append(f"./images/{folder}/{name}.jpg")
+    for part, name in manifest["settings"]["lists"].items():
+        (root / name).write_text("".join(f"{line}\n" for line in lines[part]))
+    manifest |= {"files": files, "counts": {"images": counts}}
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setenv("STORE_TRAIN_DIR", str(root))
+    return root
+
+
+def test_store_sizes_measures_v1_trains_dates_as_the_store_does(load_script, tmp_path, monkeypatch, capsys):
+    store_sizes = load_script("store_sizes")
+    folder = _fake_export(tmp_path / "export", monkeypatch)
+    sizes, roles = store_sizes.training_sizes(folder)
+    # the short side over the long side; the keyword box and the validation photo's date left out
+    assert sizes == pytest.approx([0.020 * 1200 / 1600, 0.010, 0.05 * 800 / 1000]) and roles == {"expiry": 3}
+    edges = store_sizes.deciles([0.001, 0.02, 0.03, 0.09])
+    assert edges[0] == 0.006 and edges[-1] == 0.045 and len(edges) == 11            # ends clipped to M2's
+    store_sizes.main()
+    printed = capsys.readouterr().out
+    assert "3 (expiry 3)" in printed and "V2Size holds other deciles" in printed
+    (folder / "labels" / "train_0" / "v1-0002.txt").write_text("0 0.5 0.5 0.9 0.9\n")      # a changed label file
+    with pytest.raises(SystemExit, match="doesn't match its manifest"):
+        store_sizes.main()
+
+
+# --- generate.py --set gen-v2-sample ------------------------------------------------------------------
+
+@needs_fonts
+def test_the_gen_v2_sample_is_made_with_gen_v2_apart_from_m2s(load_script, fake_expdate, tmp_path, monkeypatch):
+    from bestbefore import m2, m2b, runs, sets
+    from bestbefore.synth.spec import GEN_V2
+    generate = load_script("generate")
+    monkeypatch.setattr(generate, "start_run", lambda name, config, seed=None: runs.start_run(
+        name, config, seed=seed, root=tmp_path / "runs"))
+    generate.sample("gen-v2-sample", 3, 1)
+    manifest = json.loads(m2b.manifest_path("gen-v2-sample").read_text())
+    assert manifest["spec_sha256"] == spec_hash(GEN_V2) and manifest["photos"] == 3
+    assert set(manifest["date_sizes"]) == {"dates", "under 1.5%", "1.5-2.5%", "2.5% and up", "median"}
+    images = m2b.gen_dir() / "images" / "gen_v2_sample"
+    assert sorted(p.name for p in images.iterdir()) == ["000000.jpg", "000001.jpg", "000002.jpg"]
+    assert not m2.gen_dir().exists() and not m2.manifest_path("gen-v2-sample").exists()     # M2's untouched
+    samples = sets.load_set("gen-v2-sample")
+    assert [s.id for s in samples] == ["000000.jpg", "000001.jpg", "000002.jpg"]
+    lines = [json.loads(line) for line in m2b.sidecar_path("gen_v2_sample").read_text().splitlines()]
+    assert all("target" in b for s in lines for b in s["blocks"])
+    deciles = [r["what"] for r in manifest["shares"] if r["what"].startswith("size: decile")]
+    assert deciles[0] == "size: decile 1 of 10" and len(deciles) == 10
+    assert (tmp_path / "runs").is_dir() and any(d.name.endswith("m2b-generate-gen-v2-sample")
+                                                for d in (tmp_path / "runs").iterdir())

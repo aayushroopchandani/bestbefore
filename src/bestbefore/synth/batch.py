@@ -38,10 +38,10 @@ from pathlib import Path
 import cv2
 from PIL import Image
 
-from .. import derived, m2, runs
+from .. import derived, m2, m2b, runs
 from . import camera, compose, fonts, make, render, text, warp
 from .compose import Backgrounds
-from .spec import GEN, SET_SEEDS, SYNTH_VAL, GenSpec, spec_dict, spec_hash, strata_hash
+from .spec import GEN, GEN_V2, SET_SEEDS, SYNTH_VAL, GenSpec, spec_dict, spec_hash, strata_hash
 
 SHARE_POINTS = 0.03     # a share within 3 points of the spec,
 SHARE_SE = 3.0          # or 3 standard errors where the sample is small (synth-val's strata)
@@ -80,9 +80,10 @@ class Layout:
         return self.gen if name == "gen" else self.per_stratum * len(SYNTH_VAL)
 
     def spec(self, name: str, i: int) -> tuple[GenSpec, str | None]:
-        """The spec photo i of a set is drawn with, and its stratum."""
+        """The spec photo i of a set is drawn with, and its stratum: gen-v2's
+        for M2b's sets (m2b.GENERATED_SETS), M2's for the others."""
         if name != "synth-val":
-            return GEN, None
+            return (GEN_V2 if name in m2b.GENERATED_SETS else GEN), None
         stratum, spec = SYNTH_VAL[i // self.per_stratum]
         return spec, stratum
 
@@ -107,8 +108,14 @@ def parse_tasks(text_: str, layout: Layout = LAYOUT) -> list[Task]:
 
 # --- Where things go ($GENERATED_DIR/m2/gen/) ---------------------------------------------------------
 
+def home(name: str):
+    """Where a generated set lives: m2b's layout for gen-v2's sets
+    ($GENERATED_DIR/m2b/), m2's for M2's, which don't move."""
+    return m2b if name in m2b.GENERATED_SETS else m2
+
+
 def images_dir(name: str) -> Path:
-    return m2.gen_dir() / "images" / m2.GENERATED_SETS[name]
+    return home(name).gen_dir() / "images" / home(name).GENERATED_SETS[name]
 
 
 def tasks_dir() -> Path:
@@ -123,7 +130,7 @@ def task_files(task: Task) -> tuple[Path, Path]:
 
 def spec_sha256(name: str) -> str:
     """The hash a set's manifest names: GenSpec's, or synth-val's strata's."""
-    return strata_hash() if name == "synth-val" else spec_hash(GEN)
+    return strata_hash() if name == "synth-val" else spec_hash(LAYOUT.spec(name, 0)[0])
 
 
 def load_pools(names: Iterable[str]) -> dict[str, Backgrounds]:
@@ -132,7 +139,7 @@ def load_pools(names: Iterable[str]) -> dict[str, Backgrounds]:
     14 copies. Every synth-val stratum draws from the same pool."""
     pools = {}
     for name in sorted(set(names)):
-        specs = [GEN] if name != "synth-val" else [spec for _, spec in SYNTH_VAL]
+        specs = [LAYOUT.spec(name, 0)[0]] if name != "synth-val" else [spec for _, spec in SYNTH_VAL]
         keys = {(s.backgrounds, s.compose.min_side) for s in specs}
         if len(keys) != 1:
             raise ValueError(f"{name}: its strata draw from different backgrounds")

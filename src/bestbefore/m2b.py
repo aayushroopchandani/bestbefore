@@ -31,6 +31,20 @@ def list_path(name: str) -> Path:
     return root() / "lists" / f"{name}.txt"
 
 
+def gen_dir() -> Path:
+    return root() / "gen"
+
+
+def sidecar_path(name: str) -> Path:
+    return gen_dir() / "sidecars" / f"{name}.jsonl"
+
+
+# gen-v2's sets, by set name: their list (and folder) names, under gen/ as
+# M2's are under m2/gen/. gen-v2-sample is S8's 500 photos to look at; S9
+# adds gen-v2 and synth-val-v2.
+GENERATED_SETS = {"gen-v2-sample": "gen_v2_sample"}
+
+
 def manifest_path(name: str) -> Path:
     return root() / "manifests" / f"{name}.json"
 
