@@ -19,7 +19,9 @@ block would.
               side, and the ink is the light and the shade on the relief's
               slopes (`tone` says which)
 
-Every random choice comes from the numpy Generator passed in.
+gen-v2's print (spec.V2Style, M2b S7) spaces a dense panel's lines closer;
+without it every draw is M2's. Every random choice comes from the numpy
+Generator passed in.
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ from PIL import Image, ImageDraw
 
 from . import fonts
 from .fonts import Family
-from .spec import STYLE, StyleSpec
+from .spec import STYLE, Range, StyleSpec, V2Style
 from .text import Block, choice, pick
 
 INK = 0.25          # a pixel is ink when at least a quarter of it is covered
@@ -76,11 +78,23 @@ def random_style(rng: np.random.Generator, spec: StyleSpec = STYLE) -> str:
 
 # --- Drawing -------------------------------------------------------------------
 
+def line_spacing(kind: str, spec: StyleSpec = STYLE, v2: V2Style | None = None) -> Range:
+    """A block's line spacing range, baseline to baseline in em: gen-v2's
+    for its kind where it sets one (dense panels, printed close), else the
+    spec's."""
+    for name, spacing in (v2.line_spacing if v2 is not None else ()):
+        if name == kind:
+            return spacing
+    return spec.line_spacing
+
+
 def render(block: Block, style: str, family: Family, size: float,
-           rng: np.random.Generator, spec: StyleSpec = STYLE) -> Layer:
+           rng: np.random.Generator, spec: StyleSpec = STYLE, v2: V2Style | None = None) -> Layer:
     """The block in a print style and a font family, its digits `size`
     final pixels tall, drawn at spec.supersample times that size. Every
-    line starts at the same left edge, as a coding printer prints."""
+    line starts at the same left edge, as a coding printer prints. `v2`
+    (gen-v2's print) sets the line spacing of some kinds; without it, every
+    draw is M2's."""
     if style not in STYLES:
         raise ValueError(f"unknown style {style!r}; one of {', '.join(STYLES)}")
     k = spec.supersample
@@ -89,7 +103,7 @@ def render(block: Block, style: str, family: Family, size: float,
     px = max(1, round(k * size / fonts.digit_height(face)))
     font = fonts.load(face, px)
     tracking = rng.uniform(*spec.letter_spacing) * px
-    line_pitch = rng.uniform(*spec.line_spacing) * px
+    line_pitch = rng.uniform(*line_spacing(block.kind, spec, v2)) * px
     params = {"style": style, "family": family.name,
               "weight": "bold" if face is family.bold else "regular",
               "size": round(size, 3), "px": px, "letter_spacing": round(tracking / px, 4),

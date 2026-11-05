@@ -41,7 +41,7 @@ from PIL import Image
 from .. import derived, m2, runs
 from . import camera, compose, fonts, make, render, text, warp
 from .compose import Backgrounds
-from .spec import GEN, SET_SEEDS, SYNTH_VAL, GenSpec, spec_hash, strata_hash
+from .spec import GEN, SET_SEEDS, SYNTH_VAL, GenSpec, spec_dict, spec_hash, strata_hash
 
 SHARE_POINTS = 0.03     # a share within 3 points of the spec,
 SHARE_SE = 3.0          # or 3 standard errors where the sample is small (synth-val's strata)
@@ -476,7 +476,7 @@ def check_set(name: str, layout: Layout = LAYOUT, workers: int = 1) -> dict:
         "set": name, "complete": complete, "problem_count": len(problems), "problems": problems[:100],
         "photos": len(sidecars), "expected": layout.size(name), "lists": lists, "seed": SET_SEEDS[name],
         "layout": asdict(layout), "spec_sha256": spec_sha256(name),
-        "spec": asdict(GEN) if name == "gen" else {stratum: asdict(spec) for stratum, spec in SYNTH_VAL},
+        "spec": spec_dict(GEN) if name == "gen" else {stratum: spec_dict(spec) for stratum, spec in SYNTH_VAL},
         **({"strata": {stratum: {"photos": layout.per_stratum, "spec_sha256": spec_hash(spec)}
                        for stratum, spec in SYNTH_VAL}} if name == "synth-val" else {}),
         "made_by": [json.loads(v) for v in sorted(versions)],

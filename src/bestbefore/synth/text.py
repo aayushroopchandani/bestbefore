@@ -10,6 +10,12 @@ A format is written as the plan writes it and is its own template: YYYY,
 YY, MM and DD are zero-padded numbers, DDth a day with its ordinal suffix
 (never padded), Month a full month name and MON a three-letter one.
 Everything else prints as it stands.
+
+gen-v2's text (docs/m2b-store-and-size.md, "The generator, v2", S7) comes
+with a V2Text: a date glued to its word (`EXP.FEB 2027`), two word-and-date
+pairs on one line (`line-pair`), dense panels, import dates and their words,
+barcode numbers and unit prices. Without one, every draw is M2's, in M2's
+order. Its words and examples are made up, as M2's are.
 """
 from __future__ import annotations
 
@@ -17,12 +23,12 @@ import calendar
 import re
 import string
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 import numpy as np
 
-from .spec import TEXT, Shares, TextSpec
+from .spec import TEXT, V2, Shares, TextSpec, V2Text
 
 MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July",
                "August", "September", "October", "November", "December")
@@ -70,26 +76,44 @@ _FILL = {
     "ddd": lambda r: f"{r.integers(1000):03d}",
     "dddd": lambda r: f"{r.integers(10000):04d}",
     "licence": lambda r: str(r.integers(10**13, 10**14)),
+    # gen-v2's (S7):
+    "ean13": lambda r: ean13(r),
+    "ean13_spaced": lambda r: _spaced(ean13(r)),
+    "usp": lambda r: f"{r.integers(10, 1000) / 100:.2f}",
+    "usp_short": lambda r: f"{r.integers(1, 100) / 10:.1f}",
+    "unit": lambda r: choice(r, UNITS),
 }
 # The relative block's second line: only the words get a box (due).
 RELATIVE_DUE = "Best Before"
 RELATIVE = "{months} months from Mfg."
+
+# gen-v2's (S7). Its two new kinds; the import words, boxed prod like the
+# manufacture words, their date's role "import"; and the store's commonest
+# false boxes as distractors: 13-digit barcode numbers, run together or
+# spaced 1-6-6, and unit prices, money in V2Text.currency.
+V2_KINDS = ("dense-panel", "line-pair")
+IMPORT = ("IMPORT:", "Imp.", "Date of Import:", "Imported on:", "Month & Year of Import:")
+DISTRACTORS_V2 = ("{ean13}", "{ean13_spaced}", "USP {currency} {usp}/{unit}",
+                  "Unit Sale Price: {currency} {usp_short} per {unit}")
+UNITS = ("g", "ml")
+GLUE = (":", ".")           # a date is glued only to a word that ends in one of these
+_GLUABLE = {words: tuple(w for w in words if w.endswith(GLUE)) for words in (DUE, PROD, IMPORT)}
 
 
 @dataclass(frozen=True)
 class Token:
     text: str
     cls: str | None                  # "date", "due", "prod", "code" or None (no box)
-    role: str | None = None          # dates only: "expiry", "mfg" or "target"
+    role: str | None = None          # dates only: "expiry", "mfg" or "target"; gen-v2's "import"
     parts: tuple[int, int, int | None] | None = None   # dates only: year, month, day
     format: str | None = None        # dates only, e.g. "DDth Month YYYY"
-    space_before: bool = True        # False: printed against the token before (a range)
+    space_before: bool = True        # False: printed against the token before (a range; gen-v2's glued date)
 
 
 @dataclass(frozen=True)
 class Block:
     lines: tuple[tuple[Token, ...], ...]
-    kind: str                # single, pair, panel, range, relative
+    kind: str                # single, pair, panel, range, relative; gen-v2's dense-panel, line-pair
 
     @property
     def tokens(self) -> tuple[Token, ...]:
@@ -226,72 +250,164 @@ def code(rng: np.random.Generator) -> str:
     return _filled(rng, choice(rng, CODES))
 
 
-def distractor(rng: np.random.Generator) -> str:
-    return _filled(rng, choice(rng, DISTRACTORS))
+def distractor(rng: np.random.Generator, v2: V2Text | None = None) -> str:
+    """Text with numbers that is no date: M2's templates or, in gen-v2's
+    text, M2's and the new ones, every template equally likely."""
+    if v2 is None:
+        return _filled(rng, choice(rng, DISTRACTORS))
+    return _filled(rng, choice(rng, DISTRACTORS + DISTRACTORS_V2).replace("{currency}", v2.currency))
+
+
+def ean13(rng: np.random.Generator) -> str:
+    """A barcode number: 12 random digits and their EAN-13 check digit,
+    which makes the digits' sum, weighted 1, 3, 1, 3 ... from the left, a
+    multiple of 10."""
+    digits = [int(d) for d in rng.integers(0, 10, 12)]
+    check = -sum(d * (3 if i % 2 else 1) for i, d in enumerate(digits)) % 10
+    return "".join(map(str, digits)) + str(check)
+
+
+def _spaced(number: str) -> str:
+    """A barcode number spaced 1-6-6, as printed under the bars."""
+    return f"{number[0]} {number[1:7]} {number[7:]}"
 
 
 # --- Blocks -------------------------------------------------------------------
 
-def _labelled(rng, spec, fmt, case, mfg: date, expiry: date) -> list[tuple[Token, ...]]:
+def _word(rng, words: tuple[str, ...], v2: V2Text | None) -> tuple[str, bool]:
+    """A word to print before a date, and whether the date is glued to it.
+    Only gen-v2's text glues: v2.glued of its dates, each to a word that
+    ends in ':' or '.'. M2's text draws the word alone, as it always did."""
+    if v2 is None:
+        return choice(rng, words), False
+    glued = bool(rng.random() < v2.glued)
+    return choice(rng, _GLUABLE[words] if glued else words), glued
+
+
+def _labelled_line(rng, words, cls, d: date, fmt, case, role, v2) -> tuple[Token, Token]:
+    """A word and its date: `EXP: 11/2027` or, glued, `EXP:11/2027`."""
+    word, glued = _word(rng, words, v2)
+    return Token(word, cls), date_token(d, fmt, case, role, space_before=not glued)
+
+
+def _labelled(rng, spec, fmt, case, mfg: date, expiry: date, v2=None) -> list[tuple[Token, ...]]:
     """An mfg line and an expiry line, each with its word, mfg first by its share."""
-    lines = [(Token(choice(rng, PROD), "prod"), date_token(mfg, fmt, case, "mfg")),
-             (Token(choice(rng, DUE), "due"), date_token(expiry, fmt, case, "expiry"))]
+    lines = [_labelled_line(rng, PROD, "prod", mfg, fmt, case, "mfg", v2),
+             _labelled_line(rng, DUE, "due", expiry, fmt, case, "expiry", v2)]
     return lines if rng.random() < spec.mfg_first else lines[::-1]
 
 
-def _single(rng, spec, fmt, case):
-    line = (date_token(random_date(rng, spec), fmt, case, spec.single_role),)
+def _single(rng, spec, fmt, case, v2=None):
+    d = random_date(rng, spec)
     if rng.random() < spec.single_word:
-        line = (Token(choice(rng, DUE), "due"),) + line
-    return [line]
+        return [_labelled_line(rng, DUE, "due", d, fmt, case, spec.single_role, v2)]
+    return [(date_token(d, fmt, case, spec.single_role),)]
 
 
-def _pair(rng, spec, fmt, case):
-    return _labelled(rng, spec, fmt, case, *date_pair(rng, spec))
+def _pair(rng, spec, fmt, case, v2=None):
+    return _labelled(rng, spec, fmt, case, *date_pair(rng, spec), v2=v2)
 
 
-def _panel(rng, spec, fmt, case):
+def _extra(rng, spec, v2) -> Token:
+    """One of a panel's extra lines: a code or a distractor, by spec.panel_codes."""
+    if rng.random() < spec.panel_codes:
+        return Token(code(rng), "code")
+    return Token(distractor(rng, v2), None)
+
+
+def _panel(rng, spec, fmt, case, v2=None):
     """A pair, plus codes and distractors in the same font, each line put
     anywhere among the others (the pair keeps its order)."""
-    lines = _pair(rng, spec, fmt, case)
+    lines = _pair(rng, spec, fmt, case, v2)
     lo, hi = spec.panel_lines
     for _ in range(int(rng.integers(lo, hi + 1))):
-        token = (Token(code(rng), "code") if rng.random() < spec.panel_codes
-                 else Token(distractor(rng), None))
+        token = _extra(rng, spec, v2)                    # drawn before its place, as M2 drew it
         lines.insert(int(rng.integers(len(lines) + 1)), (token,))
     return lines
 
 
-def _range(rng, spec, fmt, case):
+def _range(rng, spec, fmt, case, v2=None):
     one = fmt.split(DASH)[0]                   # MM/YYYY-MM/YYYY prints MM/YYYY twice
     mfg, expiry = date_pair(rng, spec)
-    line = (date_token(mfg, one, case, "mfg"), Token(DASH, None, space_before=False),
-            date_token(expiry, one, case, "expiry", space_before=False))
+    rest = (Token(DASH, None, space_before=False), date_token(expiry, one, case, "expiry", space_before=False))
     if rng.random() < spec.range_word:
-        line = (Token(choice(rng, DUE), "due"),) + line
-    return [line]
+        return [_labelled_line(rng, DUE, "due", mfg, one, case, "mfg", v2) + rest]
+    return [(date_token(mfg, one, case, "mfg"),) + rest]
 
 
-def _relative(rng, spec, fmt, case):
+def _relative(rng, spec, fmt, case, v2=None):
     """An mfg line and 'Best Before N months from Mfg.': one date only."""
     mfg = random_date(rng, spec)
     rule = (Token(RELATIVE_DUE, "due"),
             Token(RELATIVE.format(months=choice(rng, spec.relative_months)), None))
-    lines = [(Token(choice(rng, PROD), "prod"), date_token(mfg, fmt, case, "mfg")), rule]
+    lines = [_labelled_line(rng, PROD, "prod", mfg, fmt, case, "mfg", v2), rule]
     return lines if rng.random() < spec.mfg_first else lines[::-1]
 
 
+def import_date(rng: np.random.Generator, mfg: date, expiry: date, v2: V2Text) -> date:
+    """An import date, v2.import_months whole months after mfg (its day
+    kept, as add_months keeps it) and in a month before the expiry's."""
+    shelf = (expiry.year - mfg.year) * 12 + expiry.month - mfg.month
+    lo, hi = v2.import_months
+    return add_months(mfg, int(rng.integers(lo, min(hi, shelf - 1) + 1)))
+
+
+def _line_pair(rng, spec, fmt, case, v2):
+    """Two word-and-date pairs on one line, `MFG:FEB 2025 | IMPORT: MAR
+    2025`: the mfg date and, with share v2.pair_import, an import date,
+    else the expiry; the mfg pair first by spec.mfg_first, as a pair's
+    lines are. Between them a separator, printed as written: its mark a
+    token with no box (an empty one for two spaces), its spaces those
+    around it."""
+    mfg, expiry = date_pair(rng, spec)
+    first = _labelled_line(rng, PROD, "prod", mfg, fmt, case, "mfg", v2)
+    if rng.random() < v2.pair_import:
+        second = _labelled_line(rng, IMPORT, "prod", import_date(rng, mfg, expiry, v2), fmt, case, "import", v2)
+    else:
+        second = _labelled_line(rng, DUE, "due", expiry, fmt, case, "expiry", v2)
+    if rng.random() >= spec.mfg_first:
+        first, second = second, first
+    sep = choice(rng, v2.separators)
+    word, d = second
+    mark = Token(sep.strip(), None, space_before=sep.startswith(" "))
+    return [first + (mark, replace(word, space_before=sep.endswith(" ")), d)]
+
+
+def _dense_panel(rng, spec, fmt, case, v2):
+    """A pair plus v2.dense_lines lines, each put anywhere among the others
+    (the pair keeps its order): with share v2.dense_import one of them is an
+    import line, the rest codes and distractors as a panel's. Printed close
+    together (V2Style.line_spacing)."""
+    mfg, expiry = date_pair(rng, spec)
+    lines = _labelled(rng, spec, fmt, case, mfg, expiry, v2)
+    lo, hi = v2.dense_lines
+    count = int(rng.integers(lo, hi + 1))
+    extra = []
+    if rng.random() < v2.dense_import:
+        extra.append(_labelled_line(rng, IMPORT, "prod", import_date(rng, mfg, expiry, v2), fmt, case, "import", v2))
+    while len(extra) < count:
+        extra.append((_extra(rng, spec, v2),))
+    for line in extra:
+        lines.insert(int(rng.integers(len(lines) + 1)), line)
+    return lines
+
+
 _KINDS = {"single": _single, "pair": _pair, "panel": _panel, "range": _range,
-          "relative": _relative}
+          "relative": _relative, "dense-panel": _dense_panel, "line-pair": _line_pair}
 
 
-def random_block(rng: np.random.Generator, spec: TextSpec = TEXT) -> Block:
+def random_block(rng: np.random.Generator, spec: TextSpec = TEXT, v2: V2Text | None = None) -> Block:
     """A block of text: its kind, its date format and the case of its month
-    words are drawn once, so every date in it looks alike."""
+    words are drawn once, so every date in it looks alike. With `v2`
+    (gen-v2's text) dates glue to their words, distractors include barcode
+    numbers and unit prices, and spec.kinds may hold the new kinds; without
+    it every draw is M2's."""
+    if v2 is None and (new := [name for name, _ in spec.kinds if name in V2_KINDS]):
+        raise ValueError(f"{', '.join(new)}: gen-v2's kinds need its text (v2)")
     kind = pick(rng, spec.kinds)
     case = pick(rng, spec.case)
     fmt = choice(rng, RANGES) if kind == "range" else random_format(rng, spec)
-    return Block(tuple(_KINDS[kind](rng, spec, fmt, case)), kind)
+    return Block(tuple(_KINDS[kind](rng, spec, fmt, case, v2)), kind)
 
 
 def _literal(template: str) -> str:
@@ -299,10 +415,13 @@ def _literal(template: str) -> str:
     return _FIELD.sub("", re.sub(r"\{\w+\}", "", template))
 
 
-# Every character the text can print: what each font must have (fonts.py).
+# Every character the text can print, M2's and gen-v2's: what each font
+# must have (fonts.py). gen-v2's money is V2's currency.
 CHARSET = frozenset(
     string.digits + string.ascii_uppercase + " "                    # numbers, codes' letters
     + "".join(n + n.upper() + n.lower() for n in MONTH_NAMES)
     + "stndrhSTNDRH"                                                # ordinal suffixes
     + "".join(_literal(f) for f in (*FAMILY_OF, *RANGES, *CODES, *DISTRACTORS, RELATIVE))
-    + "".join(DUE + PROD + (RELATIVE_DUE,)))
+    + "".join(DUE + PROD + (RELATIVE_DUE,))
+    + "".join(_literal(t.replace("{currency}", V2.text.currency)) for t in DISTRACTORS_V2)
+    + "".join(IMPORT + UNITS + V2.text.separators))

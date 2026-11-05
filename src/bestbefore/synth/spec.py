@@ -7,6 +7,13 @@ and camera effects, and GenSpec, which holds them all. GenSpec's hash goes
 into every manifest and training record, so each model names exactly the
 data it saw. Numbers the plan left open are marked "fixed in S5". S6 adds
 synth-val's strata, each an override of the training spec.
+
+M2b adds gen-v2's parts (docs/m2b-store-and-size.md, "The generator, v2"):
+V2Spec, in GenSpec.v2. It is None in M2's specs and left out of their hash
+(spec_dict), so GEN still hashes 3fc14178... and synth-val's strata
+ba77f1bd..., and every v2 feature draws its random numbers only when a
+spec's v2 is set. S7 wrote its text and line spacing; S8 adds its print,
+geometry and sizes.
 """
 from __future__ import annotations
 
@@ -163,6 +170,41 @@ class CameraSpec:
     uneven_radial: float = 0.5                  # of uneven light, a radial ramp; the rest linear
 
 
+# --- gen-v2 (M2b) -----------------------------------------------------------------------------
+# What gen-v2 adds to M2's generator, drawn only when a spec's v2 is set.
+# The shares of its new block kinds sit in TextSpec.kinds (TEXT_V2), beside
+# M2's own; these say how the new kinds and forms are drawn.
+
+@dataclass(frozen=True)
+class V2Text:
+    """gen-v2's text (S7): a date glued to its word, two dates on one line,
+    dense panels, import dates, barcode numbers and unit prices."""
+    glued: float = 0.30                     # of words before a date: the date printed against it, no space
+    pair_import: float = 0.50               # line-pairs whose second date is an import date, not the expiry
+    separators: tuple[str, ...] = (" | ", "  ", " / ", ", ")    # between a line-pair's two pairs, as printed
+    dense_lines: tuple[int, int] = (3, 5)   # a dense panel's lines beside its pair
+    dense_import: float = 0.50              # dense panels with an import line among them
+    # Left open by the plan, fixed in S7:
+    import_months: tuple[int, int] = (1, 6)    # an import date: this many months after mfg, before the expiry
+    currency: str = "Rs."                   # money in the new distractors: the rupee sign only if every
+    #                                         font has it, and 4 of the 20 families don't (S7)
+
+
+@dataclass(frozen=True)
+class V2Style:
+    """gen-v2's print (S7: line spacing per kind)."""
+    line_spacing: tuple[tuple[str, Range], ...] = (("dense-panel", (1.0, 1.2)),)   # em; other kinds StyleSpec's
+
+
+@dataclass(frozen=True)
+class V2Spec:
+    """Everything gen-v2 adds to M2's spec, by the part of GenSpec it
+    extends. S8 adds its print (nozzle rows, the window) to `style`, and
+    parts for the upside-down blocks, the sizes and the worn patches."""
+    text: V2Text = V2Text()
+    style: V2Style = V2Style()
+
+
 @dataclass(frozen=True)
 class GenSpec:
     """Everything a generated set is drawn with. synth-val's strata (S6)
@@ -175,6 +217,7 @@ class GenSpec:
     camera: CameraSpec = CameraSpec()
     fonts: str = "train"            # fonts.random_family's split; synth-val's: "held-out"
     backgrounds: Shares = (("train_real", 0.5), ("train_synth_clean", 0.5))   # m2 lists
+    v2: V2Spec | None = None        # gen-v2's additions (M2b); None in M2's specs, and then left out of the hash
 
 
 TEXT = TextSpec()
@@ -184,6 +227,12 @@ SIZE = SizeSpec()
 COMPOSE = ComposeSpec()
 CAMERA = CameraSpec()
 GEN = GenSpec()
+
+# gen-v2's block kinds (M2b): each new kind about 10%, taken from single,
+# pair and panel blocks; range and relative as M2's.
+TEXT_V2 = replace(TEXT, kinds=(("single", 0.25), ("pair", 0.30), ("panel", 0.15), ("dense-panel", 0.10),
+                               ("line-pair", 0.10), ("range", 0.05), ("relative", 0.05)))
+V2 = V2Spec()
 
 # Photo i of a set is drawn from numpy.random.default_rng([seed, i]).
 SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3}
@@ -227,12 +276,22 @@ def _sha256(data) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def spec_dict(spec: GenSpec) -> dict:
+    """The spec as data, for its hash and the manifests. A spec without v2
+    (M2's) leaves the field out, so it hashes and reads as it did before
+    the field existed."""
+    data = asdict(spec)
+    if data["v2"] is None:
+        del data["v2"]
+    return data
+
+
 def spec_hash(spec: GenSpec) -> str:
     """SHA-256 of the spec as JSON: what a manifest and a training record
     name, so each model says exactly what it saw."""
-    return _sha256(asdict(spec))
+    return _sha256(spec_dict(spec))
 
 
 def strata_hash(strata: tuple[tuple[str, GenSpec], ...] = SYNTH_VAL) -> str:
     """SHA-256 of synth-val's strata, in order, as JSON."""
-    return _sha256([[name, asdict(spec)] for name, spec in strata])
+    return _sha256([[name, spec_dict(spec)] for name, spec in strata])

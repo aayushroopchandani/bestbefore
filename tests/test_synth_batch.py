@@ -16,7 +16,7 @@ import pytest
 from bestbefore import derived, m2, sets
 from bestbefore.synth import batch, fonts
 from bestbefore.synth.batch import Layout
-from bestbefore.synth.spec import GEN, SYNTH_VAL
+from bestbefore.synth.spec import GEN, SYNTH_VAL, spec_dict
 
 needs_fonts = pytest.mark.skipif(not fonts.fetched(), reason="fonts not fetched: python scripts/fetch_fonts.py")
 
@@ -131,6 +131,8 @@ def test_the_check_vouches_for_a_good_set(good):
     assert batch.passed(results), {n: r["manifest"]["problems"] for n, r in results.items()}
     gen, val = results["gen"]["manifest"], results["synth-val"]["manifest"]
     assert (gen["complete"], gen["photos"], val["complete"], val["photos"]) == (True, 6, True, 7)
+    assert gen["spec"] == spec_dict(GEN) and "v2" not in gen["spec"]          # M2's specs, as before gen-v2
+    assert all("v2" not in spec for spec in val["spec"].values())
     assert gen["fonts"] == {f: fonts.SHA256[f] for f in gen["fonts"]} and gen["made_by"][0]["git_commit"]
     for name in ("gen50k", "gen10k", "synth_val"):
         assert m2.list_missing(name) is None, name

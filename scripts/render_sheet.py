@@ -1,12 +1,15 @@
 """Draw rendered text blocks on plain grey, every token's box drawn, to check
-the renderer by eye (docs/m2-synthetic-generator.md, S4).
+the renderer by eye (docs/m2-synthetic-generator.md, S4; gen-v2's text,
+docs/m2b-store-and-size.md, S7).
 
     python scripts/render_sheet.py               # sheet.png
+    python scripts/render_sheet.py --v2          # gen-v2's new text, in render-sheet-v2
     python scripts/render_sheet.py --time 1000   # also time 1000 random blocks
 
 Rows are the print styles, dot-matrix once per row count (7, 9). Columns
-are the format families. Each cell is one block in a training font, at a
-normal size (digits 22 px) above the same block as small print (digits 8 px,
+are the format families (--v2: gen-v2's new forms, glued words, line-pairs
+and dense panels). Each cell is one block in a training font, at a normal
+size (digits 22 px) above the same block as small print (digits 8 px,
 shown 3x with its pixels kept). Boxes: date red, due blue, prod green, code
 magenta; text with no box has none. Nothing from ExpDate is on it.
 
@@ -31,13 +34,14 @@ from PIL import Image, ImageDraw
 from bestbefore.runs import start_run
 from bestbefore.sheets import FONT
 from bestbefore.synth import fonts, render as R, text as T
-from bestbefore.synth.spec import STYLE, TEXT
+from bestbefore.synth.spec import STYLE, TEXT, TEXT_V2, V2
 
 GREY = 170
 COLOURS = {"date": (230, 30, 30), "due": (30, 90, 230), "prod": (20, 160, 60),
            "code": (200, 0, 200)}
 NORMAL, SMALL, ZOOM = 22.0, 8.0, 3
 CELL_W = 470
+CELL_W_V2 = 900         # a line-pair is a long line
 
 _NOT_RANGE = tuple(kind for kind in TEXT.kinds if kind[0] != "range")
 FAMILIES = {      # the plan's format families, each forced through the text spec
@@ -50,6 +54,20 @@ FAMILIES = {      # the plan's format families, each forced through the text spe
 ROWS = (("solid", STYLE), *((f"dot-matrix, {n} rows", replace(STYLE, dot_rows=(n,)))
                             for n in STYLE.dot_rows),
         ("label", STYLE), ("embossed", STYLE))
+
+
+def _only(kind: str):
+    return replace(TEXT_V2, kinds=((kind, 1.0),))
+
+
+COLUMNS_V2 = {    # gen-v2's new forms (M2b S7), each forced through its text spec: (TextSpec, V2Text)
+    "glued words: a pair": (replace(TEXT, kinds=(("pair", 1.0),)), replace(V2.text, glued=1.0)),
+    "line-pair: mfg and expiry": (_only("line-pair"), replace(V2.text, pair_import=0.0)),
+    "line-pair: mfg and import": (_only("line-pair"), replace(V2.text, pair_import=1.0)),
+    "dense panel": (_only("dense-panel"), V2.text),
+    "dense panel: import, distractors": (replace(_only("dense-panel"), panel_codes=0.0),
+                                         replace(V2.text, dense_import=1.0)),
+}
 
 
 def paint(layer: R.Layer) -> Image.Image:
@@ -79,42 +97,47 @@ def tile(block: T.Block, layer: R.Layer, zoom: int = 1) -> Image.Image:
     return im
 
 
-def cell(block: T.Block, style: str, spec, family: fonts.Family, seed: list[int]) -> Image.Image:
+def cell(block: T.Block, style: str, spec, family: fonts.Family, seed: list[int], v2=None,
+         width: int = CELL_W) -> Image.Image:
     """The block at the normal size over the same block as small print."""
-    normal = R.shrink(R.render(block, style, family, NORMAL, np.random.default_rng(seed), spec))
-    small = R.shrink(R.render(block, style, family, SMALL, np.random.default_rng(seed), spec))
+    normal = R.shrink(R.render(block, style, family, NORMAL, np.random.default_rng(seed), spec, v2))
+    small = R.shrink(R.render(block, style, family, SMALL, np.random.default_rng(seed), spec, v2))
     parts = [tile(block, normal), tile(block, small, ZOOM)]
     caption = f"{family.name}, {normal.params['weight']}, {block.kind}"
     height = sum(p.height + 6 for p in parts) + 16
-    out = Image.new("RGB", (CELL_W, height), "white")
+    out = Image.new("RGB", (width, height), "white")
     ImageDraw.Draw(out).text((2, 0), caption, fill="black", font=FONT)
     y = 16
     for p in parts:
-        out.paste(p.crop((0, 0, min(p.width, CELL_W), p.height)), (0, y))
+        out.paste(p.crop((0, 0, min(p.width, width), p.height)), (0, y))
         y += p.height + 6
     return out
 
 
-def sheet(seed: int) -> Image.Image:
+def sheet(seed: int, v2: bool = False) -> Image.Image:
+    """M2's sheet (the format families) or, with v2, gen-v2's new forms
+    drawn with gen-v2's text and print."""
+    columns = COLUMNS_V2 if v2 else {name: (spec, None) for name, spec in FAMILIES.items()}
+    width = CELL_W_V2 if v2 else CELL_W
     train = fonts.families("train")
     rows = []
     for r, (name, spec) in enumerate(ROWS):
         style = name.split(",")[0]
         cells = []
-        for c, (family_name, text_spec) in enumerate(FAMILIES.items()):
+        for c, (text_spec, v2_text) in enumerate(columns.values()):
             rng = np.random.default_rng([seed, r, c])
-            block = T.random_block(rng, text_spec)
-            family = train[(r * len(FAMILIES) + c) % len(train)]     # every font shows up
-            cells.append(cell(block, style, spec, family, [seed, r, c, 1]))
+            block = T.random_block(rng, text_spec, v2_text)
+            family = train[(r * len(columns) + c) % len(train)]     # every font shows up
+            cells.append(cell(block, style, spec, family, [seed, r, c, 1], V2.style if v2 else None, width))
         height = max(c.height for c in cells) + 22
-        row = Image.new("RGB", (len(cells) * (CELL_W + 10), height), "white")
+        row = Image.new("RGB", (len(cells) * (width + 10), height), "white")
         ImageDraw.Draw(row).text((2, 2), name.upper(), fill="black", font=FONT)
         for i, c in enumerate(cells):
-            row.paste(c, (i * (CELL_W + 10), 22))
+            row.paste(c, (i * (width + 10), 22))
         rows.append(row)
     header = Image.new("RGB", (rows[0].width, 20), "white")
-    for i, family_name in enumerate(FAMILIES):
-        ImageDraw.Draw(header).text((i * (CELL_W + 10) + 2, 3), family_name, fill="black", font=FONT)
+    for i, column in enumerate(columns):
+        ImageDraw.Draw(header).text((i * (width + 10) + 2, 3), column, fill="black", font=FONT)
     out = Image.new("RGB", (rows[0].width, header.height + sum(r.height for r in rows)), "white")
     out.paste(header, (0, 0))
     y = header.height
@@ -170,12 +193,13 @@ def timing(n: int, long_side: int, seed: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--v2", action="store_true", help="gen-v2's new text instead of M2's format families")
     parser.add_argument("--time", type=int, default=0, metavar="N", help="also time N random blocks")
     parser.add_argument("--long-side", type=int, default=1600,
                         help="the photo's long side for --time (1,600 is the largest background)")
     args = parser.parse_args()
-    run_dir = start_run("render-sheet", vars(args), seed=args.seed)
-    sheet(args.seed).save(run_dir / "sheet.png")
+    run_dir = start_run("render-sheet-v2" if args.v2 else "render-sheet", vars(args), seed=args.seed)
+    sheet(args.seed, args.v2).save(run_dir / "sheet.png")
     print(run_dir / "sheet.png")
     if args.time:
         result = timing(args.time, args.long_side, args.seed)

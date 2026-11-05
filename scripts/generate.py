@@ -32,7 +32,7 @@ from dataclasses import asdict
 from bestbefore import derived, m2
 from bestbefore.runs import code_sha256, start_run, write_json
 from bestbefore.synth import batch, fonts, make
-from bestbefore.synth.spec import GEN, SET_SEEDS, spec_hash
+from bestbefore.synth.spec import GEN, SET_SEEDS, spec_dict, spec_hash
 
 
 def sample(name: str, count: int, workers: int) -> None:
@@ -63,7 +63,7 @@ def sample(name: str, count: int, workers: int) -> None:
         "set": name, "list": m2.GENERATED_SETS[name], "seed": SET_SEEDS[name], **batch.counts(sidecars),
         "listed": derived.write_list(m2.list_path(m2.GENERATED_SETS[name]),
                                      [images / make.image_name(i) for i in range(count)]),
-        "spec_sha256": spec_hash(GEN), "spec": asdict(GEN),
+        "spec_sha256": spec_hash(GEN), "spec": spec_dict(GEN),
         "backgrounds": {n: len(pool.eligible(n, GEN.compose.min_side)) for n, _ in GEN.backgrounds},
         "backgrounds_small_print": {n: len(pool.eligible(n, GEN.compose.min_side_small)) for n, _ in GEN.backgrounds},
         "fonts": {face.file: fonts.SHA256[face.file] for f in fonts.families(GEN.fonts) for face in fonts.faces(f)},
