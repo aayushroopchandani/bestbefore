@@ -502,6 +502,16 @@ only if every font has the glyph (S7 checks; otherwise `Rs.`).
   the font, the ordinal, the tilt and the dots, so measuring beats any
   fixed ratio; it costs one extra drawing per block, about a tenth more
   generation time.
+  **(changed 2026-11-05, S8, owner's call, before the code was
+  committed)** One correction left 8.2% of 2,000 blocks more than 1 px or
+  5% from their target, dot-matrix and embossed print most, tilted above
+  all (27% of tilted dot-matrix blocks): a box of dots or relief grows in
+  steps, a row of dots or an edge of the relief appearing at once. So a
+  block still off after its first correction is corrected once more from
+  the same draws, and, still off, drawn again from fresh draws, as a block
+  that lost its ink is (3 tries in all, `ComposeSpec.redraws`); it keeps
+  its drawing closest to the target. On the same 2,000 blocks, 99.9% then
+  land within 1 px or 5%, for 2.15 drawings a block against 2.00.
 - A block that shrinks to find a free place keeps its shrunk size, and
   says so, as in M2. A block under 1.5% still gets a background of at
   least 1,000 px (M2's rule): 3,854 of the 8,185 backgrounds qualify, so
@@ -1900,7 +1910,9 @@ from v1-train, v3's training part included.
 - **Tests:** a dropped dot row has no ink in any line of its block, and
   its token's box still holds the rest; a window's text is lighter than
   its rectangle; 180° maps boxes exactly; a block drawn to a target lands
-  within 1 px or 5% of it in every style and orientation, and the second
+  within 1 px or 5% of it in every style and orientation **(changed
+  2026-11-05, owner's call: at least 99% of blocks, and 95% in every style
+  and orientation; the rest keep their closest drawing)**, and the second
   drawing uses the same draws as the first (the same font, ink and
   defects); a worn block's boxes equal the same block's unworn boxes, and
   its patch holds 60 to 95% less ink; a date worn to nothing is drawn
