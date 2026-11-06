@@ -15,7 +15,8 @@ exported and copied again); S7 done 2026-11-05 (gen-v2's text and
 line spacing, M2's generator unmoved); changed 2026-11-05, S8 (owner's
 call): a block off its size is corrected again, then drawn afresh; S8 done
 2026-11-05 (gen-v2's print, geometry and store-like sizes; gen-v2-sample
-made and looked at, M2's generator unmoved). Next: S9.
+made and looked at, M2's generator unmoved); changed 2026-11-06 (owner's
+call): tilted blocks sized by their digits, the sample remade. Next: S9.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -1956,17 +1957,19 @@ however split).
 **Commits:** `feat: generator v2 print: nozzle rows, laser windows, upside-down blocks, worn patches`,
 `feat: generator v2 sizes drawn to match store set v1's training dates`
 
-**Done 2026-11-05.** Code `244349f` (print and geometry), the plan's change
-`c50dcf8` (owner's call, below), `f1c39f5` (sizes), `4feeceb` (a fix the
-look found) and `f8e34c5` (tests the bug run asked for): four code commits,
-not the plan's two, one logical change each. 715 tests pass (663 before:
-52 new, all in `tests/test_synth_v2.py`). Each code commit passes alone, in
-a worktree with the laptop's data and nothing skipped: 699, 711 and 711;
-`f8e34c5`, whose code is `4feeceb`'s, 715 in this checkout. gen-v2-sample, 500 photos, seed 6, from `4feeceb` with a clean
-tree (run `20261105-205408-m2b-generate-gen-v2-sample`; `f8e34c5` changes
-tests only), is in `$GENERATED_DIR/m2b/gen/` with
-`m2b/manifests/gen-v2-sample.json`. `GEN_V2` hashes `003eedb4…`. What was
-found:
+**Done 2026-11-05; tilted blocks changed 2026-11-06 (below).** Code
+`244349f` (print and geometry), the plan's change `c50dcf8` (owner's call),
+`f1c39f5` (sizes), `4feeceb` (a fix the look found), `f8e34c5` (tests the
+bug run asked for), then the record `5932286`, the plan's second change
+`4c495e9` (owner's call) and `08db831` (tilted blocks): five code commits,
+not the plan's two, one logical change each. 717 tests pass (663 before: 54
+new, all in `tests/test_synth_v2.py`). Each code commit passes alone with
+the laptop's data and nothing skipped: 699, 711 and 711 in worktrees;
+`f8e34c5` 715 and `08db831` 717 in this checkout. gen-v2-sample, 500
+photos, seed 6, from `08db831` with a clean tree (run
+`20261106-205902-m2b-generate-gen-v2-sample`), is in
+`$GENERATED_DIR/m2b/gen/` with `m2b/manifests/gen-v2-sample.json`.
+`GEN_V2` hashes `2c8b24d5…`. What was found:
 
 - **M2's generator didn't move.** `spec_hash(GEN)` is still `3fc14178…`
   and the strata's `ba77f1bd…`; S5's 500-photo sample is remade byte for
@@ -2013,15 +2016,17 @@ found:
   px). A second correction from the same draws gave 97.7%; the owner's
   choice, a second correction while off and then fresh draws (3 tries, as
   for lost ink), keeping the closest drawing, gave 99.9% for 2.15 drawings
-  a block. In the sample: **678 of 680 unshrunk blocks** fit, 2.21 drawings
   a block. Per style and orientation, 100 blocks each: every one 96% or
   more but tilted embossed print, 90 of 98 at first, then **95.2% of 290**
   (96.3% with 5 tries, 96.9% with 7), 1.5% of all blocks. So the test holds
   99% of 500 blocks drawn as gen-v2 draws them, and 90% in each style and
   orientation over 20 blocks each, a guard: **lower than the 95% per style
   and orientation written into the plan (Claude's proposal), because 20
-  blocks can't tell 95% from 90% and tilted embossed print sits at about
-  95%**; the 95% is this record's measurement.
+  blocks can't tell 95% from 90%**; the 95% was this record's measurement.
+  **Since 2026-11-06 tilted blocks aren't drawn to a box at all** (below),
+  so those figures for them are history. Untilted, in the final sample:
+  **576 of 576 unshrunk blocks** fit; over 5,000 photos 5,781 of 5,783; 1.98
+  drawings a block over all blocks.
 - **The same draws at another size** (a detail fixed while writing): the
   plan saves the generator's state before the first drawing, but the dots
   and the density field draw a number of values that depends on the size,
@@ -2063,52 +2068,93 @@ found:
   - **Upside-down** is a part of its own (`V2Geometry`); M2's specs refuse
     it, as S7's text refuses the new kinds.
 - **The sample's shares**: 64 rows, every one within 3 points or 3
-  standard errors (`share_ok`); **9 more than 3 points off**, at most 2.7
-  SE: pairs 26.0% (30%), full month names 44.8% (50%), colour cast 34.4%
-  (30%), the line-pairs' ` / ` 12.2% and `, ` 35.1% (25% each, of 74),
-  dense panels' import line 34.7% (50%, of 75), panels' codes 53.7%, unit
-  prices 23.8% (20%), nozzle rows 21.0% (15%, of 233). So the plan's check,
-  every share within 3 points, doesn't hold on these 500 photos. Over
-  5,000 made in memory (the same seed, `f1c39f5`'s code: the window fix
-  changes no draw, the sample's counts and shares are the same before and
-  after it) every one of them is within 3.7 points and 2 SE (` / ` 22.9%,
-  dense panels' import 46.7%, nozzle rows 16.2%, pairs 29.3%, full names
-  49.6%): noise in 500 photos, as M2 S5 found, and each draw's share is
-  held within 3 points over 10,000 draws by the tests. The rest: 686 blocks
-  placed, 10 skipped (8 too faint, 2 without a place), 6 shrunk, 24 kept a
-  drawing from fresh draws; 1,185 generated dates; boxes date 1,823 (with the
-  backgrounds'), `due` 917, `prod` 605, `code` 510.
-- **The sample's sizes**, its 1,185 dates measured as the store measures
-  its own: **32.7 / 41.8 / 25.5%, median 1.812%**, against v1-train's
-  35.5 / 42.0 / 22.5% and 1.736%: −2.8, −0.2 and **+3.0 points**, median
-  +0.08. **The top band is exactly at the limit, strictly just over**
-  (302 of 1,185 against 38 of 169: 3.00002 points); the median holds. Its
-  686 targets themselves drew 24.2% there, 1.7 SE over the deciles' own
+  standard errors (`share_ok`); **10 more than 3 points off**, at most 2.5
+  SE: pairs 26.2% (30%), full month names 44.8% (50%), ordinals 53.5% (50%),
+  colour cast 34.2% (30%), the line-pairs' ` / ` 12.3% and `, ` 35.6% (25%
+  each, of 73), dense panels' import line 37.0% (50%, of 73), panels' codes
+  54.2%, unit prices 23.2% (20%), nozzle rows 20.8% (15%, of 235). So the
+  plan's check, every share within 3 points, doesn't hold on these 500
+  photos. Over 5,000 made in memory from the same code and seed, only 2 of
+  the 64 rows are more than 3 points off, dense panels' import line 45.9%
+  and 4 more lines 29.2% (2.1 and 2.3 SE, of 684), and the others above come
+  back (` / ` 22.6%, pairs 29.4%, full
+  names 49.8%, nozzle rows 16.3%, upside-down 9.7%, tilted 14.8%, window
+  10.2%). Noise in 500 photos, as M2 S5 found, and each draw's share is
+  held within 3 points over 10,000 draws by the tests. The rest: 687 blocks
+  placed, 9 skipped (6 too faint, 3 without a place), 7 shrunk, 17 kept a
+  drawing from fresh draws; 1,183 generated dates; boxes date 1,821 (with
+  the backgrounds'), `due` 918, `prod` 602, `code` 507.
+- **The sample's sizes**, measured as the store measures its own, **over
+  its 998 untilted dates (the owner's call, 2026-11-06): 33.2 / 42.0 /
+  24.9%, median 1.812%**, against v1-train's 35.5 / 42.0 / 22.5% and
+  1.736%: −2.3, 0.0, +2.4 points, median +0.08: **the check holds.** Its
+  686 targets drew 24.2% in the top band, 1.7 SE over the deciles' own
   21.5%, and a block's other dates come out a little bigger than its
-  fitted first date (26.7% against 24.6% in that band: month words with
-  descenders, ordinals, a tilted date's width). Over 5,000 photos, 12,009
-  dates: 33.9 / 44.1 / 22.0%, median 1.750% (−1.6, +2.1, −0.5 points,
-  +0.014).
-- **Time: +52%, not "about a tenth".** On one CPU, the same 500 photo
-  numbers in one session (OpenCV's threads off): M2 53.3 ms a photo
-  (drawing 17.0, as S5's 54 to 57), gen-v2 81.2 ms (drawing 43.1). The
-  rest is the same. A gen-v2 drawing takes about 13 ms, provisional and
+  fitted first date. Over 5,000 photos, 10,201 untilted dates: 34.0 / 44.6 /
+  21.5%, median 1.750% (−1.6, +2.6, −1.0 points, +0.014). All dates, tilted
+  ones included, as the plan first measured it and no longer does: 28.4 /
+  38.4 / 33.2%, median 1.97%, tilted boxes running big by design. (Before
+  the change, over all dates: 32.7 / 41.8 / 25.5%, median 1.812%, its top
+  band 3.00002 points over, strictly just outside the check.)
+- **Time: +50%, not "about a tenth".** On one CPU, the same 500 photo
+  numbers in one session (OpenCV's threads off): M2 54.0 ms a photo
+  (drawing 17.3, as S5's 54 to 57), gen-v2 81.0 ms (drawing 42.1). The
+  rest is the same. A gen-v2 drawing takes about 15 ms, the first and the
   corrected alike, against about 12 ms for M2's one drawing of a block, and
-  there are 2.2 a block: M2 S5 already measured drawing at a third of a
-  photo, so one extra drawing alone was about +30%. On 4 workers, 102 ms a
-  photo each, 14 s for 500. At S9's scale, M2 S6's 150 ms a photo a worker
-  on the cluster becomes about 230: 200,000 photos on 24 CPUs in about 32
-  minutes.
-- **Tilted blocks get very small digits.** Drawn so an upright box round a
-  tilted date has the store's size, a tilted block's digits are a fraction
-  of the box: their 5th percentile is 3.1 px, and **14 of the sample's 103
-  tilted blocks have digits under 4 px** (no other block has); M2 never
-  drew digits under 6 px. The plan's design, kept; a finding for S10's
-  results to watch.
+  there are 2.0 a block: M2 S5 already measured drawing at a third of a
+  photo, so one extra drawing alone was about +30%. Tilted blocks gave up
+  their extra drawing but draw bigger, so the change saved about 1 ms. On 4
+  workers, about 129 ms a photo each, 18 s for 500. At S9's scale, M2 S6's
+  150 ms a photo a worker on the cluster becomes about 225: 200,000 photos
+  on 24 CPUs in about 31 minutes.
+- **Tilted blocks drew tiny, unreadable digits, and are now sized by their
+  digits** (found in the first S8 sample, checked and changed 2026-11-06 at
+  the owner's word, `4c495e9`, `08db831`). Drawn so an upright box round a
+  tilted date had the store's size, a tilted block's digits were a third
+  of the box (its box 3.1 times its digits, against 1.33 upright). Over
+  5,000 photos, at 1,280 px input: 3.0% of all blocks had digits under 4 px
+  and 9.7% under 6 px, down to 1.2 px; of tilted blocks 18% and 44%, a
+  third of those tilted 25 to 35° under 4 px; M2's sample has none under
+  6 px, its smallest 6.6.
+  - **Unreadable**: a blind read (Claude, 53 first dates, shuffled, the
+    text hidden until the reads were written; digits at 1,280 px input):
+    under 4 px, 1 of 14 exact and 11 with nothing legible, all 14 tilted
+    19 to 34°; 4 to 5 px, 2 of 13 exact; 5 to 6 px, 9 of 13; 6 to 8 px, 5 of
+    13, where faint ink and bends cost more than size. One reader, few
+    crops, but the fall between 6 and 4 px is plain.
+  - **The store has none like them**: a line tilted by θ has a box aspect
+    under cot θ, so any date tilted 20° or more has an aspect under 2.75
+    and 11° or more under 5.14. Of v1-train's 169 only 2 are under 2.75 and
+    114 under 5.2, and looked at, none of the 114 is more than about 8° off
+    level or vertical; the two lowest are tall condensed print 5° off. Its
+    smallest box, 0.66%, is about 6.5 px of digits at 1,280 px. v1-val and v2
+    weren't looked at. So the store's box size is its print height; the
+    plan's rule, written for boxes, measured the tilt on a tilted block.
+  - **The change**: a tilted block is drawn once, at its target over 1.3,
+    with no correction (`V2Size.by_digits`); its `fits` is null, and a
+    drawing that lost its ink is drawn from fresh draws as before.
+    Simulated on the 5,000 photos before choosing, against a floor on the
+    digits at 0.5 or 0.6% of the long side, which left 24% or 10% of tilted
+    blocks under 6 px and moved all-date sizes without curing them.
+  - **After it**: 0 of the sample's 687 blocks have digits under 4 px
+    (14 before), tilted blocks' median is 14.7 px, their smallest 6.1. Over
+    5,000 photos, 0.23% under 4 px (16 blocks, none tilted, 9 of them
+    bends) and 3.1% under 6 px; tilted blocks 0.7% under 6 px, their
+    smallest 5.5. Read again, 17
+    of 22 tilted dates exact, 2 close, 2 with nothing legible (not fully
+    blind: some were in the first key); the misses are faint dot-matrix.
+    401 of the sample's photos are byte-identical to the first sample's;
+    of the 99 that changed, 98 held a tilted block and 1 a skipped one,
+    whose orientation a skip doesn't record.
+  Bends keep their box target, as the store's curved dates have the same
+  box: 1.5% of untilted bends had digits under 4 px, 11.6% under 6 px.
 - **The same bytes however split**: 1 worker and 4 write the same 1,001
-  files (500 JPEGs, 500 label files, the sidecar).
+  files (500 JPEGs, 500 label files, the sidecar), from `08db831` as from
+  `4feeceb`.
 - **The look** (Claude, as allowed since 2026-10-28; sheets in
-  `data/store/runs/20261105-205647-gen-v2-look/`, never committed):
+  `data/store/runs/20261105-205647-gen-v2-look/` and, for the final sample,
+  `20261106-210514-gen-v2-look/`, with the reads' and v1-train's tilt sheets
+  beside them, never committed):
   gen-v2-sample's dates beside ExpDate's real-val dates and v1-train's store
   dates, every photo at 1,280 px, and each new kind zoomed with its
   surroundings. **The sizes look like the store's**: generated and store
@@ -2123,7 +2169,9 @@ found:
   pack's surface as M2's print is. The windows' flat rectangles looked laid
   on; printed instead (`4feeceb`), they carry the pack's light and texture,
   and its own print where they land on it, as overprinted dark ink shows.
-- **The tests catch what they should**: 38 deliberate bugs, one at a time,
+  Tilted blocks, after the change, read as print and sit at the top of the
+  sizes, their boxes big from the tilt.
+- **The tests catch what they should**: 46 deliberate bugs, one at a time,
   every patched file put back and compared by SHA-256 after each run.
   The first part's 25, all caught: a top or bottom dot row dropped; the
   nozzle share inverted; rows never dropped; rows counted from each
@@ -2147,21 +2195,30 @@ found:
   drives the steps with a stand-in drawing whose boxes it sets
   (`f8e34c5`), and catches both. It also found the size tests judging a
   fit with `make.fits` itself; they now work the tolerance out on their
-  own.
+  own. The tilted rule's 8, 7 caught at once (tilted corrected to a box;
+  every block kept at its first drawing; digits at the target, not over
+  1.3; recorded as fitting; tried 3 times though kept; a block worn to
+  nothing kept; the size check over every date); the manifest's size check
+  over every date got through, as a 3-photo sample held no tilted block, and
+  is caught now the test makes 12 and checks one is there.
 - **Searched**: S8's added lines for every v1, v2 and v3 photo name (and
   stem, 5 characters or more), the HEIC names, every design id and every
   word of one (4 characters or more): no name and no id; 8 common words of
   design ids match (colours, `pack`, `clear`, `fresh`, `training`).
 - **Not checked:** gen-v2 on the cluster's pixels and at scale, and
   synth-val-v2 (S9's); whether any of it helps a model (S10 to S12); the
-  look beyond the 50-photo sheet and about 200 crops; whether the store
-  holds tilted dates like the small tilted ones gen-v2 now draws; the
-  learnings guide (not written).
+  look beyond the 50-photo sheets and about 300 crops; tilted dates on
+  v1-val or v2 (not looked at, and v2 won't be); the learnings guide (not
+  written).
 - **For S9:** `batch.Layout.spec` gives `GEN_V2` to every set in
   `m2b.GENERATED_SETS` (add `gen-v2` and `synth-val-v2` there and their
   seeds, 4 and 5); `batch.home` puts their files under `m2b/`; a job's time
   is about 1.5 times M2's per photo; `generate.py --check` still checks
-  M2's two sets only.
+  M2's two sets only, and its gen-v2 check must compare sizes over untilted
+  dates. Suggested, not in S9's slice yet: make gen-v2-sample on the
+  cluster, compare it with the laptop's and run the share and size checks
+  on it. gen-v2 may differ there more than M2 did: a box 1 px different can
+  change a block's size and all that is drawn after it in that photo.
 
 ### S9. Generator v2, part 3: synth-val-v2, the 180° sets, generation at scale · laptop, then one CPU job
 
