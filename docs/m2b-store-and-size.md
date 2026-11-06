@@ -2234,6 +2234,20 @@ synth_rot180 on the cluster, checked.
 - Laptop trial first: `--tasks 0-4,200` timed, the check, synth-val-v2's
   contact sheet by stratum.
 
+**From S8 (added 2026-11-06), before S9's code:**
+
+- **synth-val-v2 must keep M2's sizes, and the code can't do that yet.** Its
+  strata keep M2's `clean` sizes ([The generator, v2](#the-generator-v2)),
+  but `make.make_one` draws store sizes for every spec with `v2` set. S9
+  adds a way for a v2 spec to keep M2's `SizeSpec` bands, with a test that
+  a stratum's digits fall in `clean`'s band. Without it the strata get
+  store sizes, with no error.
+- **Tilted blocks are sized by their digits** ([The
+  generator, v2](#the-generator-v2)); `GEN_V2` already does this. A size
+  comparison with the store uses untilted dates
+  (`make.date_sizes(sidecars, tilted=False)`), and code reading a sidecar
+  allows for `fits` being null on tilted blocks.
+
 **Check:** both manifests `complete: true`, 200,000 and 2,400 photos; the
 shares; real-val-rot180 165 photos and 187 dates; the render sheet's
 pixels as the laptop's.
@@ -2326,6 +2340,10 @@ counts only (searched for photo names).
 **Goal:** `results/m2b_detector.md`, the README, this plan closed.
 
 As in [Report](#report); the plan's status, measured compute and Later.
+**From S8 (added 2026-11-06):** the report, the README and `docs/datasets.md`'s
+gen-v2 entry say that gen-v2's sizes follow the store's on untilted blocks
+only: tilted blocks are sized by their digits and left out of the size
+comparison, as the store has no tilted date (S8's record).
 **Commits:** `feat: m2b report script`, `docs: m2b results report`,
 `docs: readme for m2b`, `docs: m2b plan done`
 
@@ -2377,7 +2395,7 @@ needs a GPU. If A finishes stage 1 before S10, it exits; B keeps its place.
 
 | CPU work | Size | Estimate |
 |---|---|---|
-| gen-v2 + synth-val-v2 | 202,400 photos | about 30 min on 24 CPUs (M2 S6's 150 ms a photo per worker, plus a tenth for drawing each block twice) |
+| gen-v2 + synth-val-v2 | 202,400 photos | about 32 min on 24 CPUs (M2 S6's 150 ms a photo per worker, plus half: S8 measured +50%, not the tenth first planned) |
 | 180° sets | 13,000 photos written | minutes |
 | store export | 99 photos, 70 × 4 turns | seconds, laptop |
 | v2 scoring | about 25 configurations × 99 photos | under an hour on the laptop; with ensemble and rotation, 12 passes a photo |
