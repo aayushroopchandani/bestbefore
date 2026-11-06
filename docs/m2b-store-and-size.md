@@ -329,8 +329,10 @@ decision k.
     2026-10-31, before any code) Sizes match the store's:** each block is
     drawn so its first date's box, measured as the store measures it,
     follows v1-train's date sizes (Cause 4), instead of M2's two bands on
-    the digits. M2's spec keeps its hash and M2's photos their bytes
-    (tests). **(changes M2's rule against leaks)** M2 designed nothing from
+    the digits. **(changed 2026-11-06, S8, owner's call)** A tilted block's
+    digits follow them, not its box ([Sizes like the
+    store's](#the-generator-v2), below). M2's spec keeps its hash and M2's
+    photos their bytes (tests). **(changes M2's rule against leaks)** M2 designed nothing from
     a store photo, because v1 was its test set. gen-v2's new kinds come
     from v1's failures (the gallery looked at all of v1, before the
     split), its sizes from v1-train's dates only, and nothing from v2.
@@ -482,7 +484,7 @@ only when it is on.
 | nozzle rows | 1 or 2 whole rows of dots left out, the same rows in every line of the block | 15% of dot-matrix blocks |
 | laser window | a dark printed rectangle (near-black, dark blue, dark green, dark brown) with light grey to white strokes, slightly soft, a faint glow; 30% dotified | style **window 10%** |
 | worn patch | a soft-edged region, 1 to 3 characters wide and up to two lines tall, where the ink fades by 60 to 95%; on solid, dot-matrix and window print | 10% of inked blocks |
-| **sizes like the store's** | each block's first date's box short side, over the photo's long side, drawn from v1-train's date sizes (below) | every block (replaces M2's two bands) |
+| **sizes like the store's** | each block's first date's box short side, over the photo's long side, drawn from v1-train's date sizes (below) | every block (replaces M2's two bands); **a tilted block by its digits, not its box (changed 2026-11-06)** |
 
 Kinds: single 25%, pair 30%, panel 15%, dense-panel 10%, line-pair 10%,
 range 5%, relative 5%. Styles: solid 30%, dot-matrix 35%, label 15%,
@@ -515,6 +517,24 @@ only if every font has the glyph (S7 checks; otherwise `Rs.`).
   that lost its ink is (3 tries in all, `ComposeSpec.redraws`); it keeps
   its drawing closest to the target. On the same 2,000 blocks, 99.9% then
   land within 1 px or 5%, for 2.15 drawings a block against 2.00.
+- **A tilted block is sized by its digits (changed 2026-11-06, S8, owner's
+  call, before any gen-v2 photo trained anything).** v1-train has no
+  tilted date: none of its 169 is more than about 8° off level or vertical
+  (the box shape bounds it: a line tilted by θ has a box aspect under
+  cot θ), so the store's box size is its print height. A tilted block's box
+  mostly measures its tilt, 3.1 times its digits against 1.3 upright, so
+  drawing that box to the store's size shrank its digits to a third: 44%
+  of tilted blocks had digits under 6 px at 1,280 px input and 18% under 4
+  px, smaller than any store date (about 6.5 px at the least), and in a
+  blind read 1 of 14 dates under 4 px could be read exactly and 11 not at
+  all. So a tilted block is drawn once, at the provisional size (digits at
+  its target over 1.3, as an upright block's), with no correction, and its
+  box is whatever its tilt makes it. Upright, sideways and upside-down
+  blocks are drawn to their box as before. **The size check moves with it:**
+  the sample's dates are compared with v1-train's over its untilted dates,
+  as the store has no tilted ones; tilted boxes run above the store's range
+  by design (over all dates the simulation gave 29.4 / 40.2 / 30.4%, median
+  1.90%; over untilted dates nothing moved).
 - A block that shrinks to find a free place keeps its shrunk size, and
   says so, as in M2. A block under 1.5% still gets a background of at
   least 1,000 px (M2's rule): 3,854 of the 8,185 backgrounds qualify, so
@@ -1915,7 +1935,9 @@ from v1-train, v3's training part included.
   its rectangle; 180° maps boxes exactly; a block drawn to a target lands
   within 1 px or 5% of it in every style and orientation **(changed
   2026-11-05, owner's call: at least 99% of blocks, and 95% in every style
-  and orientation; the rest keep their closest drawing)**, and the second
+  and orientation; the rest keep their closest drawing; changed 2026-11-06,
+  owner's call: tilted blocks aren't drawn to a box, and their digits are
+  their target over 1.3 exactly)**, and the second
   drawing uses the same draws as the first (the same font, ink and
   defects); a worn block's boxes equal the same block's unworn boxes, and
   its patch holds 60 to 95% less ink; a date worn to nothing is drawn
@@ -1925,9 +1947,10 @@ from v1-train, v3's training part included.
   does a new kind look pasted, and do sizes look like the store's?
 
 **Check:** every gen-v2 share within 3 points of its rule in the sample's
-table; the sample's date sizes, measured as the store measures them,
-within 3 points of v1-train's in each band (under 1.5%, 1.5–2.5%, 2.5% and
-up) and their median within 0.1 points; the time per photo against M2's
+table; the sample's date sizes, measured as the store measures them
+**(changed 2026-11-06, owner's call: its untilted dates)**, within 3 points
+of v1-train's in each band (under 1.5%, 1.5–2.5%, 2.5% and up) and their
+median within 0.1 points; the time per photo against M2's
 (about a tenth more expected); the M2 checks (boxes from ink, same bytes
 however split).
 **Commits:** `feat: generator v2 print: nozzle rows, laser windows, upside-down blocks, worn patches`,
