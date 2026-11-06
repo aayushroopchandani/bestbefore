@@ -3,12 +3,26 @@
 **Reading expiry dates on product packaging, and knowing before the photo
 is taken whether the date will be readable.**
 
-BestBefore trains two small models: a **date reader**, which finds every
-date printed on a pack and reads the expiry as day / month / year, and a
-**readability checker**, small enough to run on a phone's live camera
-preview, which warns when the photo about to be taken won't be readable.
-They're trained on public data on a university GPU cluster and tested on
-real photos taken in retail stores.
+BestBefore reads expiry dates from photos of real product packaging, the
+dot-matrix print on curved caps, sideways stamps and tiny lines that
+off-the-shelf OCR misses. It grows out of Scanify, a stock app built for a
+retailer whose inventory system has no expiry dates, and replaces that
+app's hand-written rules with trained models.
+
+The project covers the full pipeline, from data to deployment:
+
+- **Date detector:** trained on the public ExpDate dataset, then on a custom
+  synthetic generator that draws what public data misses, across 200,000+
+  generated photos. Fine-tuning on real photos of Indian products is under
+  way.
+- **Date reader (next):** reads each date as day / month / year and tells
+  the expiry from the manufacture date.
+- **Readability checker (planned):** small enough to run on a phone's live
+  camera preview, warning staff before they take a photo that can't be read.
+
+Models train on a university GPU cluster. Every result is measured against
+baselines on real store photos held out from all training, and broken down
+by failure type, not reported as one headline number.
 
 ![Twelve expiry dates cropped from product photos: dot-matrix print, a curved cap, faint ink, an out-of-focus date, an expiry printed above a production date, a month written as a word, a curved jar, a date under a lot code, low contrast, and three clean prints](docs/assets/expdate_dates.jpg)
 
