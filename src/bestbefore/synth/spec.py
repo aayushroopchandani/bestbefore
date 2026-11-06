@@ -237,12 +237,16 @@ class V2Size:
     so its first date's box, its short side over the photo's long side as
     the store measures its dates, follows v1-train's dates: one of the ten
     bands between their deciles, uniformly, then log-uniform inside it.
-    Replaces M2's two bands (SizeSpec), which set the digits' height."""
+    Replaces M2's two bands (SizeSpec), which set the digits' height. A
+    tilted block is sized by its digits instead (changed 2026-11-06, S8,
+    owner's call): v1-train has no tilted date, so the store's box size is
+    its print height, and a tilted box mostly measures its tilt."""
     # v1-train's 169 dates, v3's training part included (scripts/store_sizes.py, 2026-11-05): aggregates
     # only, the two ends clipped to M2's floor and ceiling, 0.6% (8 px at 1,280 px input) and 4.5%.
     deciles: tuple[float, ...] = (0.00659, 0.01118, 0.01296, 0.01451, 0.01573, 0.01736, 0.01974, 0.02181,
                                   0.02559, 0.03247, 0.045)
     provisional: float = 1.3        # a first drawing's digits: the target over this (M2 S5's upright ratio)
+    by_digits: tuple[str, ...] = ("tilted",)    # these orientations keep that drawing, with no correction
     # Changed 2026-11-05 (S8, owner's call): a box off by more than this after its first correction is
     # corrected once more from the same draws, then drawn afresh, ComposeSpec.redraws tries in all.
     corrections: int = 2            # drawings from the same draws that correct its size, the second only while off

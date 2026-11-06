@@ -20,7 +20,8 @@ frame, before the warp, and a worn patch after them, so a worn block and
 its unworn twin share every other draw: its boxes come from the twin, the
 ink before the wear. Its size is the store's (spec.V2Size): a target for
 its first date's box, drawn before the background, which a first drawing
-measures and a second, from the same number, hits (draw_to_size). Without
+measures and a second, from the same number, hits (draw_to_size); a tilted
+block keeps its first drawing, whose digits are an upright block's. Without
 v2 every draw is M2's.
 """
 from __future__ import annotations
@@ -244,17 +245,18 @@ def _sized(block: Block, style: str, family: fonts.Family, target: float, scale:
            rng: np.random.Generator, spec: GenSpec) -> Drawn | None:
     """gen-v2's block drawn to its target: up to spec.compose.redraws tries,
     each from fresh draws (one number from the photo's generator) and each
-    ended as soon as its first date's box fits (draw_to_size). It keeps the
-    drawing closest to the target among those that kept every boxed
-    token's ink: a box that grows in steps may fit no size. None if no try
-    kept that ink. Its `redraws` is the try it kept, counted from 0."""
+    ended as soon as its first date's box fits (draw_to_size), or, for a
+    tilted block, which has no box to fit, as soon as it kept its ink. It
+    keeps the drawing closest to the target among those that kept every
+    boxed token's ink: a box that grows in steps may fit no size. None if
+    no try kept that ink. Its `redraws` is the try it kept, counted from 0."""
     best, sizing, drawings = None, {}, 0
     for attempt in range(spec.compose.redraws):
         d, found = draw_to_size(block, style, family, target, geometry, int(rng.integers(2**63)), spec)
         drawings += found["drawings"]
         if d is not None and (best is None or abs(found["reached"] - target) < abs(sizing["reached"] - target)):
             best, sizing, kept = d, found, attempt
-        if d is not None and found["fits"]:
+        if d is not None and found["fits"] is not False:
             break
     if best is None:
         return None
@@ -271,30 +273,40 @@ def draw_to_size(block: Block, style: str, family: fonts.Family, target: float, 
     turning; the block is then drawn again from the same seed, so with the
     same choices, at the size that gives the box the target, and, while the
     box still misses it by more than 1 px or 5%, once more
-    (spec.v2.size.corrections drawings in all). Returns the drawing closest
-    to the target among those that kept every boxed token's ink (None if
-    none did) and its sizes: the digits drawn, its first date's box in
-    final pixels, whether that fits, and how many drawings it took."""
+    (spec.v2.size.corrections drawings in all). A tilted block
+    (spec.v2.size.by_digits) keeps the first drawing: its digits are an
+    upright block's, its box whatever its tilt makes it, and `fits` is
+    None. Returns the drawing closest to the target among those that kept
+    every boxed token's ink (None if none did) and its sizes: the digits
+    drawn, its first date's box in final pixels, whether that fits, and how
+    many drawings it took."""
     v = spec.v2.size
     boxed = [t.cls is not None for t in block.tokens]
     first = next(i for i, t in enumerate(block.tokens) if t.cls == "date")
+
+    def whole(drawing: Drawing) -> bool:
+        return not drawing.worn_out and all(box is not None for box, b in zip(drawing.boxes, boxed) if b)
+
     digits = target / v.provisional
     d = draw_v2(block, style, family, digits, geometry, seed, spec)
     best, sizing, n = None, {}, 1
-    if d.boxes[first] is not None:
+    if d.boxes[first] is None:
+        return best, {"drawings": n}
+    measured = _short(d.boxes[first])
+    if geometry.orientation in v.by_digits:
+        return (d, {"digits": digits, "reached": measured, "fits": None, "drawings": n}) if whole(d) \
+            else (None, {"drawings": n})
+    for _ in range(v.corrections):
+        digits *= target / measured
+        d = draw_v2(block, style, family, digits, geometry, seed, spec)
+        n += 1
+        if d.boxes[first] is None:              # its date lost its ink at this size
+            break
         measured = _short(d.boxes[first])
-        for _ in range(v.corrections):
-            digits *= target / measured
-            d = draw_v2(block, style, family, digits, geometry, seed, spec)
-            n += 1
-            if d.boxes[first] is None:          # its date lost its ink at this size
-                break
-            measured = _short(d.boxes[first])
-            whole = not d.worn_out and all(box is not None for box, b in zip(d.boxes, boxed) if b)
-            if whole and (best is None or abs(measured - target) < abs(sizing["reached"] - target)):
-                best, sizing = d, {"digits": digits, "reached": measured, "fits": fits(measured, target, v)}
-            if fits(measured, target, v):
-                break
+        if whole(d) and (best is None or abs(measured - target) < abs(sizing["reached"] - target)):
+            best, sizing = d, {"digits": digits, "reached": measured, "fits": fits(measured, target, v)}
+        if fits(measured, target, v):
+            break
     return best, sizing | {"drawings": n}
 
 
@@ -422,15 +434,16 @@ def write_one(made: Made, images: Path) -> Path:
 SIZE_BANDS = ((0.015, "under 1.5%"), (0.025, "1.5-2.5%"), (math.inf, "2.5% and up"))   # the store's (M2b, Cause 4)
 
 
-def date_sizes(sidecars: Sequence[dict]) -> list[float]:
+def date_sizes(sidecars: Sequence[dict], tilted: bool = True) -> list[float]:
     """Every generated date's size as the store measures its own: its box's
     short side over its photo's long side (the backgrounds' own dates
-    aside)."""
+    aside). tilted=False leaves tilted blocks' dates out: those are what
+    compare with the store's, which has no tilted date."""
     out = []
     for s in sidecars:
         long_side = max(s["size"])
         out += [_short(t["box"]) / long_side for b in s["blocks"] for t in b["tokens"]
-                if t["cls"] == "date" and t["box"]]
+                if t["cls"] == "date" and t["box"] and (tilted or b["geometry"]["orientation"] != "tilted")]
     return out
 
 

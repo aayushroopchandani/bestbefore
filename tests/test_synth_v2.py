@@ -996,7 +996,8 @@ def test_gen_v2s_shares_are_read_from_its_sidecars(pool):
 # Each block's first date's box follows v1-train's date sizes: a target
 # drawn from their deciles, hit by drawing the block, measuring the box and
 # drawing it again from the same draws (corrected once more while off, then
-# from fresh draws: the owner's call, 2026-11-05).
+# from fresh draws: the owner's call, 2026-11-05). A tilted block is sized
+# by its digits instead: v1-train has no tilted date (2026-11-06).
 
 DECILES = (0.00659, 0.01118, 0.01296, 0.01451, 0.01573, 0.01736, 0.01974, 0.02181, 0.02559, 0.03247, 0.045)
 
@@ -1035,42 +1036,53 @@ def _one_way(orientation: str):
     return replace(GEOMETRY_V2, orientation=((orientation, 1.0),))
 
 
-def _drawn_to_size(rng, style: str, geometry_spec, spec) -> tuple[bool | None, float]:
+def _drawn_to_size(rng, style: str, geometry_spec, spec) -> tuple[str, float]:
     """A random gen-v2 block drawn to a target as gen-v2 draws one, on a
-    photo of 1,000 to 1,600 px: whether its box fits (None if every try
-    lost its ink, when make_one skips it), and its drawings."""
+    photo of 1,000 to 1,600 px: "fits" or "off", or for a tilted block
+    "digits", which are its target over 1.3 and no drawing more; "lost" if
+    every try lost its ink, when make_one skips it. And its drawings."""
     block = T.random_block(rng, TEXT_V2, V2.text)
     geometry = W.random_geometry(rng, geometry_spec, V2.geometry)
     target = compose.store_size(rng, V2.size)[1] * float(rng.choice([1000, 1280, 1600]))
     drawn = make._sized(block, style, fonts.random_family(rng, "train"), target, 1.0, geometry, rng, spec)
     if drawn is None:
-        return None, 0
+        return "lost", 0
     first = next(i for i, t in enumerate(block.tokens) if t.cls == "date")
     x1, y1, x2, y2 = drawn.boxes[first]
     assert drawn.sizing["reached"] == min(x2 - x1, y2 - y1)                   # its first date's box, as drawn
+    if geometry.orientation == "tilted":
+        assert drawn.sizing["fits"] is None and drawn.sizing["digits"] == pytest.approx(target / 1.3)
+        assert drawn.layer.params["size"] == pytest.approx(target / 1.3, abs=0.001)
+        return "digits", drawn.sizing["drawings"]
     assert drawn.sizing["fits"] == _within(drawn.sizing["reached"], target)
-    return drawn.sizing["fits"], drawn.sizing["drawings"]
+    return ("fits" if drawn.sizing["fits"] else "off"), drawn.sizing["drawings"]
 
 
 @needs_fonts
 def test_a_block_drawn_to_a_target_lands_within_1px_or_5_percent():
     """At least 99% of blocks drawn as gen-v2 draws them land within 1 px or
     5% of their target (the owner's call, 2026-11-05: a box of dots or relief
-    grows in steps, so a few fit no size and keep their closest drawing).
-    Every style and orientation, 20 blocks each, at least 90%: a guard,
-    as 20 blocks can't tell 95% from 90%; S8's record measures each on 100
-    or more (all 95% or more, tilted embossed print the least)."""
+    grows in steps, so a few fit no size and keep their closest drawing),
+    tilted blocks aside, which aren't drawn to a box. Every style and
+    orientation, 20 blocks each, at least 90%: a guard, as 20 blocks can't
+    tell 95% from 90%; S8's record measures each on 100 or more."""
     from bestbefore.synth.spec import GEN_V2
     rng = np.random.default_rng(101)
     drawn = [_drawn_to_size(rng, R.random_style(rng, GEN_V2.style), GEOMETRY_V2, GEN_V2) for _ in range(500)]
-    fits = [f for f, _ in drawn if f is not None]
-    assert len(fits) >= 0.98 * len(drawn) and np.mean(fits) >= 0.99, (len(fits), np.mean(fits))
-    assert np.mean([n for f, n in drawn if f is not None]) < 2.3                # about 2.15 drawings a block
+    outcome = Counter(f for f, _ in drawn)
+    fits = [f == "fits" for f, _ in drawn if f in ("fits", "off")]
+    assert outcome["lost"] <= 0.02 * len(drawn) and np.mean(fits) >= 0.99, outcome
+    assert abs(outcome["digits"] / len(drawn) - 0.15) < 0.05, outcome          # tilted blocks: 15% of them
+    assert np.mean([n for f, n in drawn if f != "lost"]) < 2.3
+    assert {n for f, n in drawn if f == "digits"} <= {1, 2, 3}                 # one drawing a try
     cells = {}
     for style in R.STYLES_V2:
         for orientation, _ in GEOMETRY_V2.orientation:
             found = [_drawn_to_size(rng, style, _one_way(orientation), GEN_V2)[0] for _ in range(20)]
-            cells[style, orientation] = np.mean([f for f in found if f is not None])
+            if orientation == "tilted":
+                assert set(found) <= {"digits", "lost"} and found.count("digits") >= 15, (style, found)
+            else:
+                cells[style, orientation] = np.mean([f == "fits" for f in found if f != "lost"])
     assert min(cells.values()) >= 0.90, {k: v for k, v in cells.items() if v < 1}
 
 
@@ -1116,6 +1128,47 @@ def test_a_block_still_off_is_drawn_from_fresh_draws_and_keeps_its_closest(monke
     assert (drawn.sizing["drawings"], drawn.sizing["tries"]) == (9, 3)
 
 
+TILTED = Geometry("tilted", 0, 30.0)
+
+
+def test_a_tilted_block_keeps_its_first_drawing_whatever_its_box(monkeypatch):
+    """Its digits are its target over 1.3, as an upright block's; a box
+    six times its target is its tilt, and draws no correction."""
+    from bestbefore.synth.spec import GEN_V2
+    calls = []
+    monkeypatch.setattr(make, "draw_v2", _boxes_of([60], calls))
+    block = T.Block(((T.Token("08/2027", "date"),),), "single")
+    drawn = make._sized(block, "solid", None, 10.0, 1.0, TILTED, np.random.default_rng(0), GEN_V2)
+    assert calls == [(pytest.approx(10 / 1.3), calls[0][1])]                  # one drawing, one try
+    assert drawn.sizing == {"digits": pytest.approx(10 / 1.3), "reached": 60, "fits": None, "drawings": 1, "tries": 1}
+    assert drawn.redraws == 0
+    for orientation in ("upright", "sideways", "upside-down"):                # the others are corrected, as before
+        calls.clear()
+        monkeypatch.setattr(make, "draw_v2", _boxes_of([60, 10], calls))
+        kept, sizing = make.draw_to_size(block, "solid", None, 10.0, Geometry(orientation, 0, 0.0), 1, GEN_V2)
+        assert len(calls) == 2 and (sizing["reached"], sizing["fits"]) == (10, True)
+
+
+def test_a_tilted_block_that_lost_its_ink_is_drawn_from_fresh_draws(monkeypatch):
+    from bestbefore.synth.spec import GEN_V2
+    block = T.Block(((T.Token("08/2027", "date"),),), "single")
+    calls = []
+
+    def lost_then_kept(blk, style, family, size, geometry, seed, spec):
+        calls.append(seed)
+        return make.Drawing(None, (None if len(calls) == 1 else (0, 0, 90, 30),), {})
+    monkeypatch.setattr(make, "draw_v2", lost_then_kept)
+    drawn = make._sized(block, "solid", None, 10.0, 1.0, TILTED, np.random.default_rng(0), GEN_V2)
+    assert len(calls) == 2 and calls[0] != calls[1] and drawn.redraws == 1 and drawn.sizing["drawings"] == 2
+    calls.clear()
+    monkeypatch.setattr(make, "draw_v2", lambda *a: calls.append(a) or make.Drawing(None, (None,), {}))
+    assert make._sized(block, "solid", None, 10.0, 1.0, TILTED, np.random.default_rng(0), GEN_V2) is None
+    assert len(calls) == GEN_V2.compose.redraws                                # 3 tries, then skipped, as M2
+    worn = make.Drawing(None, ((0, 0, 90, 30),), {}, worn_out=True)            # worn to nothing: no better
+    monkeypatch.setattr(make, "draw_v2", lambda *a: worn)
+    assert make.draw_to_size(block, "solid", None, 10.0, TILTED, 1, GEN_V2)[0] is None
+
+
 @needs_fonts
 @pytest.mark.parametrize("style", R.STYLES_V2)
 def test_the_corrections_make_the_first_drawings_choices(style):
@@ -1156,10 +1209,13 @@ def test_gen_v2_records_each_blocks_target_and_the_box_it_reached(pool):
             x1, y1, x2, y2 = first["box"]
             assert b["reached"] == round(min(x2 - x1, y2 - y1) / long_side, 5)    # the box, as written
             want = b["target"] * long_side * (GEN.compose.shrink if b["shrunk"] else 1.0)
-            assert b["fits"] == _within(min(x2 - x1, y2 - y1), want)
-            assert b["drawings"] >= 2 and abs(b["print_height"] - b["size"] / long_side) < 1e-5
-            rows.append(b["fits"])
+            assert abs(b["print_height"] - b["size"] / long_side) < 1e-5
             kept += 1
+            if b["geometry"]["orientation"] == "tilted":                    # by its digits, not its box
+                assert b["fits"] is None and b["size"] == pytest.approx(want / 1.3, abs=0.015)   # both rounded
+                continue
+            assert b["fits"] == _within(min(x2 - x1, y2 - y1), want) and b["drawings"] >= 2
+            rows.append(b["fits"])
         for k in s["skipped"]:
             assert {"decile", "target"} <= set(k) and "size" not in k
             skipped += 1
@@ -1176,6 +1232,10 @@ def test_gen_v2s_size_shares_are_its_deciles_and_its_bands_are_the_stores(pool):
     sizes = make.date_sizes(sidecars)
     assert len(sizes) == sum(t["cls"] == "date" and t["box"] is not None for s in sidecars for b in s["blocks"]
                              for t in b["tokens"])
+    tilted = [{"size": [1000, 800], "blocks": [
+        {"geometry": {"orientation": "tilted"}, "tokens": [{"cls": "date", "box": [0, 0, 100, 40]}]},
+        {"geometry": {"orientation": "sideways"}, "tokens": [{"cls": "date", "box": [0, 0, 20, 90]}]}]}]
+    assert make.date_sizes(tilted) == [0.04, 0.02] and make.date_sizes(tilted, tilted=False) == [0.02]
     bands = make.size_bands(sizes)
     assert bands["dates"] == len(sizes) and sum(bands[k] for k in ("under 1.5%", "1.5-2.5%", "2.5% and up")) == \
         pytest.approx(1.0, abs=1e-3)
@@ -1243,17 +1303,22 @@ def test_the_gen_v2_sample_is_made_with_gen_v2_apart_from_m2s(load_script, fake_
     generate = load_script("generate")
     monkeypatch.setattr(generate, "start_run", lambda name, config, seed=None: runs.start_run(
         name, config, seed=seed, root=tmp_path / "runs"))
-    generate.sample("gen-v2-sample", 3, 1)
+    generate.sample("gen-v2-sample", 12, 1)
     manifest = json.loads(m2b.manifest_path("gen-v2-sample").read_text())
-    assert manifest["spec_sha256"] == spec_hash(GEN_V2) and manifest["photos"] == 3
+    assert manifest["spec_sha256"] == spec_hash(GEN_V2) and manifest["photos"] == 12
     assert set(manifest["date_sizes"]) == {"dates", "under 1.5%", "1.5-2.5%", "2.5% and up", "median"}
+    assert set(manifest["date_sizes_all"]) == set(manifest["date_sizes"])
     images = m2b.gen_dir() / "images" / "gen_v2_sample"
-    assert sorted(p.name for p in images.iterdir()) == ["000000.jpg", "000001.jpg", "000002.jpg"]
+    assert sorted(p.name for p in images.iterdir()) == [make.image_name(i) for i in range(12)]
     assert not m2.gen_dir().exists() and not m2.manifest_path("gen-v2-sample").exists()     # M2's untouched
     samples = sets.load_set("gen-v2-sample")
-    assert [s.id for s in samples] == ["000000.jpg", "000001.jpg", "000002.jpg"]
+    assert [s.id for s in samples] == [make.image_name(i) for i in range(12)]
     lines = [json.loads(line) for line in m2b.sidecar_path("gen_v2_sample").read_text().splitlines()]
     assert all("target" in b for s in lines for b in s["blocks"])
+    dates = [(b["geometry"]["orientation"], t) for s in lines for b in s["blocks"] for t in b["tokens"]
+             if t["cls"] == "date" and t["box"]]
+    assert manifest["date_sizes_all"]["dates"] == len(dates)                  # the check's: its untilted dates
+    assert manifest["date_sizes"]["dates"] == sum(o != "tilted" for o, _ in dates) < len(dates)
     deciles = [r["what"] for r in manifest["shares"] if r["what"].startswith("size: decile")]
     assert deciles[0] == "size: decile 1 of 10" and len(deciles) == 10
     assert (tmp_path / "runs").is_dir() and any(d.name.endswith("m2b-generate-gen-v2-sample")

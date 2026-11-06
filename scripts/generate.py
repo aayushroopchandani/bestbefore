@@ -81,8 +81,9 @@ def sample(name: str, count: int, workers: int) -> None:
                    "backgrounds_loaded_seconds": round(loaded, 1)},
         "shares": batch.checked_shares(sidecars, spec),
     }
-    if spec.v2 is not None:             # gen-v2's dates, measured as the store measures its own (Cause 4)
-        summary["date_sizes"] = make.size_bands(make.date_sizes(sidecars))
+    if spec.v2 is not None:             # gen-v2's dates, measured as the store measures its own (Cause 4):
+        summary["date_sizes"] = make.size_bands(make.date_sizes(sidecars, tilted=False))    # the check's, untilted
+        summary["date_sizes_all"] = make.size_bands(make.date_sizes(sidecars))
     home.manifest_path(name).parent.mkdir(parents=True, exist_ok=True)
     write_json(home.manifest_path(name), summary)
     write_json(run_dir / "summary.json", summary)
@@ -90,7 +91,8 @@ def sample(name: str, count: int, workers: int) -> None:
     (run_dir / "shares.md").write_text(table + "\n")
     print(table)
     print(json.dumps({k: summary[k] for k in ("photos", "blocks", "skipped", "redrawn", "fresh_ink", "shrunk",
-                                              "boxes", "generated_dates", "date_sizes", "timing") if k in summary},
+                                              "boxes", "generated_dates", "date_sizes", "date_sizes_all",
+                                              "timing") if k in summary},
                      indent=2))
     print(run_dir)
 
