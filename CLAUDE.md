@@ -181,6 +181,10 @@ Plan each milestone as a sliced doc in `docs/` before writing its code.
 - About a third of the store packs have the date and the barcode on
   different faces. That is a capture problem, not a reading problem; tag
   it `other-face` and leave it out of reading accuracy.
+- **A box round a tilted date measures the tilt, not the print.** Store
+  dates are barely tilted (none of v1-train's 169 past about 8°), so their
+  box size is their print height. Size generated tilted text by its digits,
+  and compare sizes with the store over untilted dates (M2b S8).
 
 ---
 
