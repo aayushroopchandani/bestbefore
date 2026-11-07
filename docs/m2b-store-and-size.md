@@ -2229,8 +2229,9 @@ synth_rot180 on the cluster, checked.
   (tasks 0–199, 1,000 photos each) and `synth-val-v2` (task 200).
 - `scripts/derive_sets.py --only rot180`.
 - `slurm/m2b_generate.sbatch`: `short`, 24 CPUs, 32 GB (M2 S6 measured
-  900 MB a worker); the render sheet, the tasks, `--check`, the 180° sets.
-  It releases nothing: job B waits for v1 too.
+  900 MB a worker) **(changed 2026-11-07, owner's call: 48 GB, below)**;
+  the render sheet, the tasks, `--check`, the 180° sets. It releases
+  nothing: job B waits for v1 too.
 - Laptop trial first: `--tasks 0-4,200` timed, the check, synth-val-v2's
   contact sheet by stratum.
 
@@ -2247,6 +2248,76 @@ synth_rot180 on the cluster, checked.
   comparison with the store uses untilted dates
   (`make.date_sizes(sidecars, tilted=False)`), and code reading a sidecar
   allows for `fits` being null on tilted blocks.
+
+**Added 2026-11-07, before S9's code** (the owner's points, and details
+fixed while writing; no share of the plan changes, and nothing comes from
+a store photo):
+
+- **M2's sizes in a gen-v2 spec**: `V2Spec.size = None` keeps M2's
+  `SizeSpec` bands on the digits; such a block is drawn once at its band's
+  height through gen-v2's drawing, with no correction to a box, as a tilted
+  block is. `GEN_V2` keeps its hash (`2c8b24d5…`). A test checks that every
+  stratum's digits are the height M2's `print_height` drew, in clean's
+  1.5–4.5% band, and that a stratum without it would draw the store's.
+- **synth-val-v2's strata**: each is M2's `clean` (`nozzle-rows`: M2's
+  `dot-matrix` stratum) drawn by gen-v2's code with every new thing off
+  (no glue, nozzle rows or worn patches) and M2's sizes, then one thing
+  on. Where that thing needs a second number, the second only makes it
+  possible: `glued` also prints the word before every date (a single date
+  has one 70% of the time), and `worn` is solid print only (clean's labels
+  are never worn). So every target of those strata is glued, or worn.
+  In a line-pair or a dense panel **the target is one of its dates, each
+  equally likely** (the plan named only the line-pair's); the others stay
+  plain dates. The other strata keep one date, the target. The share rows
+  find an import date by its word, as its role may now say `target`.
+- **(changed 2026-11-07, owner's call, after a scratch run of the trial
+  and before any code was committed) A stratum's block that finds no place
+  in its 10 fresh draws is drawn at a fresh size from the same band**, 10
+  more times, up to 10 sizes (`make.FRESH_SIZES`). At clean's sizes (digits
+  up to 4.5%) a whole line-pair can be wider than a narrow portrait photo
+  (557 to 908 px wide) at any of its draws: M2's rule, 10 fresh blocks at
+  one size, left 5 of the 300 line-pair photos without their target, which
+  the check refuses. With it, those 5 are drawn at a smaller size, still in
+  clean's band, and every photo has its target. M2's synth-val keeps a
+  block's size through its 10 draws and gen-v2 draws one block, so neither
+  draws differently (tests).
+- **`generate.py --milestone m2b`** for the tasks and the check: M2b's
+  tasks are numbered on their own (gen-v2 0–199, synth-val-v2 200), so
+  `--milestone m2b --tasks 0-4,200` is the laptop trial. M2's commands,
+  tasks and check are as they were, and M2b's check reads and writes
+  nothing of M2's: checking M2's sets again would rewrite their manifests,
+  whose SHA-256 M2's runs record. M2b's files go under `m2b/` (task records
+  `m2b/gen/sidecars/tasks/NNN.json`).
+- **The check, extended** (owner's point 3): gen-v2's shares against
+  `GEN_V2` and its **untilted dates' sizes against v1-train's** (S8's
+  35.5 / 42.0 / 22.5% and median 1.736%, the median V2Size's middle
+  decile): each band as a share (within 3 points, or 3 standard errors on
+  a small sample, as M2's shares), the median within 0.1 points (or, on a
+  small sample, the share of dates under v1-train's median within 3
+  standard errors of a half). At 200,000 photos that is S8's check exactly;
+  tilted dates are recorded beside. synth-val-v2, stratum by stratum: its
+  shares, one target per photo, and every block's digits in its band. A
+  manifest says `complete: true` only with no problem, and only then are
+  the lists written; a failed check stops the job.
+- **The job also makes gen-v2-sample** (S8's suggestion, the owner's
+  point 6), to compare with the laptop's, and draws gen-v2's render sheet
+  (`render_sheet.py --v2`). It hashes M2's manifests and lists before and
+  after. The 180° sets go under `m2b/` (`derived/`, `lists/`,
+  `manifests/derived.json`), M2's derived files untouched (a test).
+- **The check's memory** (owner's point 5): it reads the photos back on
+  processes started before it parses the 200,000 sidecar lines at once. On
+  Linux those processes are forked copies of it, and a parent holding
+  every parsed line could have that memory copied into each of them as
+  they run. M2's check gives the same results; its memory was never
+  measured beyond Slurm's samples.
+- **(changed 2026-11-07, owner's call) The job asks 48 GB**, as M2's did,
+  not 32: in the scratch run a worker peaked at 885 MB on the laptop (M2's
+  at 773 there and 900 on the cluster), so 24 workers come near 25 GB if
+  they peak at once; the check's main process holds about 3.3 GB for
+  200,000 sidecar lines (2.4 GB measured for them parsed); and the 42 GB
+  the job writes fills page cache charged to its memory. A `short` node has
+  510 GB, so the larger ask costs nothing in the queue. 4 hours of
+  `short`'s 6.
 
 **Check:** both manifests `complete: true`, 200,000 and 2,400 photos; the
 shares; real-val-rot180 165 photos and 187 dates; the render sheet's
