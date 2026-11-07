@@ -13,10 +13,11 @@ from .samples import Sample
 # and in 2 x 2 grids (M2's hard validation sets, scripts/derive_sets.py).
 # gen-sample, gen, synth-val: generated photos (scripts/generate.py), read
 # with their sidecars, so synth-val's targets load as exp and its strata as
-# tags; gen-v2-sample: M2b's, under $GENERATED_DIR/m2b/.
+# tags; gen-v2-sample, gen-v2, synth-val-v2: M2b's, under $GENERATED_DIR/m2b/,
+# with real-val-rot180 (the validation photos turned 180°).
 # store: store test set v1 (store.V1), the retailer's photos that M0 to
 # M2 were tested on.
-DERIVED = m2.DERIVED_SETS
+DERIVED = {**m2.DERIVED_SETS, **m2b.DERIVED_SETS}
 GENERATED = {**m2.GENERATED_SETS, **m2b.GENERATED_SETS}
 NAMES = (*expdate.SPLITS, "real-val", *DERIVED, *GENERATED, "store")
 
@@ -28,7 +29,8 @@ def load_set(name: str) -> list[Sample]:
         ids = yolo.list_ids(expdate_dir() / "yolo", "val")
         return [s for s in expdate.load_split("real-train") if s.id in ids]
     if name in DERIVED:
-        return derived.load_yolo_set(m2.list_path(DERIVED[name]))
+        home = m2b if name in m2b.DERIVED_SETS else m2
+        return derived.load_yolo_set(home.list_path(DERIVED[name]))
     if name in GENERATED:
         home = m2b if name in m2b.GENERATED_SETS else m2
         return derived.load_yolo_set(home.list_path(GENERATED[name]), home.sidecar_path(GENERATED[name]))

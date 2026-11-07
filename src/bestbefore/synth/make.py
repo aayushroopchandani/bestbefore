@@ -476,6 +476,10 @@ def write_one(made: Made, images: Path) -> Path:
 # --- The spec, measured on what was made -----------------------------------------------------------
 
 SIZE_BANDS = ((0.015, "under 1.5%"), (0.025, "1.5-2.5%"), (math.inf, "2.5% and up"))   # the store's (M2b, Cause 4)
+# v1-train's 169 dates in those bands, and their median (M2b S8's record,
+# scripts/store_sizes.py; aggregates only, the median V2Size's middle
+# decile): what gen-v2's untilted dates are checked against (batch.size_check).
+STORE_SIZES = {"under 1.5%": 0.355, "1.5-2.5%": 0.420, "2.5% and up": 0.225, "median": 0.01736}
 
 
 def date_sizes(sidecars: Sequence[dict], tilted: bool = True) -> list[float]:

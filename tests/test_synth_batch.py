@@ -11,16 +11,18 @@ import shutil
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from bestbefore import derived, m2, sets
-from bestbefore.synth import batch, fonts
-from bestbefore.synth.batch import Layout
-from bestbefore.synth.spec import GEN, SYNTH_VAL, spec_dict
+from bestbefore import derived, m2, m2b, sets
+from bestbefore.synth import batch, fonts, make
+from bestbefore.synth.batch import Layout, LayoutV2
+from bestbefore.synth.spec import GEN, GEN_V2, SYNTH_VAL, SYNTH_VAL_V2, spec_dict, spec_hash, strata_hash
 
 needs_fonts = pytest.mark.skipif(not fonts.fetched(), reason="fonts not fetched: python scripts/fetch_fonts.py")
 
 SMALL = Layout(gen=6, gen10k=4, task_size=3, per_stratum=1)      # 2 gen tasks, then 7 synth-val photos
+SMALL_V2 = LayoutV2(gen=6, task_size=3, per_stratum=1)            # M2b's: 2 gen-v2 tasks, then 8 synth-val-v2 photos
 
 
 @pytest.fixture(scope="module")
@@ -257,3 +259,243 @@ def test_the_job_releases_only_after_a_check_that_passed(load_script, held_jobs,
     assert (released.read_text().split() if released.exists() else []) == (["72915", "73001"] if passes else [])
     outcome = json.loads((tmp_path / "run" / "outcome.json").read_text())
     assert outcome["passed"] is passes and outcome["released"] == (["72915", "73001"] if passes else None)
+
+
+# === M2b S9: gen-v2 and synth-val-v2, apart from M2's ==================================================
+
+def _fingerprint(folder: Path) -> dict[str, str]:
+    """Every file under a folder, by path, with its SHA-256."""
+    return {str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def test_m2bs_layout_and_tasks():
+    tasks = batch.LAYOUT_V2.tasks()
+    assert len(tasks) == 201 and [t.number for t in tasks] == list(range(201))
+    assert {t.set for t in tasks[:200]} == {"gen-v2"} and tasks[0].photos == range(0, 1000)
+    assert tasks[199].photos == range(199_000, 200_000)
+    assert (tasks[200].set, tasks[200].photos) == ("synth-val-v2", range(0, 2400))
+    assert [t.number for t in batch.parse_tasks("0-4,200", batch.LAYOUT_V2)] == [0, 1, 2, 3, 4, 200]
+    with pytest.raises(ValueError):
+        batch.parse_tasks("201", batch.LAYOUT_V2)
+    assert [batch.LAYOUT_V2.spec("synth-val-v2", i)[1] for i in (0, 299, 300, 2399)] == \
+           ["upside-down", "upside-down", "glued", "nozzle-rows"]
+    assert batch.LAYOUT_V2.spec("synth-val-v2", 1500) == (dict(SYNTH_VAL_V2)["embossed"], "embossed")
+    assert batch.LAYOUT_V2.spec("gen-v2", 7) == (GEN_V2, None)
+    assert batch.LAYOUT_V2.lists("gen-v2") == {"gen_v2": 200_000}
+    assert batch.LAYOUT_V2.lists("synth-val-v2") == {"synth_val_v2": 2400}
+    assert batch.spec_sha256("gen-v2") == spec_hash(GEN_V2) and batch.spec_sha256("synth-val-v2") == \
+        strata_hash(SYNTH_VAL_V2)
+    # M2's layout as it was: its fields (in its manifests), sets, tasks and lists
+    assert batch.LAYOUT.sets == ("gen", "synth-val") and batch.LAYOUT_V2.sets == ("gen-v2", "synth-val-v2")
+    assert batch.SETS == ("gen", "synth-val", "gen-v2", "synth-val-v2")
+    from dataclasses import asdict
+    assert asdict(batch.LAYOUT) == {"gen": 50_000, "gen10k": 10_000, "task_size": 1_000, "per_stratum": 300}
+    assert batch.LAYOUT.lists("gen") == {"gen50k": 50_000, "gen10k": 10_000}
+    assert batch.LAYOUT.lists("synth-val") == {"synth_val": 2100}
+    assert batch.spec_sha256("synth-val") == strata_hash() and batch.spec_sha256("gen") == spec_hash(GEN)
+
+
+def test_m2bs_tasks_and_files_live_under_m2b(fake_expdate):
+    m2_tasks, v2_tasks = batch.LAYOUT.tasks(), batch.LAYOUT_V2.tasks()
+    assert batch.task_files(m2_tasks[50])[1] == m2.gen_dir() / "sidecars" / "tasks" / "50.json"     # as M2 S6's
+    assert batch.task_files(m2_tasks[7])[0] == m2.gen_dir() / "sidecars" / "tasks" / "07.jsonl"
+    assert batch.task_files(v2_tasks[200])[1] == m2b.gen_dir() / "sidecars" / "tasks" / "200.json"
+    assert batch.task_files(v2_tasks[7])[0] == m2b.gen_dir() / "sidecars" / "tasks" / "007.jsonl"
+    assert batch.images_dir("gen-v2") == m2b.gen_dir() / "images" / "gen_v2"
+    assert batch.images_dir("synth-val-v2") == m2b.gen_dir() / "images" / "synth_val_v2"
+    assert batch.images_dir("gen") == m2.gen_dir() / "images" / "gen50k"
+    pools = batch.load_pools(["gen-v2", "synth-val-v2"])
+    assert pools["synth-val-v2"].by_list.keys() == {"val"}
+    assert pools["gen-v2"].by_list.keys() == {"train_real", "train_synth_clean"}
+
+
+@pytest.fixture(scope="module")
+def made_v2(made, tmp_path_factory) -> Path:
+    """M2's SMALL made and checked, then M2b's SMALL_V2 made beside it,
+    unchecked: copied by the tests."""
+    root = tmp_path_factory.mktemp("made_v2")
+    shutil.copytree(made, root, symlinks=True, dirs_exist_ok=True)
+    with pytest.MonkeyPatch.context() as mp:
+        for name, path in (("EXPDATE_DIR", root / "expdate"), ("GENERATED_DIR", root / "generated")):
+            mp.setenv(name, str(path))
+        assert batch.passed(batch.check(SMALL, workers=1))
+        batch.make_tasks(SMALL_V2.tasks(), workers=1, layout=SMALL_V2)
+    return root
+
+
+@pytest.fixture
+def good_v2(made_v2, tmp_path, monkeypatch) -> Path:
+    root = tmp_path / "copy"
+    shutil.copytree(made_v2, root, symlinks=True)
+    for name, path in (("EXPDATE_DIR", root / "expdate"), ("GENERATED_DIR", root / "generated")):
+        monkeypatch.setenv(name, str(path))
+    return root
+
+
+@needs_fonts
+def test_m2bs_check_vouches_for_its_sets_and_leaves_m2s_alone(good_v2):
+    generated = good_v2 / "generated"
+    m2_before = _fingerprint(generated / "m2")
+    results = batch.check(SMALL_V2, workers=1)
+    assert batch.passed(results), {n: r["manifest"]["problems"] for n, r in results.items()}
+    assert _fingerprint(generated / "m2") == m2_before                    # M2's files, untouched
+    gen, val = results["gen-v2"]["manifest"], results["synth-val-v2"]["manifest"]
+    assert (gen["complete"], gen["photos"], val["complete"], val["photos"]) == (True, 6, True, 8)
+    assert gen["spec"] == spec_dict(GEN_V2) and gen["spec_sha256"] == spec_hash(GEN_V2) and gen["seed"] == 4
+    assert val["spec_sha256"] == strata_hash(SYNTH_VAL_V2) and val["seed"] == 5
+    assert list(val["strata"]) == [name for name, _ in SYNTH_VAL_V2] and val["layout"] == \
+        {"gen": 6, "task_size": 3, "per_stratum": 1}
+    # the sizes: gen-v2's untilted dates against the store's, synth-val-v2's digits in clean's band
+    assert set(gen["sizes"]) == {"untilted", "all", "store"} and gen["sizes"]["store"] == make.STORE_SIZES
+    assert gen["sizes"]["untilted"]["dates"] == len(make.date_sizes(
+        [json.loads(line) for line in m2b.sidecar_path("gen_v2").read_text().splitlines()], tilted=False))
+    assert set(val["sizes"]) == {name for name, _ in SYNTH_VAL_V2}
+    assert all(v["outside_band"] == 0 and v["blocks"] == 1 for v in val["sizes"].values())
+    for stratum, rows in val["shares"].items():                     # every share a stratum fixes, exactly
+        assert all(r["ok"] for r in rows), stratum
+    # written under m2b/, vouched for as the chain reads it
+    for name in ("gen_v2", "synth_val_v2"):
+        assert m2b.list_missing(name) is None, name
+    assert m2b.manifest_path("gen-v2").exists() and not (generated / "m2" / "manifests" / "gen-v2.json").exists()
+    assert (m2b.gen_dir() / "sidecars" / "tasks" / "002.json").exists()
+    samples = sets.load_set("synth-val-v2")
+    assert [s.tag for s in samples] == [name for name, _ in SYNTH_VAL_V2]
+    assert all([b.label for b in s.boxes].count("exp") == 1 for s in samples)
+    assert len(sets.load_set("gen-v2")) == 6
+    # and M2's own check still says what it said
+    again = batch.check(SMALL, workers=1)
+    assert batch.passed(again) and "sizes" not in again["gen"]["manifest"]
+    assert again["synth-val"]["manifest"]["strata"].keys() == {name for name, _ in SYNTH_VAL}
+
+
+def _break_v2(how: str, generated: Path) -> tuple[str, str]:
+    """Break M2b's made sets one way; returns the set and what the check must say."""
+    tasks = generated / "m2b" / "gen" / "sidecars" / "tasks"
+
+    def edit(part: str, change) -> None:
+        lines = [json.loads(line) for line in (tasks / part).read_text().splitlines()]
+        change(lines)
+        (tasks / part).write_text("".join(json.dumps(line, separators=(",", ":")) + "\n" for line in lines))
+
+    if how == "digits off the band":
+        edit("002.jsonl", lambda lines: lines[1]["blocks"][0].update(print_height=0.05))     # the glued stratum's
+        return "synth-val-v2", "glued: 1 of 1 blocks' digits outside their band"
+    if how == "two targets":
+        def two(lines):
+            dates = [t for t in lines[2]["blocks"][0]["tokens"] if t["cls"] == "date"]      # the line-pair's
+            for t in dates:
+                t["role"] = "target"
+        edit("002.jsonl", two)
+        return "synth-val-v2", "000002.jpg: 2 targets among 2 new dates, not 1"
+    if how == "a target in gen-v2":
+        def target(lines):
+            line = next(line for line in lines if line["blocks"])
+            next(t for t in line["blocks"][0]["tokens"] if t["cls"] == "date")["role"] = "target"
+        edit("000.jsonl", target)
+        return "gen-v2", "a target date outside synth-val"
+    if how == "a task of M2's spec":
+        record = tasks / "001.json"
+        record.write_text(json.dumps(json.loads(record.read_text()) | {"spec_sha256": spec_hash(GEN)}))
+        return "gen-v2", "task 1: made with spec 3fc141781fcf"
+    raise ValueError(how)
+
+
+@needs_fonts
+@pytest.mark.parametrize("how", ["digits off the band", "two targets", "a target in gen-v2", "a task of M2's spec"])
+def test_m2bs_check_fails_a_broken_set_and_says_why(good_v2, how):
+    name, said = _break_v2(how, good_v2 / "generated")
+    results = batch.check(SMALL_V2, workers=1)
+    manifest = results[name]["manifest"]
+    assert not batch.passed(results) and manifest["complete"] is False
+    assert any(said in p for p in manifest["problems"]), manifest["problems"]
+    assert m2b.list_missing(m2b.GENERATED_SETS[name]) is not None
+
+
+def _sidecar(sizes: list[tuple[str, float]], long_side: int = 1000) -> dict:
+    """A made-up gen-v2 sidecar line: one block per (orientation, short side
+    over the long side), each with one date."""
+    return {"size": [long_side, 800], "blocks": [
+        {"geometry": {"orientation": o}, "tokens": [{"cls": "date", "box": [0, 0, 300, round(f * long_side)]}]}
+        for o, f in sizes]}
+
+
+def test_gen_v2s_sizes_are_checked_on_untilted_dates_against_the_stores():
+    store = make.STORE_SIZES
+    assert store["median"] == 0.01736 and abs(sum(v for k, v in store.items() if k != "median") - 1) < 1e-9
+    from bestbefore.synth.spec import V2Size
+    assert V2Size().deciles[5] == store["median"]                       # the median is the middle decile
+    # 1,000 dates spread as the store's (35.5 / 42.0 / 22.5%, median 1.736%), and 400 tilted ones all big
+    rng = np.random.default_rng(0)
+    like = ([("upright", f) for f in rng.uniform(0.010, 0.0149, 355)] + [("sideways", f) for f in
+            rng.uniform(0.0151, 0.0173, 160)] + [("upright", f) for f in rng.uniform(0.0175, 0.0249, 260)] +
+            [("upside-down", f) for f in rng.uniform(0.0251, 0.04, 225)])
+    tilted = [("tilted", f) for f in rng.uniform(0.05, 0.08, 400)]
+    sizes, problems = batch.size_check("gen-v2", [_sidecar(like + tilted)])
+    assert problems == [] and sizes["untilted"]["dates"] == 1000 and sizes["all"]["dates"] == 1400
+    assert sizes["all"]["2.5% and up"] > 0.4                            # tilted boxes run big, and don't count
+    big = [(o, f * 1.6) for o, f in like]
+    sizes, problems = batch.size_check("gen-v2", [_sidecar(big)])
+    assert any("2.5% and up" in p for p in problems) and any("median" in p for p in problems)
+    assert batch.size_check("gen", [_sidecar(big)]) == (None, [])        # M2's sets: no size check
+    assert batch.size_check("synth-val", []) == (None, [])
+
+
+def test_generates_m2b_options_keep_m2s_commands_as_they_were(load_script, monkeypatch):
+    generate = load_script("generate")
+    for args in (["--milestone", "m2b", "--check", "--release", "m2"],          # M2b's releases nothing
+                 ["--set", "gen-v2-sample", "--count", "5", "--milestone", "m2b"]):
+        monkeypatch.setattr("sys.argv", ["generate.py", *args])
+        with pytest.raises(SystemExit) as stop:
+            generate.main()
+        assert stop.value.code == 2, args
+    called = []
+    monkeypatch.setattr(generate.fonts, "fetched", lambda: True)
+    for args, want in ((["--tasks", "0-4,50"], ("tasks", "m2")), (["--check", "--release", "m2"], ("check", "m2")),
+                       (["--milestone", "m2b", "--tasks", "0-4,200"], ("tasks", "m2b")),
+                       (["--milestone", "m2b", "--check"], ("check", "m2b"))):
+        monkeypatch.setattr(generate, "tasks", lambda spec, workers, milestone: called.append(("tasks", milestone)))
+        monkeypatch.setattr(generate, "check", lambda workers, release, milestone: called.append(("check", milestone)))
+        monkeypatch.setattr("sys.argv", ["generate.py", *args])
+        generate.main()
+        assert called[-1] == want, args
+
+
+@needs_fonts
+def test_generate_makes_and_checks_m2bs_sets_in_runs_of_their_own(load_script, good, tmp_path, monkeypatch):
+    from bestbefore import runs
+    generate = load_script("generate")
+    monkeypatch.setitem(generate.LAYOUTS, "m2b", SMALL_V2)
+    count = iter(range(100))
+    monkeypatch.setattr(generate, "start_run", lambda name, config, seed=None: runs.start_run(
+        name, config, seed=seed, root=tmp_path / "runs" / str(next(count))))
+    m2_before = _fingerprint(good / "generated" / "m2")
+    generate.tasks("0-2", 1, "m2b")
+    generate.check(1, None, "m2b")
+    made = {p.name[16:]: p for p in (tmp_path / "runs").rglob("*-m2b-generate*")}
+    assert made.keys() == {"m2b-generate", "m2b-generate-check"}
+    summary = json.loads((made["m2b-generate"] / "summary.json").read_text())
+    assert summary["photos"] == 14 and summary["tasks"] == [0, 1, 2]
+    check = made["m2b-generate-check"]
+    assert json.loads((check / "outcome.json").read_text())["passed"] is True
+    assert json.loads((check / "gen-v2.json").read_text())["complete"] is True
+    assert (check / "synth-val-v2-shares.md").read_text().count("### ") == 8          # a table per stratum
+    assert set(json.loads((check / "hashes.json").read_text())) == {"gen-v2", "synth-val-v2"}
+    assert _fingerprint(good / "generated" / "m2") == m2_before
+
+
+def test_m2bs_generation_job_runs_its_steps_in_order_and_releases_nothing():
+    repo = Path(__file__).resolve().parents[1]
+    text = (repo / "slurm" / "m2b_generate.sbatch").read_text()
+    steps = [line for line in text.splitlines() if line.startswith("python scripts/")]
+    assert steps == ["python scripts/render_sheet.py --v2",
+                     'python scripts/generate.py --set gen-v2-sample --count 500 --workers "$SLURM_CPUS_PER_TASK"',
+                     'python scripts/generate.py --milestone m2b --tasks 0-200 --workers "$SLURM_CPUS_PER_TASK"',
+                     'python scripts/generate.py --milestone m2b --check --workers "$SLURM_CPUS_PER_TASK"',
+                     'python scripts/derive_sets.py --only rot180 --workers "$SLURM_CPUS_PER_TASK"']
+    assert "--release" not in text and "scontrol" not in text and "set -euo pipefail" in text   # a failed check stops it
+    settings = dict(line[len("#SBATCH --"):].split("=", 1) for line in text.splitlines() if line.startswith("#SBATCH --"))
+    assert (settings["partition"], settings["cpus-per-task"]) == ("short", "24")
+    hours, minutes, _ = map(int, settings["time"].split(":"))
+    assert hours * 60 + minutes <= 6 * 60                                   # short's limit
+    assert [t.number for t in batch.parse_tasks("0-200", batch.LAYOUT_V2)] == list(range(201))

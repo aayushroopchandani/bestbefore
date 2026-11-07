@@ -27,6 +27,10 @@ def root() -> Path:
     return generated_dir() / "m2b"
 
 
+def derived_dir() -> Path:
+    return root() / "derived"
+
+
 def list_path(name: str) -> Path:
     return root() / "lists" / f"{name}.txt"
 
@@ -41,8 +45,12 @@ def sidecar_path(name: str) -> Path:
 
 # gen-v2's sets, by set name: their list (and folder) names, under gen/ as
 # M2's are under m2/gen/. gen-v2-sample is S8's 500 photos to look at; S9
-# adds gen-v2 and synth-val-v2.
-GENERATED_SETS = {"gen-v2-sample": "gen_v2_sample"}
+# makes gen-v2 (step 2's replay) and synth-val-v2 (8 strata of 300).
+GENERATED_SETS = {"gen-v2-sample": "gen_v2_sample", "gen-v2": "gen_v2", "synth-val-v2": "synth_val_v2"}
+# M2b's derived validation set (S9): ExpDate's 165 validation photos turned
+# 180°, by set name: its list (and folder) name. Its training twins,
+# real_rot180 and synth_rot180, are step 2's (STEP2_LISTS).
+DERIVED_SETS = {"real-val-rot180": "real_val_rot180"}
 
 
 def manifest_path(name: str) -> Path:
@@ -53,8 +61,10 @@ def manifest_path(name: str) -> Path:
 
 # M2b's own lists for step 2's replay (S9), and the manifest that vouches for each.
 STEP2_LISTS = ("gen_v2", "real_rot180", "synth_rot180")
-MANIFEST_OF = {"gen_v2": "gen-v2", "real_rot180": "derived", "synth_rot180": "derived"}
-MADE_BY = {"gen-v2": "S9's generation", "derived": "S9's derive_sets.py --only rot180"}
+MANIFEST_OF = {"gen_v2": "gen-v2", "real_rot180": "derived", "synth_rot180": "derived",
+               "synth_val_v2": "synth-val-v2", "real_val_rot180": "derived"}    # the last two: the M2b suite's (S10)
+MADE_BY = {"gen-v2": "S9's generation", "synth-val-v2": "S9's generation",
+           "derived": "S9's derive_sets.py --only rot180"}
 
 
 def list_missing(name: str) -> str | None:

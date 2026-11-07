@@ -1,27 +1,31 @@
 """Generate photos: dates drawn onto ExpDate backgrounds (docs/m2-synthetic-generator.md,
-S5 and S6).
+S5 and S6; docs/m2b-store-and-size.md, S8 and S9).
 
     python scripts/generate.py --set gen-sample --count 500 --workers 4   # S5: a sample to look at
     python scripts/generate.py --set gen-v2-sample --count 500 --workers 4   # M2b S8: gen-v2's, to look at
     python scripts/generate.py --tasks 0-50 --workers 24                  # S6: gen (tasks 0-49), synth-val (50)
     python scripts/generate.py --check --workers 24 --release m2          # S6: check, vouch, release
+    python scripts/generate.py --milestone m2b --tasks 0-200 --workers 24 # M2b S9: gen-v2 (0-199), synth-val-v2 (200)
+    python scripts/generate.py --milestone m2b --check --workers 24       # M2b S9: check and vouch, release nothing
 
 Everything goes under $GENERATED_DIR/m2/: gen/images/<list>/NNNNNN.jpg,
 their labels in gen/labels/<list>/, the sidecars in gen/sidecars/, lists/
 and manifests/ (synth/batch.py has the layout); gen-v2's sets (M2b) the
-same way under $GENERATED_DIR/m2b/, drawn with spec.GEN_V2, so M2's don't
-change. Photo i comes from
-default_rng([set seed, i]) alone, so any split into tasks, runs or worker
-processes writes the same bytes. Each worker uses one CPU (OpenCV's own
-threads off).
+same way under $GENERATED_DIR/m2b/, drawn with spec.GEN_V2 and
+spec.SYNTH_VAL_V2, so M2's don't change. --milestone picks whose tasks and
+check (M2's, the default, or M2b's, whose tasks are numbered on their own).
+Photo i comes from default_rng([set seed, i]) alone, so any split into
+tasks, runs or worker processes writes the same bytes. Each worker uses one
+CPU (OpenCV's own threads off).
 
---tasks makes S6's tasks on one pool of --workers processes; each task
+--tasks makes the tasks on one pool of --workers processes; each task
 writes its own sidecar file and then its record. --check reads every set
-back and writes the lists and manifests (complete: true only if nothing
-is wrong), plus a run record under results/runs/ with the shares and every
-file's SHA-256. It exits with an error, saying why, if anything is missing
-or wrong. --release NAME then releases every held job of that name (the
-GPU chain's); a check that fails releases nothing.
+of the milestone back and writes the lists and manifests (complete: true
+only if nothing is wrong), plus a run record under results/runs/ with the
+shares, M2b's sizes and every file's SHA-256. It exits with an error,
+saying why, if anything is missing or wrong. --release NAME then releases
+every held job of that name (the GPU chain's); a check that fails releases
+nothing, and M2b's releases nothing at all (job B waits for S10).
 """
 from __future__ import annotations
 
@@ -33,6 +37,7 @@ import time
 from dataclasses import asdict
 
 from bestbefore import derived, m2, m2b
+from bestbefore.synth.batch import LAYOUTS
 from bestbefore.runs import code_sha256, start_run, write_json
 from bestbefore.synth import batch, fonts, make
 from bestbefore.synth.spec import SET_SEEDS, spec_dict, spec_hash
@@ -97,16 +102,18 @@ def sample(name: str, count: int, workers: int) -> None:
     print(run_dir)
 
 
-def tasks(spec: str, workers: int) -> None:
-    """Make S6's tasks, timed, with each worker's peak memory."""
-    chosen = batch.parse_tasks(spec)
-    run_dir = start_run("m2-generate", {"tasks": [t.number for t in chosen], "workers": workers,
-                                        "layout": asdict(batch.LAYOUT), "root": m2.root()})
+def tasks(spec: str, workers: int, milestone: str = "m2") -> None:
+    """Make a milestone's tasks (M2's S6, M2b's S9), timed, with each
+    worker's peak memory."""
+    layout, home = LAYOUTS[milestone], m2b if milestone == "m2b" else m2
+    chosen = batch.parse_tasks(spec, layout)
+    run_dir = start_run(f"{milestone}-generate", {"tasks": [t.number for t in chosen], "workers": workers,
+                                                  "layout": asdict(layout), "root": home.root()})
     start = time.time()
     pools = batch.load_pools(t.set for t in chosen)
     loaded = time.time() - start
     start = time.time()
-    result = batch.make_tasks(chosen, workers, pools, run=run_dir.name)
+    result = batch.make_tasks(chosen, workers, pools, layout, run=run_dir.name)
     result |= {"tasks": [t.number for t in chosen], "wall_seconds": round(time.time() - start, 1),
                "backgrounds_loaded_seconds": round(loaded, 1)}
     write_json(run_dir / "summary.json", result)
@@ -114,23 +121,26 @@ def tasks(spec: str, workers: int) -> None:
     print(run_dir)
 
 
-def check(workers: int, release: str | None) -> None:
-    """Check both sets, write what the check vouches for, and release the
-    held jobs named `release` only if every set is complete."""
-    run_dir = start_run("m2-generate-check", {"workers": workers, "layout": asdict(batch.LAYOUT),
-                                              "release": release, "root": m2.root()})
+def check(workers: int, release: str | None, milestone: str = "m2") -> None:
+    """Check a milestone's two sets, write what the check vouches for, and
+    release the held jobs named `release` only if every set is complete."""
+    layout, home = LAYOUTS[milestone], m2b if milestone == "m2b" else m2
+    run_dir = start_run(f"{milestone}-generate-check", {"workers": workers, "layout": asdict(layout),
+                                                        "release": release, "root": home.root()})
     start = time.time()
-    results = batch.check(batch.LAYOUT, workers)
+    results = batch.check(layout, workers)
     seconds = round(time.time() - start, 1)
     for name, r in results.items():
         manifest = r["manifest"]
         write_json(run_dir / f"{name}.json", manifest)
-        tables = (manifest["shares"].items() if name == "synth-val" else [("", manifest["shares"])])
+        tables = (manifest["shares"].items() if name in batch.STRATA else [("", manifest["shares"])])
         (run_dir / f"{name}-shares.md").write_text(
             "\n\n".join(f"{f'### {k}' if k else ''}\n\n{batch.shares_table(rows)}".strip() for k, rows in tables)
             + "\n")
         print(f"{name}: {manifest['photos']} of {manifest['expected']} photos, "
               f"{'complete' if manifest['complete'] else 'NOT complete'}, {manifest['problem_count']} problems")
+        if "sizes" in manifest:
+            print(f"  sizes: {json.dumps(manifest['sizes'])}")
         for problem in manifest["problems"]:
             print(f"  {problem}")
     write_json(run_dir / "hashes.json", {name: r["hashes"] for name, r in results.items()})
@@ -155,24 +165,32 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--set", choices=[s for s in (*m2.GENERATED_SETS, *m2b.GENERATED_SETS) if s not in batch.SETS],
                       help="a sample of --count photos (S5; M2b S8)")
-    mode.add_argument("--tasks", help='S6\'s tasks, e.g. "0-50" or "0-4,50"')
-    mode.add_argument("--check", action="store_true", help="check every set and vouch for it (S6)")
+    mode.add_argument("--tasks", help='the tasks, e.g. "0-50" or "0-4,50" (M2\'s, S6); with --milestone m2b '
+                                      '"0-200" or "0-4,200" (S9)')
+    mode.add_argument("--check", action="store_true", help="check the milestone's sets and vouch for them (S6, S9)")
     parser.add_argument("--count", type=int, help="with --set")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--milestone", choices=sorted(LAYOUTS),
+                        help="with --tasks or --check: M2's sets (m2, the default) or M2b's (gen-v2, synth-val-v2)")
     parser.add_argument("--release", metavar="NAME", help="with --check: release our held jobs of this name")
     args = parser.parse_args()
     if args.set and not args.count:
         parser.error("--set needs --count")
+    if args.set and args.milestone:
+        parser.error("--milestone goes with --tasks or --check: a sample's set says where it goes")
     if args.release and not args.check:
         parser.error("--release goes with --check")
+    if args.release and args.milestone == "m2b":
+        parser.error("M2b's generation releases nothing: job B waits for S10")
+    milestone = args.milestone or "m2"
     if not fonts.fetched():
         raise SystemExit("fonts not fetched: python scripts/fetch_fonts.py (on the cluster, on the login node)")
     if args.set:
         sample(args.set, args.count, args.workers)
     elif args.tasks:
-        tasks(args.tasks, args.workers)
+        tasks(args.tasks, args.workers, milestone)
     else:
-        check(args.workers, args.release)
+        check(args.workers, args.release, milestone)
 
 
 if __name__ == "__main__":

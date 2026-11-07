@@ -1,8 +1,10 @@
-"""Write M2's derived sets under $GENERATED_DIR/m2/ (docs/m2-synthetic-generator.md, S2).
+"""Write M2's derived sets under $GENERATED_DIR/m2/ (docs/m2-synthetic-generator.md, S2),
+and M2b's 180° sets under $GENERATED_DIR/m2b/ (docs/m2b-store-and-size.md, S9).
 
     python scripts/derive_sets.py --only val      # the two validation sets (laptop)
     python scripts/derive_sets.py --only lists    # train_synth_clean alone (laptop: no new photos)
     python scripts/derive_sets.py --workers 16    # all five (slurm/m2_derive.sbatch)
+    python scripts/derive_sets.py --only rot180 --workers 24   # M2b's three (slurm/m2b_generate.sbatch)
 
 The sets, each listed in lists/<set>.txt (absolute paths):
   real_val_rot        the 165 validation photos, each turned 90 or 270 degrees
@@ -11,6 +13,12 @@ The sets, each listed in lists/<set>.txt (absolute paths):
                       of a validation photo (a list only: no new photos)
   real_rot            the 937 real training photos, turned
   synth_rot           the 11,844 clean synthetic photos, turned
+
+and M2b's (--only rot180), each photo turned 180 degrees, in m2b's own
+derived/, lists/ and manifests/derived.json, so M2's files don't change:
+  real_val_rot180     the 165 validation photos (the M2b suite's)
+  real_rot180         the 937 real training photos (step 2's replay)
+  synth_rot180        the 11,844 clean synthetic photos (step 2's replay)
 
 The sources are ExpDate's YOLO lists and label files, exactly what M1
 trained and validated on. A photo turns 90 or 270 degrees by a coin seeded
@@ -31,7 +39,7 @@ from contextlib import nullcontext
 from multiprocessing import Pool
 from pathlib import Path
 
-from bestbefore import derived, m2
+from bestbefore import derived, m2, m2b
 from bestbefore.config import expdate_dir
 from bestbefore.images import load_upright
 from bestbefore.runs import code_sha256, start_run
@@ -56,16 +64,17 @@ def grid_one(srcs: list[Path], root: Path, set_name: str, name: str) -> tuple[Sa
 
 # --- Whole sets ---------------------------------------------------------------
 
-def write_set(pool, root: Path, set_name: str, job, tasks: list[tuple]) -> dict:
+def write_set(pool, root: Path, set_name: str, job, tasks: list[tuple], home=m2) -> dict:
     """Run `job` over `tasks` into an emptied set folder, list the photos
-    in task order, and count what was written."""
+    in task order (in `home`'s lists: m2's, or m2b's), and count what was
+    written."""
     start = time.time()
     for kind in ("images", "labels"):           # no photo from an earlier run stays
         shutil.rmtree(root / kind / set_name, ignore_errors=True)
     results = pool.starmap(job, tasks)
     labels = Counter(b.label for s, _ in results for b in s.boxes)
     return {
-        "photos": derived.write_list(m2.list_path(set_name), [s.image for s, _ in results]),
+        "photos": derived.write_list(home.list_path(set_name), [s.image for s, _ in results]),
         "dates": sum(n for label, n in labels.items() if label in DATE_LABELS),
         "boxes": dict(sorted(labels.items())),
         "worst_box_error_px": round(max(err for _, err in results), 4),
@@ -78,6 +87,12 @@ def turned(pool, root: Path, set_name: str, sources: list[Path], seed: int) -> d
     entry = write_set(pool, root, set_name, turn_one,
                       [(p, root, set_name, q) for p, q in zip(sources, quarters)])
     return {**entry, "turned": {"90": quarters.count(1), "270": quarters.count(3)}}
+
+
+def half_turned(pool, root: Path, set_name: str, sources: list[Path]) -> dict:
+    """Every photo turned 180 degrees (M2b's): no coin to toss."""
+    entry = write_set(pool, root, set_name, turn_one, [(p, root, set_name, 2) for p in sources], home=m2b)
+    return {**entry, "turned": {"180": len(sources)}}
 
 
 def gridded(pool, root: Path, set_name: str, sources: list[Path]) -> dict:
@@ -99,10 +114,11 @@ def without_copies(synth: list[Path]) -> list[Path]:
     return [p for p in synth if p.name not in m2.REUSED_VAL_COPIES]
 
 
-def save_manifest(made: dict[str, dict], common: dict, run_dir: Path) -> dict:
-    """Merge into manifests/derived.json, so `--only val` and `--only lists`
-    keep the other sets' entries; a copy goes into the run folder."""
-    path = m2.manifest_path("derived")
+def save_manifest(made: dict[str, dict], common: dict, run_dir: Path, home=m2) -> dict:
+    """Merge into `home`'s manifests/derived.json (m2's, or m2b's for the
+    180° sets), so `--only val` and `--only lists` keep the other sets'
+    entries; a copy goes into the run folder."""
+    path = home.manifest_path("derived")
     manifest = json.loads(path.read_text()) if path.exists() else {"sets": {}}
     manifest["sets"].update({name: {**entry, **common} for name, entry in made.items()})
     text = json.dumps(manifest, indent=2) + "\n"
@@ -114,34 +130,37 @@ def save_manifest(made: dict[str, dict], common: dict, run_dir: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--only", choices=["val", "lists"],
+    parser.add_argument("--only", choices=["val", "lists", "rot180"],
                         help="val: only the two validation sets; lists: only "
-                             "train_synth_clean, which writes no photos")
+                             "train_synth_clean, which writes no photos; rot180: "
+                             "only M2b's three 180-degree sets, under m2b/")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0, help="for the turns")
     args = parser.parse_args()
     make_val = args.only in (None, "val")          # real_val_rot, real_val_small
     make_list = args.only in (None, "lists")       # train_synth_clean
     make_turned = args.only is None                # real_rot, synth_rot
+    make_half = args.only == "rot180"              # M2b: real_val_rot180, real_rot180, synth_rot180
+    home = m2b if make_half else m2
 
     # Read and check every source before writing anything.
-    yolo, root = expdate_dir() / "yolo", m2.derived_dir()
-    if make_val:
+    yolo, root = expdate_dir() / "yolo", home.derived_dir()
+    if make_val or make_half:
         val = derived.read_list(yolo / "val.txt")
-    if make_list or make_turned:
+    if make_list or make_turned or make_half:
         synth = without_copies(derived.read_list(yolo / "train_synth.txt"))
-    if make_turned:
+    if make_turned or make_half:
         real = derived.read_list(yolo / "train_real.txt")
 
-    run_dir = start_run("m2-derive", {"only": args.only, "workers": args.workers,
-                                      "root": m2.root()}, seed=args.seed)
+    run_dir = start_run(f"{'m2b' if make_half else 'm2'}-derive", {"only": args.only, "workers": args.workers,
+                                                                    "root": home.root()}, seed=args.seed)
     record = json.loads((run_dir / "run.json").read_text())
     common = {"seed": args.seed, "git_commit": record["git_commit"],
               "git_dirty": record["git_dirty"], "run": run_dir.name,
-              "code_sha256": code_sha256(derived, m2)}
+              "code_sha256": code_sha256(derived, m2, *((m2b,) if make_half else ()))}
 
     made: dict[str, dict] = {}
-    with Pool(args.workers) if make_val or make_turned else nullcontext() as pool:
+    with Pool(args.workers) if make_val or make_turned or make_half else nullcontext() as pool:
         if make_val:
             made["real_val_rot"] = turned(pool, root, "real_val_rot", val, args.seed)
             made["real_val_small"] = gridded(pool, root, "real_val_small", val)
@@ -152,15 +171,20 @@ def main() -> None:
         if make_turned:
             made["real_rot"] = turned(pool, root, "real_rot", real, args.seed)
             made["synth_rot"] = turned(pool, root, "synth_rot", synth, args.seed)
-    save_manifest(made, common, run_dir)
+        if make_half:
+            made["real_val_rot180"] = half_turned(pool, root, "real_val_rot180", val)
+            made["real_rot180"] = half_turned(pool, root, "real_rot180", real)
+            made["synth_rot180"] = half_turned(pool, root, "synth_rot180", synth)
+    save_manifest(made, common, run_dir, home)
 
     for name, e in made.items():
-        extra = (f", turned 90/270: {e['turned']['90']}/{e['turned']['270']}" if "turned" in e
+        extra = (f", turned 180: {e['turned']['180']}" if "180" in e.get("turned", {})
+                 else f", turned 90/270: {e['turned']['90']}/{e['turned']['270']}" if "turned" in e
                  else f", left over: {', '.join(e['left_over'])}" if "left_over" in e else "")
         written = (f", {e['dates']} dates, worst box error {e['worst_box_error_px']} px,"
                    f" {e['seconds']} s" if "dates" in e else "")
         print(f"{name}: {e['photos']} photos{written}{extra}")
-    print(m2.manifest_path("derived"))
+    print(home.manifest_path("derived"))
 
 
 if __name__ == "__main__":

@@ -1,24 +1,36 @@
-"""M2's generated sets at scale (docs/m2-synthetic-generator.md, S6): the
-tasks, making them on many CPUs, and the check that vouches for them.
+"""M2's generated sets at scale (docs/m2-synthetic-generator.md, S6), and
+M2b's (docs/m2b-store-and-size.md, S9): the tasks, making them on many
+CPUs, and the check that vouches for them.
 
-  gen        50,000 training photos (seed 1) in tasks 0 to 49 of 1,000:
-             task N makes photos 1000 N to 1000 N + 999
-  synth-val  2,100 photos (seed 2) in task 50: spec.SYNTH_VAL's 7 strata,
-             300 photos each, one after another
+  gen           50,000 training photos (seed 1) in tasks 0 to 49 of 1,000:
+                task N makes photos 1000 N to 1000 N + 999
+  synth-val     2,100 photos (seed 2) in task 50: spec.SYNTH_VAL's 7 strata,
+                300 photos each, one after another
+  gen-v2        M2b's 200,000 training photos (seed 4, spec.GEN_V2) in its
+                own tasks 0 to 199
+  synth-val-v2  M2b's 2,400 photos (seed 5) in its task 200:
+                spec.SYNTH_VAL_V2's 8 strata, 300 each
+
+M2's sets and M2b's each have a layout (LAYOUT, LAYOUT_V2) with its own task
+numbers, and live apart, M2's under $GENERATED_DIR/m2/ and M2b's under
+$GENERATED_DIR/m2b/, so making or checking M2b's reads and writes nothing
+of M2's.
 
 Photo i of a set comes from default_rng([set seed, i]) alone. A task
 writes its photos and label files, then its sidecar lines in photo order
-(gen/sidecars/tasks/NN.jsonl), and last a record of how it was made
-(NN.json), so a task with a record is whole. However the tasks are split
-across processes, runs or jobs, the same files come out.
+(gen/sidecars/tasks/NN.jsonl; M2b's NNN), and last a record of how it was
+made (NN.json), so a task with a record is whole. However the tasks are
+split across processes, runs or jobs, the same files come out.
 
 The check reads everything back: it counts the photos, opens every image,
 rebuilds every label file from its sidecar line and compares them byte for
 byte, re-checks on what was drawn that training photos used only training
 fonts and backgrounds (and synth-val only held-out fonts on validation
-photos), and measures every share against the spec. Then it joins the
-task sidecars into one per set and writes the lists and a manifest saying
-`complete: true`, which is what the GPU chain waits for (m2.list_missing).
+photos), and measures every share against the spec; for M2b's sets also
+the sizes (size_check). Then it joins the task sidecars into one per set
+and writes the lists and a manifest saying `complete: true`, which is what
+the GPU chain waits for (m2.list_missing, m2b.list_missing). A set with
+any problem gets complete: false, and no lists.
 """
 from __future__ import annotations
 
@@ -34,18 +46,28 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from multiprocessing import Pool
 from pathlib import Path
+from typing import ClassVar
 
 import cv2
+import numpy as np
 from PIL import Image
 
 from .. import derived, m2, m2b, runs
 from . import camera, compose, fonts, make, render, text, warp
 from .compose import Backgrounds
-from .spec import GEN, GEN_V2, SET_SEEDS, SYNTH_VAL, GenSpec, spec_dict, spec_hash, strata_hash
+from .spec import GEN, GEN_V2, SET_SEEDS, SYNTH_VAL, SYNTH_VAL_V2, GenSpec, spec_dict, spec_hash, strata_hash
 
 SHARE_POINTS = 0.03     # a share within 3 points of the spec,
 SHARE_SE = 3.0          # or 3 standard errors where the sample is small (synth-val's strata)
+SIZE_MEDIAN = 0.001     # gen-v2's untilted dates' median size within 0.1 points of v1-train's (M2b S8, S9)
 CODE = (camera, compose, fonts, make, render, text, warp)   # the modules that draw a photo
+STRATA = {"synth-val": SYNTH_VAL, "synth-val-v2": SYNTH_VAL_V2}    # the validation sets, by stratum
+
+
+def train_spec(name: str) -> GenSpec:
+    """The spec a set without strata is drawn with: gen-v2's for M2b's sets
+    (m2b.GENERATED_SETS), M2's for the others."""
+    return GEN_V2 if name in m2b.GENERATED_SETS else GEN
 
 
 @dataclass(frozen=True)
@@ -60,36 +82,73 @@ class Task:
         return range(self.first, self.first + self.count)
 
 
+class _Sets:
+    """What a layout does with its two sets (its fields say how big they
+    are): the training set's photos in tasks of task_size, then the
+    validation set's, a stratum after another, in one task."""
+    train: ClassVar[str]
+    val: ClassVar[str]
+
+    @property
+    def sets(self) -> tuple[str, str]:
+        return self.train, self.val
+
+    def tasks(self) -> tuple[Task, ...]:
+        """The training set's tasks, then the validation set's one task."""
+        n = math.ceil(self.gen / self.task_size)
+        gen = tuple(Task(k, self.train, k * self.task_size, min(self.task_size, self.gen - k * self.task_size))
+                    for k in range(n))
+        return (*gen, Task(n, self.val, 0, self.size(self.val)))
+
+    def size(self, name: str) -> int:
+        return self.gen if name == self.train else self.per_stratum * len(STRATA[self.val])
+
+    def spec(self, name: str, i: int) -> tuple[GenSpec, str | None]:
+        """The spec photo i of a set is drawn with, and its stratum: gen-v2's
+        for M2b's sets (m2b.GENERATED_SETS), M2's for the others; a
+        validation set's stratum's."""
+        if name not in STRATA:
+            return train_spec(name), None
+        stratum, spec = STRATA[name][i // self.per_stratum]
+        return spec, stratum
+
+
 @dataclass(frozen=True)
-class Layout:
-    """How many photos each set has and how gen is cut into tasks. The
-    tests use smaller layouts; the cluster uses LAYOUT."""
+class Layout(_Sets):
+    """How many photos each of M2's sets has and how gen is cut into tasks.
+    The tests use smaller layouts; the cluster uses LAYOUT."""
     gen: int = 50_000           # training photos
     gen10k: int = 10_000        # the first of them, for the data-size arm (decision 14)
     task_size: int = 1_000      # gen photos per task
     per_stratum: int = 300      # synth-val photos per stratum
+    train: ClassVar[str] = "gen"
+    val: ClassVar[str] = "synth-val"
 
-    def tasks(self) -> tuple[Task, ...]:
-        """gen's tasks, then synth-val's one task."""
-        n = math.ceil(self.gen / self.task_size)
-        gen = tuple(Task(k, "gen", k * self.task_size, min(self.task_size, self.gen - k * self.task_size))
-                    for k in range(n))
-        return (*gen, Task(n, "synth-val", 0, self.size("synth-val")))
+    def lists(self, name: str) -> dict[str, int]:
+        """The lists a checked set gets, with their photos: gen50k and its
+        first 10,000 (gen10k), or synth_val."""
+        return {"gen50k": self.gen, "gen10k": self.gen10k} if name == "gen" else {"synth_val": self.size(name)}
 
-    def size(self, name: str) -> int:
-        return self.gen if name == "gen" else self.per_stratum * len(SYNTH_VAL)
 
-    def spec(self, name: str, i: int) -> tuple[GenSpec, str | None]:
-        """The spec photo i of a set is drawn with, and its stratum: gen-v2's
-        for M2b's sets (m2b.GENERATED_SETS), M2's for the others."""
-        if name != "synth-val":
-            return (GEN_V2 if name in m2b.GENERATED_SETS else GEN), None
-        stratum, spec = SYNTH_VAL[i // self.per_stratum]
-        return spec, stratum
+@dataclass(frozen=True)
+class LayoutV2(_Sets):
+    """M2b's sets (S9): gen-v2's photos in tasks 0 to 199, then
+    synth-val-v2's in task 200, under $GENERATED_DIR/m2b/."""
+    gen: int = 200_000          # gen-v2's training photos
+    task_size: int = 1_000      # per task
+    per_stratum: int = 300      # synth-val-v2's photos per stratum
+    train: ClassVar[str] = "gen-v2"
+    val: ClassVar[str] = "synth-val-v2"
+
+    def lists(self, name: str) -> dict[str, int]:
+        """gen_v2 or synth_val_v2, every photo of the set."""
+        return {m2b.GENERATED_SETS[name]: self.size(name)}
 
 
 LAYOUT = Layout()
-SETS = ("gen", "synth-val")
+LAYOUT_V2 = LayoutV2()
+LAYOUTS = {"m2": LAYOUT, "m2b": LAYOUT_V2}
+SETS = (*LAYOUT.sets, *LAYOUT_V2.sets)      # the sets made in tasks (the others are samples)
 
 
 def parse_tasks(text_: str, layout: Layout = LAYOUT) -> list[Task]:
@@ -106,7 +165,7 @@ def parse_tasks(text_: str, layout: Layout = LAYOUT) -> list[Task]:
     return [t for t in tasks if t.number in numbers]
 
 
-# --- Where things go ($GENERATED_DIR/m2/gen/) ---------------------------------------------------------
+# --- Where things go ($GENERATED_DIR/m2/gen/, M2b's in m2b/gen/) ------------------------------------
 
 def home(name: str):
     """Where a generated set lives: m2b's layout for gen-v2's sets
@@ -118,28 +177,31 @@ def images_dir(name: str) -> Path:
     return home(name).gen_dir() / "images" / home(name).GENERATED_SETS[name]
 
 
-def tasks_dir() -> Path:
-    return m2.gen_dir() / "sidecars" / "tasks"
+def tasks_dir(name: str = "gen") -> Path:
+    """Where a set's tasks keep their sidecar lines and records: M2's in
+    m2/gen/sidecars/tasks/, M2b's in m2b/gen/sidecars/tasks/."""
+    return home(name).gen_dir() / "sidecars" / "tasks"
 
 
 def task_files(task: Task) -> tuple[Path, Path]:
-    """A task's sidecar lines and its record."""
-    stem = tasks_dir() / f"{task.number:02d}"
+    """A task's sidecar lines and its record (M2's tasks 0 to 50 named with
+    two digits, M2b's 0 to 200 with three)."""
+    stem = tasks_dir(task.set) / f"{task.number:0{2 if home(task.set) is m2 else 3}d}"
     return stem.with_suffix(".jsonl"), stem.with_suffix(".json")
 
 
 def spec_sha256(name: str) -> str:
-    """The hash a set's manifest names: GenSpec's, or synth-val's strata's."""
-    return strata_hash() if name == "synth-val" else spec_hash(LAYOUT.spec(name, 0)[0])
+    """The hash a set's manifest names: GenSpec's, or its strata's."""
+    return strata_hash(STRATA[name]) if name in STRATA else spec_hash(train_spec(name))
 
 
 def load_pools(names: Iterable[str]) -> dict[str, Backgrounds]:
     """Each set's backgrounds, through compose.load_backgrounds, which
     refuses a training list holding a validation or test photo or one of the
-    14 copies. Every synth-val stratum draws from the same pool."""
+    14 copies. Every stratum of a validation set draws from the same pool."""
     pools = {}
     for name in sorted(set(names)):
-        specs = [LAYOUT.spec(name, 0)[0]] if name != "synth-val" else [spec for _, spec in SYNTH_VAL]
+        specs = [spec for _, spec in STRATA[name]] if name in STRATA else [train_spec(name)]
         keys = {(s.backgrounds, s.compose.min_side) for s in specs}
         if len(keys) != 1:
             raise ValueError(f"{name}: its strata draw from different backgrounds")
@@ -191,7 +253,8 @@ def make_tasks(tasks: Sequence[Task], workers: int, pools: dict[str, Backgrounds
     sidecar lines are written once its last photo is, then its record.
     Returns the timing and memory over every photo."""
     pools = pools if pools is not None else load_pools(t.set for t in tasks)
-    tasks_dir().mkdir(parents=True, exist_ok=True)
+    for name in {t.set for t in tasks}:
+        tasks_dir(name).mkdir(parents=True, exist_ok=True)
     made_by = {"run": run, **runs.git_state(), "code_sha256": runs.code_sha256(*CODE), "layout": asdict(layout),
                "libraries": libraries()}
     results = produce([(t.set, i) for t in tasks for i in t.photos], workers, pools, layout)
@@ -363,7 +426,9 @@ def _spans(numbers: Sequence[int]) -> str:
 
 def _photo_problems(name: str, line: dict, i: int, layout: Layout) -> list[str]:
     """A sidecar line against its place: photo i of the set, from its own
-    seed, its stratum, and for synth-val exactly one target, boxed."""
+    seed, its stratum, and for a validation set exactly one target, boxed:
+    its one new date, but in a stratum of line-pairs or dense panels
+    (synth-val-v2's), whose other dates stay dates."""
     image = make.image_name(i)
     problems = []
     if (line["image"], line["i"], line["seed"]) != (image, i, [SET_SEEDS[name], i]):
@@ -375,9 +440,13 @@ def _photo_problems(name: str, line: dict, i: int, layout: Layout) -> list[str]:
     if any(t["box"] is None for t in dates):
         problems.append(f"{name} {image}: a date without its box")
     targets = [t for t in dates if t["role"] == "target"]
-    if name == "synth-val" and (len(targets) != 1 or len(dates) != 1):
-        problems.append(f"{name} {image}: {len(targets)} targets among {len(dates)} new dates, not 1 of 1")
-    if name != "synth-val" and targets:
+    if name in STRATA:
+        single = layout.spec(name, i)[0].text.kinds == (("single", 1.0),)
+        if single and (len(targets) != 1 or len(dates) != 1):
+            problems.append(f"{name} {image}: {len(targets)} targets among {len(dates)} new dates, not 1 of 1")
+        elif not single and len(targets) != 1:
+            problems.append(f"{name} {image}: {len(targets)} targets among {len(dates)} new dates, not 1")
+    elif targets:
         problems.append(f"{name} {image}: a target date outside synth-val")
     return problems
 
@@ -412,7 +481,7 @@ def _guard_problems(name: str, sidecars: Sequence[dict], layout: Layout) -> list
 def _font_hashes(name: str) -> tuple[dict[str, str], list[str]]:
     """SHA-256 of the font files a set draws with, from disk, against the
     pinned ones."""
-    splits = {GEN.fonts} if name != "synth-val" else {spec.fonts for _, spec in SYNTH_VAL}
+    splits = {spec.fonts for _, spec in STRATA[name]} if name in STRATA else {train_spec(name).fonts}
     found, problems = {}, []
     for split in sorted(splits):
         for family in fonts.families(split):
@@ -428,9 +497,14 @@ def check_set(name: str, layout: Layout = LAYOUT, workers: int = 1) -> dict:
     """Check one set (see the module's docstring) and, if nothing is wrong,
     write its joined sidecar, its lists and its manifest saying complete.
     A set with problems gets a manifest saying complete: false and why.
-    Returns the manifest and every file's SHA-256."""
+    Returns the manifest and every file's SHA-256. The photos are read back
+    on processes started while only the sidecar lines' text is held, before
+    the lines are parsed all at once: on Linux those processes are forked
+    copies of this one, and its memory, 200,000 parsed lines for gen-v2,
+    could be copied into each of them as they run (M2b S9)."""
     problems: list[str] = []
     raw: list[str] = []                 # the sidecar lines, in photo order
+    names: list[str] = []               # the image each line names
     records, missing = [], []
     for task in (t for t in layout.tasks() if t.set == name):
         lines, found = _lines(task)
@@ -440,11 +514,12 @@ def check_set(name: str, layout: Layout = LAYOUT, workers: int = 1) -> dict:
         problems += found
         records.append(m2.read_json(task_files(task)[1]))
         for i, line in zip(task.photos, lines):
-            problems += _photo_problems(name, json.loads(line), i, layout)
+            parsed = json.loads(line)
+            problems += _photo_problems(name, parsed, i, layout)
+            names.append(parsed["image"])
         raw += lines
     if missing:
         problems.insert(0, f"{name}: tasks {_spans(missing)} not made (no record)")
-    sidecars = [json.loads(line) for line in raw]
 
     folder = images_dir(name)
     expected = {make.image_name(i)[:-4] for i in range(layout.size(name))}
@@ -452,13 +527,15 @@ def check_set(name: str, layout: Layout = LAYOUT, workers: int = 1) -> dict:
                         ("label files", _stems(derived.label_path(folder / "x.jpg").parent, ".txt"))):
         if extra := sorted(files - expected):
             problems.append(f"{name}: {len(extra)} {kind} beyond the set's {len(expected)}, e.g. {extra[0]}")
-    jobs = [(str(folder / s["image"]), line) for s, line in zip(sidecars, raw)]
+    jobs = [(str(folder / image), line) for image, line in zip(names, raw)]
     hashes: dict[str, dict] = {"images": {}, "labels": {}}
     size = 0
-    for s, (found, image_hash, label_hash, n_bytes) in zip(sidecars, _map(_verify, jobs, workers)):
+    for image, (found, image_hash, label_hash, n_bytes) in zip(names, _map(_verify, jobs, workers)):
         problems += found
-        hashes["images"][s["image"]], hashes["labels"][s["image"][:-4] + ".txt"] = image_hash, label_hash
+        hashes["images"][image], hashes["labels"][image[:-4] + ".txt"] = image_hash, label_hash
         size += n_bytes
+    del jobs
+    sidecars = [json.loads(line) for line in raw]
     problems += _guard_problems(name, sidecars, layout)
     font_hashes, found = _font_hashes(name)
     problems += found
@@ -467,46 +544,106 @@ def check_set(name: str, layout: Layout = LAYOUT, workers: int = 1) -> dict:
                 for r in records}
     if len(versions) > 1:
         problems.append(f"{name}: its tasks were made by {len(versions)} different versions of the code")
-    if name == "synth-val":
+    if name in STRATA:
         shares = {stratum: checked_shares([s for s in sidecars if s.get("stratum") == stratum], spec)
-                  for stratum, spec in SYNTH_VAL}
+                  for stratum, spec in STRATA[name]}
         off = [f"{stratum}: {r['what']}" for stratum, rows in shares.items() for r in rows if not r["ok"]]
     else:
-        shares = checked_shares(sidecars, GEN)
+        shares = checked_shares(sidecars, train_spec(name))
         off = [r["what"] for r in shares if not r["ok"]]
     problems += [f"{name}: share off the spec: {what}" for what in off]
+    sizes, found = size_check(name, sidecars, layout)
+    problems += found
 
     complete = not problems and len(sidecars) == layout.size(name)
     sidecar_text = "".join(f"{line}\n" for line in raw)
-    lists = {"gen50k": layout.gen, "gen10k": layout.gen10k} if name == "gen" else {"synth_val": layout.size(name)}
+    lists = layout.lists(name)
     manifest = {
         "set": name, "complete": complete, "problem_count": len(problems), "problems": problems[:100],
         "photos": len(sidecars), "expected": layout.size(name), "lists": lists, "seed": SET_SEEDS[name],
         "layout": asdict(layout), "spec_sha256": spec_sha256(name),
-        "spec": spec_dict(GEN) if name == "gen" else {stratum: spec_dict(spec) for stratum, spec in SYNTH_VAL},
+        "spec": ({stratum: spec_dict(spec) for stratum, spec in STRATA[name]} if name in STRATA
+                 else spec_dict(train_spec(name))),
         **({"strata": {stratum: {"photos": layout.per_stratum, "spec_sha256": spec_hash(spec)}
-                       for stratum, spec in SYNTH_VAL}} if name == "synth-val" else {}),
+                       for stratum, spec in STRATA[name]}} if name in STRATA else {}),
         "made_by": [json.loads(v) for v in sorted(versions)],
         "made_in_runs": sorted({r["run"] for r in records if r.get("run")}),
         "checked_at": runs.git_state(), "fonts": font_hashes,
         "bytes": {"images": size, "sidecar": len(sidecar_text.encode())},
         "sidecar_sha256": _sha256(sidecar_text.encode()),
         "timing": timing_of(records), "counts": counts(sidecars), "shares": shares,
+        **({"sizes": sizes} if sizes is not None else {}),
     }
     if complete:
         _write_set(name, layout, sidecar_text, lists)
-    m2.manifest_path(name).parent.mkdir(parents=True, exist_ok=True)
-    runs.write_json(m2.manifest_path(name), manifest)
+    path = home(name).manifest_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    runs.write_json(path, manifest)
     return {"manifest": manifest, "hashes": hashes}
+
+
+def size_check(name: str, sidecars: Sequence[dict], layout: Layout = LAYOUT) -> tuple[dict | None, list[str]]:
+    """M2b's sizes, measured on what was drawn, and what is wrong with them
+    (None and nothing for M2's sets, whose manifests stay as they were).
+    gen-v2: its untilted dates in the store's bands (make.date_sizes with
+    tilted=False: the store has no tilted date, M2b S8), each band's share
+    as share_ok holds a share to v1-train's (within SHARE_POINTS, or
+    SHARE_SE standard errors on a small sample), and their median within
+    SIZE_MEDIAN of v1-train's, or on a small sample with the share of dates
+    under it within SHARE_SE standard errors of a half (make.STORE_SIZES).
+    At gen-v2's 200,000 photos that is the plan's 3 points and 0.1 points.
+    Tilted dates are recorded beside them. A validation set's strata, which
+    keep M2's sizes (synth-val-v2's): every placed block's digits in its
+    band, as M2's print_height draws them, a shrunk block's at
+    spec.compose.shrink of that."""
+    if home(name) is m2:
+        return None, []
+    problems: list[str] = []
+    if name not in STRATA:
+        sizes = make.date_sizes(sidecars, tilted=False)
+        untilted, n = make.size_bands(sizes), len(sizes)
+        for what, store in make.STORE_SIZES.items():
+            if not n:
+                ok = False
+            elif what == "median":
+                under = float(np.mean(np.asarray(sizes) < store))
+                ok = abs(untilted[what] - store) <= SIZE_MEDIAN or abs(under - 0.5) <= SHARE_SE * 0.5 / math.sqrt(n)
+            else:
+                ok = share_ok({"spec": store, "measured": untilted[what], "n": n})
+            if not ok:
+                problems.append(f"{name}: untilted dates' sizes off the store's: {what} {untilted[what]}, "
+                                f"v1-train's {store}")
+        return {"untilted": untilted, "all": make.size_bands(make.date_sizes(sidecars)),
+                "store": make.STORE_SIZES}, problems
+    out = {}
+    for stratum, spec in STRATA[name]:
+        blocks = [b for s in sidecars if s.get("stratum") == stratum for b in s["blocks"]]
+        outside = sum(not _digits_in_band(b, spec) for b in blocks)
+        heights = [b["print_height"] for b in blocks]
+        out[stratum] = {"blocks": len(blocks), "outside_band": outside,
+                        "digits_median": round(float(np.median(heights)), 5) if heights else None}
+        if outside:
+            problems.append(f"{name}: {stratum}: {outside} of {len(blocks)} blocks' digits outside their band")
+    return out, problems
+
+
+def _digits_in_band(block: dict, spec: GenSpec) -> bool:
+    """A block drawn at M2's sizes: its digits over the photo's long side
+    (rounded to 5 places in the sidecar) inside its band's range, times
+    spec.compose.shrink if it shrank to find a place."""
+    lo, hi = getattr(spec.size, block["band"])
+    scale = spec.compose.shrink if block["shrunk"] else 1.0
+    return lo * scale - 1e-5 <= block["print_height"] <= hi * scale + 1e-5
 
 
 def _write_set(name: str, layout: Layout, sidecar_text: str, lists: dict[str, int]) -> None:
     """The joined sidecar and the lists (absolute paths), before the
     manifest that vouches for them."""
-    m2.sidecar_path(m2.GENERATED_SETS[name]).write_text(sidecar_text)
+    where = home(name)
+    where.sidecar_path(where.GENERATED_SETS[name]).write_text(sidecar_text)
     images = [images_dir(name) / make.image_name(i) for i in range(layout.size(name))]
     for list_name, n in lists.items():
-        derived.write_list(m2.list_path(list_name), images[:n])     # gen10k: gen50k's first 10,000
+        derived.write_list(where.list_path(list_name), images[:n])     # gen10k: gen50k's first 10,000
 
 
 def _stems(folder: Path, suffix: str) -> set[str]:
@@ -532,8 +669,9 @@ def timing_of(records: Sequence[dict]) -> dict:
 
 
 def check(layout: Layout = LAYOUT, workers: int = 1) -> dict[str, dict]:
-    """Check both sets; see check_set."""
-    return {name: check_set(name, layout, workers) for name in SETS}
+    """Check a layout's two sets (M2's, or M2b's with LAYOUT_V2); see
+    check_set."""
+    return {name: check_set(name, layout, workers) for name in layout.sets}
 
 
 def passed(results: dict[str, dict]) -> bool:
