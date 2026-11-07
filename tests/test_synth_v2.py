@@ -124,20 +124,21 @@ def test_gen_v2s_line_spacing_changes_nothing_for_m2s_kinds(style):
         assert a.bit_generator.state == b.bit_generator.state
 
 
-def _sample_files():
-    """S5's sample on disk (images, sidecar lines) and its background pool,
-    or None where there is none: no ExpDate, fonts or sample."""
+def _sample_files(name: str = "gen-sample", spec_sha256: str = GEN_SHA256):
+    """A 500-photo sample on disk (images, sidecar lines): S5's (M2's
+    gen-sample) or S8's (gen-v2-sample), or None where there is none: no
+    ExpDate, fonts or sample, or one made from another spec."""
     if not fonts.fetched():
         return None
     try:
-        from bestbefore import m2
         from bestbefore.synth import batch
-        images = batch.images_dir("gen-sample")
-        lines = m2.sidecar_path(m2.GENERATED_SETS["gen-sample"]).read_text().splitlines()
-        manifest = json.loads(m2.manifest_path("gen-sample").read_text())
+        home = batch.home(name)
+        images = batch.images_dir(name)
+        lines = home.sidecar_path(home.GENERATED_SETS[name]).read_text().splitlines()
+        manifest = json.loads(home.manifest_path(name).read_text())
     except (RuntimeError, OSError):
         return None
-    if len(lines) != 500 or manifest["spec_sha256"] != GEN_SHA256:
+    if len(lines) != 500 or manifest["spec_sha256"] != spec_sha256:
         return None
     return images, lines
 
@@ -145,35 +146,41 @@ def _sample_files():
 _remade: dict = {}
 
 
-def _remake_start(pool) -> None:
+def _remake_start(pool, spec=GEN, seed=SET_SEEDS["gen-sample"]) -> None:
     import cv2
     cv2.setNumThreads(1)
-    _remade["pool"] = pool
+    _remade.update(pool=pool, spec=spec, seed=seed)
 
 
 def _remake(i: int) -> tuple[int, bytes, str, str]:
     from bestbefore.synth import make
-    made = make.make_one(i, GEN, _remade["pool"], SET_SEEDS["gen-sample"])
+    made = make.make_one(i, _remade["spec"], _remade["pool"], _remade["seed"])
     return i, made.jpeg, made.labels, json.dumps(made.sidecar, separators=(",", ":"))
 
 
-@pytest.mark.skipif(_sample_files() is None, reason="needs ExpDate, the fonts and S5's gen-sample on disk")
-def test_s5s_500_photo_sample_is_remade_byte_for_byte():
-    """Every JPEG, label file and sidecar line of S5's sample (made with
-    M2's code), made again with GEN, in memory: nothing is written."""
+def _remade_differ(name: str, spec, images, lines) -> list:
+    """Each photo of a sample on disk made again in memory (nothing is
+    written), on 4 processes: the (photo, file) pairs that differ."""
     from bestbefore import derived
     from bestbefore.synth import batch, make
-    images, lines = _sample_files()
-    pool = batch.load_pools(["gen-sample"])["gen-sample"]
+    pool = batch.load_pools([name])[name]
     differ = []
-    with get_context("spawn").Pool(4, initializer=_remake_start, initargs=(pool,)) as workers:
-        for i, jpeg, labels, line in workers.imap(_remake, range(500), chunksize=8):
+    with get_context("spawn").Pool(4, initializer=_remake_start, initargs=(pool, spec, SET_SEEDS[name])) as workers:
+        for i, jpeg, labels, line in workers.imap(_remake, range(len(lines)), chunksize=8):
             path = images / make.image_name(i)
             for what, ok in (("jpeg", jpeg == path.read_bytes()),
                              ("labels", labels == derived.label_path(path).read_text()),
                              ("sidecar", line == lines[i])):
                 if not ok:
                     differ.append((i, what))
+    return differ
+
+
+@pytest.mark.skipif(_sample_files() is None, reason="needs ExpDate, the fonts and S5's gen-sample on disk")
+def test_s5s_500_photo_sample_is_remade_byte_for_byte():
+    """Every JPEG, label file and sidecar line of S5's sample (made with
+    M2's code), made again with GEN, in memory: nothing is written."""
+    differ = _remade_differ("gen-sample", GEN, *_sample_files())
     assert not differ, differ[:10]
 
 
@@ -1323,3 +1330,258 @@ def test_the_gen_v2_sample_is_made_with_gen_v2_apart_from_m2s(load_script, fake_
     assert deciles[0] == "size: decile 1 of 10" and len(deciles) == 10
     assert (tmp_path / "runs").is_dir() and any(d.name.endswith("m2b-generate-gen-v2-sample")
                                                 for d in (tmp_path / "runs").iterdir())
+
+
+# === S9: synth-val-v2's strata, at M2's sizes ==================================================
+#
+# Each stratum is M2's clean (nozzle-rows: M2's dot-matrix stratum) drawn by
+# gen-v2's code with every new thing off and M2's sizes, then one thing on.
+# Its sizes must be M2's clean's, the normal band on the digits, or it
+# wouldn't compare with M2's strata: a v2 spec draws the store's sizes
+# unless its v2.size is None.
+
+def _leaves(spec, prefix="") -> dict:
+    from dataclasses import fields, is_dataclass
+    out = {}
+    for f in fields(spec):
+        value = getattr(spec, f.name)
+        out |= _leaves(value, f"{prefix}{f.name}.") if is_dataclass(value) else {f"{prefix}{f.name}": value}
+    return out
+
+
+def _changed(spec, base) -> list[str]:
+    a, b = _leaves(spec), _leaves(base)
+    return sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))
+
+
+def test_gen_v2s_specs_say_whose_sizes_they_draw():
+    from bestbefore.synth.spec import CLEAN_V2, GEN_V2, SYNTH_VAL_V2, V2Size
+    assert make.store_sized(GEN_V2) and not make.store_sized(GEN) and not make.store_sized(CLEAN_V2)
+    assert not any(make.store_sized(spec) for _, spec in SYNTH_VAL_V2)
+    assert spec_hash(GEN_V2) == "2c8b24d5ec86c565a66f47ceaa0f61cfc91785a1bc578817ea0b71a2578c9a7b"   # S8's sample's
+    assert spec_dict(replace(GEN_V2, v2=replace(V2, size=None)))["v2"]["size"] is None
+    assert V2.size == V2Size()
+
+
+def test_synth_val_v2s_strata_each_change_one_thing_from_m2s_clean():
+    from bestbefore.synth.spec import CLEAN, CLEAN_V2, SYNTH_VAL_V2
+    assert [name for name, _ in SYNTH_VAL_V2] == ["upside-down", "glued", "line-pair", "dense-panel", "window",
+                                                  "embossed", "worn", "nozzle-rows"]
+    # the base: M2's clean, every new thing off and M2's sizes
+    assert replace(CLEAN_V2, v2=None) == CLEAN
+    assert sorted({k.split(".")[0] if k.startswith("size") else k for k in _changed(CLEAN_V2.v2, V2)}) == \
+        ["compose.worn", "size", "style.nozzle", "text.glued"]
+    assert (CLEAN_V2.v2.text.glued, CLEAN_V2.v2.compose.worn, CLEAN_V2.v2.style.nozzle, CLEAN_V2.v2.size) == \
+        (0.0, 0.0, 0.0, None)
+    dot_matrix = replace(dict(SYNTH_VAL)["dot-matrix"], v2=CLEAN_V2.v2)
+    changed = {name: _changed(spec, dot_matrix if name == "nozzle-rows" else CLEAN_V2) for name, spec in SYNTH_VAL_V2}
+    assert changed == {"upside-down": ["geometry.orientation"],
+                       "glued": ["text.single_word", "v2.text.glued"],        # a glued date needs its word
+                       "line-pair": ["text.kinds"], "dense-panel": ["text.kinds"],
+                       "window": ["style.styles"], "embossed": ["style.styles"],
+                       "worn": ["style.styles", "v2.compose.worn"],          # solid only: labels aren't worn
+                       "nozzle-rows": ["v2.style.nozzle"]}
+    spec = dict(SYNTH_VAL_V2)
+    assert spec["glued"].text.single_word == 1.0 and spec["glued"].v2.text.glued == 1.0
+    assert spec["worn"].style.styles == (("solid", 1.0),) and spec["worn"].v2.compose.worn == 1.0
+    assert spec["upside-down"].geometry.orientation == (("upside-down", 1.0),)
+    assert spec["nozzle-rows"].style.styles == (("dot-matrix", 1.0),) and spec["nozzle-rows"].v2.style.nozzle == 1.0
+    for name, s in SYNTH_VAL_V2:        # every one a validation set's: held-out fonts, val photos, one target
+        assert s.fonts == "held-out" and s.backgrounds == (("val", 1.0),), name
+        assert s.text.single_role == "target" and s.compose.two_blocks == 0 and s.compose.block_tries == 10, name
+        assert s.size.bands == (("normal", 1.0),) and s.v2.size is None, name       # clean's sizes
+        assert (s.camera, s.compose, s.text.month_word) == (CLEAN.camera, CLEAN.compose, 0.0), name
+    assert strata_hash(SYNTH_VAL_V2) != strata_hash() == STRATA_SHA256
+    assert SET_SEEDS["gen-v2"] == 4 and SET_SEEDS["synth-val-v2"] == 5 and len(set(SET_SEEDS.values())) == len(SET_SEEDS)
+
+
+def test_a_line_pairs_or_dense_panels_target_is_one_of_its_dates():
+    from bestbefore.synth.spec import SYNTH_VAL_V2
+    strata = dict(SYNTH_VAL_V2)
+    for name in ("line-pair", "dense-panel"):
+        rng, place = np.random.default_rng(5), Counter()
+        for _ in range(3000):
+            block = T.random_block(rng, strata[name].text, strata[name].v2.text)
+            dates = [t for t in block.tokens if t.cls == "date"]
+            assert [t.role for t in dates].count("target") == 1 and len(dates) >= 2, block
+            others = {t.role for t in dates if t.role != "target"}
+            assert others <= {"mfg", "expiry", "import"}
+            place[len(dates), [t.role for t in dates].index("target")] += 1
+        for (n, k), count in place.items():              # each of its dates equally likely
+            assert abs(count / sum(c for (m, _), c in place.items() if m == n) - 1 / n) < 0.05, (name, n, k)
+    for name in ("upside-down", "glued", "window", "worn"):         # a single line's date is the target already
+        block = T.random_block(np.random.default_rng(1), strata[name].text, strata[name].v2.text)
+        assert [t.role for t in block.tokens if t.cls == "date"] == ["target"]
+    rng = np.random.default_rng(2)                       # gen-v2's own blocks have no target
+    assert not any(t.role == "target" for _ in range(2000) for t in T.random_block(rng, TEXT_V2, V2.text).tokens)
+
+
+def _strata_photos(pool, per: int = 6, spec_of=lambda s: s):
+    """`per` photos of each synth-val-v2 stratum, made in memory as task 200
+    makes them (set seed 5, photo i of the stratum's block of 300)."""
+    from bestbefore.synth.spec import SYNTH_VAL_V2
+    return {name: [make.make_one(300 * k + i, spec_of(spec), pool, SET_SEEDS["synth-val-v2"], stratum=name)
+                   for i in range(per)] for k, (name, spec) in enumerate(SYNTH_VAL_V2)}
+
+
+@pytest.fixture(scope="module")
+def val_pool(tmp_path_factory):
+    """synth-val-v2's backgrounds: conftest's made-up validation photos,
+    loaded through the real guards."""
+    from conftest import build_fake_expdate
+
+    from bestbefore.synth.spec import CLEAN_V2
+    with pytest.MonkeyPatch.context() as mp:
+        build_fake_expdate(tmp_path_factory.mktemp("expdate"), mp)
+        return compose.load_backgrounds(CLEAN_V2.backgrounds, CLEAN_V2.compose.min_side)
+
+
+@needs_fonts
+def test_a_stratums_digits_fall_in_cleans_band(val_pool):
+    """Every block of every stratum is drawn at M2's normal band, its digits
+    1.5 to 4.5% of the photo's long side: the height make_one drew for it
+    with M2's print_height, from the photo's own generator (or, after 10
+    blocks found no place, a fresh one in the band), and a shrunk block 0.8
+    of it, as M2's. Nothing of the store's sizes is drawn."""
+    from bestbefore.synth.spec import SYNTH_VAL_V2
+    lo, hi = GEN.size.normal
+    strata = dict(SYNTH_VAL_V2)
+    for name, made in _strata_photos(val_pool).items():
+        for m in made:
+            s = m.sidecar
+            rng = np.random.default_rng(s["seed"])
+            rng.random()                                       # one block or two (synth-val: always one)
+            band, height = compose.print_height(rng, strata[name].size)
+            assert band == "normal" and lo <= height <= hi
+            long_side = max(s["size"])
+            first = len(s["skipped"]) < strata[name].compose.block_tries      # placed at the first size
+            for b in s["blocks"]:
+                scale = GEN.compose.shrink if b["shrunk"] else 1.0
+                assert b["band"] == "normal" and lo * scale - 1e-5 <= b["print_height"] <= hi * scale + 1e-5
+                if first:
+                    assert b["print_height"] == round(height * scale, 5), (name, b)
+                    assert b["size"] == pytest.approx(height * scale * long_side, abs=0.006)
+                assert not {"decile", "target", "reached", "fits", "drawings"} & set(b) and b["lines"] >= 1
+            for k in s["skipped"]:
+                assert k["band"] == "normal" and "target" not in k and k["size"] > 0
+            assert m.labels == make.label_text(s)
+    store = replace(strata["window"], v2=replace(strata["window"].v2, size=V2.size))    # without None: the store's
+    assert all({"decile", "target"} <= set(b) for b in make.make_one(1200, store, val_pool, 5).sidecar["blocks"])
+
+
+@needs_fonts
+def test_a_block_at_m2s_sizes_is_drawn_once_at_its_digits(monkeypatch):
+    """At M2's sizes a gen-v2 block is drawn at the digits asked, once, and
+    keeps that drawing whatever its box (no correction to a box), as a
+    tilted block is; a drawing that lost its ink is drawn from fresh
+    draws."""
+    from bestbefore.synth.spec import CLEAN_V2
+    rng = np.random.default_rng(103)
+    for style in ("solid", "label"):
+        block = T.random_block(rng, CLEAN_V2.text, CLEAN_V2.v2.text)
+        drawn = make._sized(block, style, fonts.random_family(rng, "held-out"), 21.0, 1.0, FLAT, rng, CLEAN_V2)
+        assert drawn.layer.params["size"] == pytest.approx(21.0)
+        assert drawn.sizing["digits"] == 21.0 and drawn.sizing["fits"] is None and drawn.sizing["drawings"] == 1
+    calls = []
+    monkeypatch.setattr(make, "draw_v2", _boxes_of([60], calls))
+    block = T.Block(((T.Token("08/2027", "date", "target"),),), "single")
+    drawn = make._sized(block, "solid", None, 10.0, 1.0, FLAT, np.random.default_rng(0), CLEAN_V2)
+    assert calls == [(10.0, calls[0][1])] and drawn.sizing == {"digits": 10.0, "reached": 60, "fits": None,
+                                                                "drawings": 1, "tries": 1}
+
+
+@needs_fonts
+def test_every_stratum_photo_has_one_target_and_its_shares_are_exact(val_pool):
+    """One target per photo (a line-pair's or dense panel's among its other
+    dates, which stay dates), loading as exp; and every share a stratum
+    fixes at 0 or 1 is exactly that in what was drawn."""
+    from bestbefore import derived
+    from bestbefore.samples import Sample
+    from bestbefore.synth import batch
+    from bestbefore.synth.spec import SYNTH_VAL_V2
+    strata = dict(SYNTH_VAL_V2)
+    for name, made in _strata_photos(val_pool).items():
+        sidecars = [m.sidecar for m in made]
+        for m in made:
+            dates = [t for b in m.sidecar["blocks"] for t in b["tokens"] if t["cls"] == "date"]
+            assert [t["role"] for t in dates].count("target") == 1 and m.sidecar["stratum"] == name
+            assert len(dates) == 1 if name not in ("line-pair", "dense-panel") else len(dates) >= 2
+            w, h = m.sidecar["size"]
+            sample = Sample(m.name, m.name, w, h, tuple(make.label_boxes(m.sidecar)))
+            assert [b.label for b in derived.with_targets(sample, m.sidecar).boxes].count("exp") == 1
+        rows = make.shares(sidecars, strata[name])
+        fixed = [r for r in rows if r["spec"] in (0, 1) and r["measured"] is not None]
+        assert fixed and all(batch.share_ok(r) for r in fixed), (name, [r for r in fixed if not batch.share_ok(r)])
+        assert not any(r["what"].startswith("size: decile") for r in rows)
+        hits = {r["what"]: r["measured"] for r in rows}
+        assert hits["band: normal"] == 1.0
+    one = {name: {r["what"]: r["measured"] for r in make.shares([m.sidecar for m in made], strata[name])}
+           for name, made in _strata_photos(val_pool, per=3).items()}
+    assert one["upside-down"]["orientation: upside-down"] == 1.0 and one["glued"]["orientation: upright"] == 1.0
+    assert one["glued"]["glued: of words printed before a date"] == 1.0
+    assert one["line-pair"]["glued: of words printed before a date"] == 0.0         # no glue but the glued stratum's
+    assert one["window"]["style: window"] == 1.0 and one["embossed"]["style: embossed"] == 1.0
+    assert one["worn"]["worn patch (solid, dot-matrix, window)"] == 1.0
+    assert one["upside-down"]["worn patch (solid, dot-matrix, window)"] in (0.0, None)
+    assert one["nozzle-rows"]["dot-matrix: nozzle rows"] == 1.0 and one["nozzle-rows"]["style: dot-matrix"] == 1.0
+
+
+@pytest.mark.skipif(_sample_files("gen-v2-sample", "2c8b24d5ec86c565a66f47ceaa0f61cfc91785a1bc578817ea0b71a2578c9a7b")
+                    is None, reason="needs ExpDate, the fonts and S8's gen-v2-sample on disk")
+def test_s8s_gen_v2_sample_is_remade_byte_for_byte():
+    """gen-v2 draws as S8 drew it: every JPEG, label file and sidecar line of
+    S8's 500-photo sample, made again with GEN_V2, in memory."""
+    from bestbefore.synth.spec import GEN_V2
+    differ = _remade_differ("gen-v2-sample", GEN_V2, *_sample_files("gen-v2-sample", spec_hash(GEN_V2)))
+    assert not differ, differ[:10]
+
+
+def test_an_import_date_counts_by_its_word_even_as_the_target():
+    """In synth-val-v2 a line-pair's or dense panel's import date may be the
+    target, its role then "target": the share rows find it by its word
+    (S9's trial measured a quarter, half the spec, by role)."""
+    pair = _placed("line-pair", "solid", [("MFG:", "prod"), ("02/2025", "date", "mfg", True), ("|", None),
+                                          ("IMPORT:", "prod"), ("03/2025", "date", "target", True)])
+    dense = _placed("dense-panel", "solid", [("MFG", "prod"), ("01/25", "date", "mfg", True), ("L 12345", "code"),
+                                             ("Imported on:", "prod"), ("03/25", "date", "target", True),
+                                             ("EXP:", "due"), ("01/27", "date", "expiry", True)], lines=4)
+    rows = {}
+    make._v2_shares(lambda what, spec, hits: rows.__setitem__(what, list(hits)), [pair, dense], V2_PRINT)
+    assert rows["line-pairs: an import date"] == [True] and rows["dense panels: an import line"] == [True]
+    assert set(T.IMPORT).isdisjoint(T.PROD + T.DUE)                  # no other word is an import word
+
+
+@needs_fonts
+def test_a_strata_block_without_a_place_is_drawn_at_a_fresh_size_after_10_tries(val_pool, monkeypatch):
+    """The owner's call (S9): synth-val-v2's block that finds no place in
+    its 10 fresh draws is drawn at a fresh size in its band, 10 more times,
+    and so on, so every photo keeps its target. M2's synth-val keeps one
+    size through its 10 draws, and gen-v2 draws one block, as before."""
+    from bestbefore.synth.spec import CLEAN, GEN_V2, SYNTH_VAL_V2
+    real, sizes = make._place, []
+
+    def fails(n):
+        def place(block, style, family, size, *args, **kwargs):
+            sizes.append(size)
+            drawn, spot = real(block, style, family, size, *args, **kwargs)
+            return (drawn, None) if len(sizes) <= n else (drawn, spot)
+        return place
+
+    line_pair = dict(SYNTH_VAL_V2)["line-pair"]
+    assert make.fresh_sizes(line_pair) and not make.fresh_sizes(CLEAN) and not make.fresh_sizes(GEN_V2)
+    monkeypatch.setattr(make, "_place", fails(25))
+    s = make.make_one(600, line_pair, val_pool, 5, stratum="line-pair").sidecar
+    assert len(sizes) == 26 and len(s["skipped"]) == 25 and len(s["blocks"]) == 1
+    assert len(set(sizes[:10])) == 1 and len(set(sizes[10:20])) == 1 and len(set(sizes[20:])) == 1
+    assert len({sizes[0], sizes[10], sizes[20]}) == 3                       # a fresh size every 10 draws
+    long_side = max(s["size"])
+    assert all(0.015 <= x / long_side <= 0.045 for x in sizes)              # each in clean's band
+    assert [k["size"] for k in s["skipped"]] == [round(x, 2) for x in sizes[:25]]
+    sizes.clear()
+    monkeypatch.setattr(make, "_place", fails(10 * make.FRESH_SIZES))       # never a place: no target, as M2's
+    s = make.make_one(600, line_pair, val_pool, 5, stratum="line-pair").sidecar
+    assert len(sizes) == 100 and not s["blocks"] and len(s["skipped"]) == 100
+    sizes.clear()
+    monkeypatch.setattr(make, "_place", fails(1000))
+    s = make.make_one(0, CLEAN, val_pool, 2, stratum="clean").sidecar        # M2's synth-val: one size, 10 draws
+    assert len(sizes) == 10 and len(set(sizes)) == 1 and not s["blocks"]

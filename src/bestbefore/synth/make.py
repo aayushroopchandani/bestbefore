@@ -21,8 +21,10 @@ its unworn twin share every other draw: its boxes come from the twin, the
 ink before the wear. Its size is the store's (spec.V2Size): a target for
 its first date's box, drawn before the background, which a first drawing
 measures and a second, from the same number, hits (draw_to_size); a tilted
-block keeps its first drawing, whose digits are an upright block's. Without
-v2 every draw is M2's.
+block keeps its first drawing, whose digits are an upright block's. A v2
+spec whose size is None (synth-val-v2's strata, M2b S9) keeps M2's sizes:
+a band and its digits' height, drawn once at that height as a tilted
+block is. Without v2 every draw is M2's.
 """
 from __future__ import annotations
 
@@ -95,21 +97,54 @@ def image_name(i: int) -> str:
     return f"{i:06d}.jpg"
 
 
+def store_sized(spec: GenSpec) -> bool:
+    """Whether a spec draws gen-v2's sizes, the store's (spec.V2Size), rather
+    than M2's bands on the digits: a v2 spec with a size (synth-val-v2's
+    strata have none)."""
+    return spec.v2 is not None and spec.v2.size is not None
+
+
+# synth-val-v2 (M2b S9, the owner's call): a stratum's block that finds no
+# place in block_tries fresh draws at its size is drawn at a fresh size from
+# the same band, block_tries more times, up to this many sizes. At clean's
+# sizes a whole line-pair can be wider than a narrow photo at any of its
+# draws: the trial left 5 of 300 line-pair photos without their target.
+FRESH_SIZES = 10
+
+
+def fresh_sizes(spec: GenSpec) -> bool:
+    """Whether a skipped block is drawn at fresh sizes too: only in a
+    validation set drawn by gen-v2's code at M2's sizes (synth-val-v2's
+    strata), whose every photo needs its target. M2's synth-val keeps a
+    block's size through its block_tries draws, and gen-v2 (block_tries 1)
+    draws no second block, so both draw as before."""
+    return spec.v2 is not None and not store_sized(spec) and spec.compose.block_tries > 1
+
+
+def _fresh_size(rng: np.random.Generator, want: tuple[str, float], spec: GenSpec) -> tuple[str, float]:
+    """M2's band of `want` and a fresh height in it, log-uniform as
+    compose.print_height draws one: the band, and so the background's
+    smallest side (min_side_small for small print), stays as chosen."""
+    band = want[0]
+    lo, hi = getattr(spec.size, band)
+    return band, float(np.exp(rng.uniform(math.log(lo), math.log(hi))))
+
+
 def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clock | None = None,
              stratum: str | None = None) -> Made:
     """Photo i of the set with seed `set_seed`: 1 or 2 blocks drawn onto a
     background, through the camera, saved as a JPEG. A block that finds no
     place, or whose ink stays too faint, is skipped; with
     spec.compose.block_tries above 1 a fresh block is drawn in its place
-    (synth-val, whose every photo needs its target). `stratum` (synth-val's)
-    goes into the sidecar."""
+    (synth-val, whose every photo needs its target; synth-val-v2's at fresh
+    sizes too, fresh_sizes). `stratum` (synth-val's) goes into the sidecar."""
     clock = clock or Clock()
     rng = np.random.default_rng([set_seed, i])
     c = spec.compose
     with clock("background"):
         # Sizes first: a photo with small print gets a background of at least min_side_small.
         wanted = range(2 if rng.random() < c.two_blocks else 1)
-        if spec.v2 is None:
+        if not store_sized(spec):   # M2's: a band and the digits' height in it, per block
             heights = [compose.print_height(rng, spec.size) for _ in wanted]
             small = any(band == "small" for band, _ in heights)
         else:                       # gen-v2: a decile of the store's date sizes and a target in it, per block
@@ -122,8 +157,11 @@ def make_one(i: int, spec: GenSpec, pool: Backgrounds, set_seed: int, clock: Clo
         surface = Surface(photo, c)
     taken = compose.box_rects(bg.boxes, width, height)
     blocks, skipped = [], []
+    renew = fresh_sizes(spec)
     for want in heights:
-        for _ in range(c.block_tries):
+        for k in range(c.block_tries * (FRESH_SIZES if renew else 1)):
+            if renew and k and k % c.block_tries == 0:          # gen-v2's validation strata: a fresh size
+                want = _fresh_size(rng, want, spec)
             placed, skip = _block(want, max(width, height), photo, surface, taken, rng, spec, clock)
             if placed is None:
                 skipped.append(skip)
@@ -154,13 +192,14 @@ def _block(want: tuple, long_side: int, photo: np.ndarray, surface: Surface, tak
     """One block drawn, placed and inked onto the photo: its sidecar record,
     or None and why it was skipped (then the photo is left as it was).
     `want` is M2's (band, print height: the digits') or gen-v2's (decile,
-    target: its first date's box), as shares of the photo's long side."""
-    c, v2 = spec.compose, spec.v2
+    target: its first date's box), as shares of the photo's long side. A v2
+    spec without a size (store_sized) takes M2's."""
+    c, v2, store = spec.compose, spec.v2, store_sized(spec)
     block = text.random_block(rng, spec.text, None if v2 is None else v2.text)
     style = render.random_style(rng, spec.style)
     family = fonts.random_family(rng, spec.fonts)
     geometry = warp.random_geometry(rng, spec.geometry, None if v2 is None else v2.geometry)
-    if v2 is None:
+    if not store:
         band, fraction = want
         size = fraction * long_side                 # the digits' height
     else:
@@ -168,7 +207,7 @@ def _block(want: tuple, long_side: int, photo: np.ndarray, surface: Surface, tak
         band = "small" if target < v2.size.small else "normal"
         size = target * long_side                   # the first date's box, its short side
     drawn, spot = _place(block, style, family, size, geometry, surface, taken, rng, spec, clock)
-    skip = ({"kind": block.kind, "style": style, "band": band, "size": round(size, 2)} if v2 is None else
+    skip = ({"kind": block.kind, "style": style, "band": band, "size": round(size, 2)} if not store else
             {"kind": block.kind, "style": style, "band": band, "decile": decile, "target": round(target, 5)})
     if spot is None:
         return None, skip | {"why": "no free place" if drawn else "a boxed token kept no ink"}
@@ -192,7 +231,9 @@ def _block(want: tuple, long_side: int, photo: np.ndarray, surface: Surface, tak
         "tokens": [_token(t, None if b is None else [x + b[0], y + b[1], x + b[2], y + b[3]], v2 is not None)
                    for t, b in zip(block.tokens, drawn.boxes)]}
     if v2 is not None:
-        record |= {"lines": len(block.lines), "decile": decile, "target": round(target, 5),
+        record["lines"] = len(block.lines)
+    if store:
+        record |= {"decile": decile, "target": round(target, 5),
                    "reached": round(drawn.sizing["reached"] / max(width, height), 5),
                    "fits": drawn.sizing["fits"], "drawings": drawn.sizing["drawings"]}
     return record, None
@@ -246,7 +287,8 @@ def _sized(block: Block, style: str, family: fonts.Family, target: float, scale:
     """gen-v2's block drawn to its target: up to spec.compose.redraws tries,
     each from fresh draws (one number from the photo's generator) and each
     ended as soon as its first date's box fits (draw_to_size), or, for a
-    tilted block, which has no box to fit, as soon as it kept its ink. It
+    tilted block, which has no box to fit, or one drawn at M2's sizes, whose
+    `target` is its digits' height, as soon as it kept its ink. It
     keeps the drawing closest to the target among those that kept every
     boxed token's ink: a box that grows in steps may fit no size. None if
     no try kept that ink. Its `redraws` is the try it kept, counted from 0."""
@@ -276,10 +318,12 @@ def draw_to_size(block: Block, style: str, family: fonts.Family, target: float, 
     (spec.v2.size.corrections drawings in all). A tilted block
     (spec.v2.size.by_digits) keeps the first drawing: its digits are an
     upright block's, its box whatever its tilt makes it, and `fits` is
-    None. Returns the drawing closest to the target among those that kept
-    every boxed token's ink (None if none did) and its sizes: the digits
-    drawn, its first date's box in final pixels, whether that fits, and how
-    many drawings it took."""
+    None. So is a block of a spec that keeps M2's sizes (spec.v2.size None,
+    synth-val-v2's strata), whose `target` is its digits' height itself.
+    Returns the drawing closest to the target among those that kept every
+    boxed token's ink (None if none did) and its sizes: the digits drawn,
+    its first date's box in final pixels, whether that fits, and how many
+    drawings it took."""
     v = spec.v2.size
     boxed = [t.cls is not None for t in block.tokens]
     first = next(i for i, t in enumerate(block.tokens) if t.cls == "date")
@@ -287,13 +331,13 @@ def draw_to_size(block: Block, style: str, family: fonts.Family, target: float, 
     def whole(drawing: Drawing) -> bool:
         return not drawing.worn_out and all(box is not None for box, b in zip(drawing.boxes, boxed) if b)
 
-    digits = target / v.provisional
+    digits = target if v is None else target / v.provisional
     d = draw_v2(block, style, family, digits, geometry, seed, spec)
     best, sizing, n = None, {}, 1
     if d.boxes[first] is None:
         return best, {"drawings": n}
     measured = _short(d.boxes[first])
-    if geometry.orientation in v.by_digits:
+    if v is None or geometry.orientation in v.by_digits:
         return (d, {"digits": digits, "reached": measured, "fits": None, "drawings": n}) if whole(d) \
             else (None, {"drawings": n})
     for _ in range(v.corrections):
@@ -475,10 +519,10 @@ def shares(sidecars: Sequence[dict], spec: GenSpec) -> list[dict]:
     for name, share in spec.backgrounds:
         row(f"background from {name}", share, [s["background"]["list"] == name for s in sidecars])
     tables = (("kind", spec.text.kinds), ("style", spec.style.styles))
-    for field, table in tables + ((("band", spec.size.bands),) if spec.v2 is None else ()):
+    for field, table in tables + ((("band", spec.size.bands),) if not store_sized(spec) else ()):
         for name, share in table:
             row(f"{field}: {name}", share, [b[field] == name for b in drawn])
-    if spec.v2 is not None:                     # gen-v2's sizes: each decile of v1-train's date sizes alike
+    if store_sized(spec):                       # gen-v2's sizes: each decile of v1-train's date sizes alike
         n = len(spec.v2.size.deciles) - 1
         for k in range(n):
             row(f"size: decile {k + 1} of {n}", 1 / n, [b["decile"] == k for b in drawn])
@@ -524,20 +568,24 @@ def _v2_shares(row, placed: Sequence[dict], spec: GenSpec) -> None:
     """gen-v2's own shares (M2b S7, S8), over the placed blocks, whose
     tokens and records the sidecar keeps: the glued dates, the line-pairs'
     and dense panels' forms, the new distractors, nozzle rows, dotified
-    windows and worn patches."""
+    windows and worn patches. An import date is found by its word, which
+    always comes with it: in synth-val-v2 it may be the target, and then
+    its role says so (S9)."""
     v2 = spec.v2
     glued = [not t["space_before"] for b in placed for prev, t in zip(b["tokens"], b["tokens"][1:])
              if t["cls"] == "date" and prev["cls"] in ("due", "prod")]
     row("glued: of words printed before a date", v2.text.glued, glued)
+
+    def imported(block: dict) -> bool:
+        return any(t["cls"] == "prod" and t["text"] in text.IMPORT for t in block["tokens"])
+
     pairs = [b for b in placed if b["kind"] == "line-pair"]
-    row("line-pairs: an import date", v2.text.pair_import,
-        [any(t.get("role") == "import" for t in b["tokens"]) for b in pairs])
+    row("line-pairs: an import date", v2.text.pair_import, [imported(b) for b in pairs])
     for sep in v2.text.separators:
         row(f"line-pairs: separator {sep!r}", 1 / len(v2.text.separators),
             [b["tokens"][2]["text"] == sep.strip() for b in pairs])
     dense = [b for b in placed if b["kind"] == "dense-panel"]
-    row("dense panels: an import line", v2.text.dense_import,
-        [any(t.get("role") == "import" for t in b["tokens"]) for b in dense])
+    row("dense panels: an import line", v2.text.dense_import, [imported(b) for b in dense])
     lo, hi = v2.text.dense_lines
     for n in range(lo, hi + 1):
         row(f"dense panels: {n} more lines", 1 / (hi - lo + 1), [b["lines"] - 2 == n for b in dense])

@@ -407,7 +407,23 @@ def random_block(rng: np.random.Generator, spec: TextSpec = TEXT, v2: V2Text | N
     kind = pick(rng, spec.kinds)
     case = pick(rng, spec.case)
     fmt = choice(rng, RANGES) if kind == "range" else random_format(rng, spec)
-    return Block(tuple(_KINDS[kind](rng, spec, fmt, case, v2)), kind)
+    block = Block(tuple(_KINDS[kind](rng, spec, fmt, case, v2)), kind)
+    if spec.single_role == "target" and kind != "single":
+        block = with_target(rng, block)
+    return block
+
+
+def with_target(rng: np.random.Generator, block: Block) -> Block:
+    """A validation set's block of a kind with more than one date
+    (synth-val-v2's line-pairs and dense panels, M2b S9): one of its dates,
+    each equally likely, becomes the target; the others keep their roles.
+    A single line's date is the target already (TextSpec.single_role), so
+    M2's synth-val never draws this."""
+    dates = [(i, k) for i, line in enumerate(block.lines) for k, t in enumerate(line) if t.cls == "date"]
+    i, k = choice(rng, dates)
+    lines = [list(line) for line in block.lines]
+    lines[i][k] = replace(lines[i][k], role="target")
+    return replace(block, lines=tuple(tuple(line) for line in lines))
 
 
 def _literal(template: str) -> str:

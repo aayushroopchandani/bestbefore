@@ -13,7 +13,7 @@ V2Spec, in GenSpec.v2. It is None in M2's specs and left out of their hash
 (spec_dict), so GEN still hashes 3fc14178... and synth-val's strata
 ba77f1bd..., and every v2 feature draws its random numbers only when a
 spec's v2 is set. S7 wrote its text and line spacing; S8 adds its print,
-geometry and sizes.
+geometry and sizes; S9 synth-val-v2's strata, which keep M2's sizes.
 """
 from __future__ import annotations
 
@@ -47,7 +47,8 @@ class TextSpec:
     range_word: float = 0.70     # a range with an expiry word, as a single date
     relative_months: tuple[int, ...] = (6, 9, 12, 18, 24, 36)   # Best Before N months from Mfg.
     # Fixed in S6:
-    single_role: str = "expiry"  # a single line's date; synth-val's is its "target"
+    single_role: str = "expiry"  # a single line's date; synth-val's is its "target" (with it, a block
+    #                              of another kind has one of its dates as the target: M2b S9)
 
 
 @dataclass(frozen=True)
@@ -258,12 +259,14 @@ class V2Size:
 @dataclass(frozen=True)
 class V2Spec:
     """Everything gen-v2 adds to M2's spec, by the part of GenSpec it
-    extends: its text (S7), print, geometry, ink and sizes (S8)."""
+    extends: its text (S7), print, geometry, ink and sizes (S8). A size of
+    None keeps M2's sizes, GenSpec.size's bands on the digits (S9:
+    synth-val-v2's strata, which compare with M2's)."""
     text: V2Text = V2Text()
     style: V2Style = V2Style()
     geometry: V2Geometry = V2Geometry()
     compose: V2Compose = V2Compose()
-    size: V2Size = V2Size()
+    size: V2Size | None = V2Size()
 
 
 @dataclass(frozen=True)
@@ -305,9 +308,9 @@ V2 = V2Spec()
 GEN_V2 = replace(GEN, text=TEXT_V2, style=STYLE_V2, geometry=GEOMETRY_V2, v2=V2)
 
 # Photo i of a set is drawn from numpy.random.default_rng([seed, i]).
-# gen-v2-sample is M2b S8's 500 photos to look at (gen-v2 and synth-val-v2,
-# 4 and 5, are S9's).
-SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3, "gen-v2-sample": 6}
+# gen-v2-sample is M2b S8's 500 photos to look at; gen-v2 and synth-val-v2
+# are S9's.
+SET_SEEDS = {"gen": 1, "synth-val": 2, "gen-sample": 3, "gen-v2": 4, "synth-val-v2": 5, "gen-v2-sample": 6}
 
 
 # --- synth-val's strata (S6) ------------------------------------------------------------------
@@ -340,6 +343,32 @@ SYNTH_VAL = (
     ("dot-matrix", replace(CLEAN, style=replace(CLEAN.style, styles=(("dot-matrix", 1.0),)))),
     ("curved", replace(CLEAN, geometry=replace(CLEAN.geometry, surface=only(GEOMETRY.surface, "cylinder", "bend")))),
     ("mixed", _TARGET),
+)
+
+
+# --- synth-val-v2's strata (M2b S9) -----------------------------------------------------------
+# gen-v2's new kinds, one at a time. Each stratum is M2's clean (nozzle-rows:
+# M2's dot-matrix stratum) drawn by gen-v2's code with every new thing off
+# and M2's sizes (size None: the normal band on the digits), so it compares
+# with M2's strata; then it turns one thing on. Where that thing needs a
+# second number, the second only makes it possible: a glued date needs a
+# word before it, and a worn patch solid print (clean's labels are never
+# worn). In a line-pair or a dense panel the target is one of its dates.
+_V2_OFF = replace(V2, text=replace(V2.text, glued=0.0), style=replace(V2.style, nozzle=0.0),
+                  compose=replace(V2.compose, worn=0.0), size=None)
+CLEAN_V2 = replace(CLEAN, v2=_V2_OFF)
+SYNTH_VAL_V2 = (
+    ("upside-down", replace(CLEAN_V2, geometry=replace(CLEAN.geometry, orientation=(("upside-down", 1.0),)))),
+    ("glued", replace(CLEAN_V2, text=replace(CLEAN.text, single_word=1.0),
+                      v2=replace(_V2_OFF, text=replace(_V2_OFF.text, glued=1.0)))),
+    ("line-pair", replace(CLEAN_V2, text=replace(CLEAN.text, kinds=(("line-pair", 1.0),)))),
+    ("dense-panel", replace(CLEAN_V2, text=replace(CLEAN.text, kinds=(("dense-panel", 1.0),)))),
+    ("window", replace(CLEAN_V2, style=replace(CLEAN.style, styles=(("window", 1.0),)))),
+    ("embossed", replace(CLEAN_V2, style=replace(CLEAN.style, styles=(("embossed", 1.0),)))),
+    ("worn", replace(CLEAN_V2, style=replace(CLEAN.style, styles=(("solid", 1.0),)),
+                     v2=replace(_V2_OFF, compose=replace(_V2_OFF.compose, worn=1.0)))),
+    ("nozzle-rows", replace(dict(SYNTH_VAL)["dot-matrix"],
+                            v2=replace(_V2_OFF, style=replace(_V2_OFF.style, nozzle=1.0)))),
 )
 
 
