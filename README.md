@@ -15,9 +15,9 @@ The project covers the full pipeline, from data to deployment:
   synthetic generator that draws what public data misses, across 200,000+
   generated photos. Fine-tuning on real photos of Indian products is under
   way.
-- **Date reader (next):** reads each date as day / month / year and tells
+- **Date reader :** reads each date as day / month / year and tells
   the expiry from the manufacture date.
-- **Readability checker (planned):** small enough to run on a phone's live
+- **Readability checker :** small enough to run on a phone's live
   camera preview, warning staff before they take a photo that can't be read.
 
 Models train on a university GPU cluster. Every result is measured against
