@@ -16,7 +16,11 @@ line spacing, M2's generator unmoved); changed 2026-11-05, S8 (owner's
 call): a block off its size is corrected again, then drawn afresh; S8 done
 2026-11-05 (gen-v2's print, geometry and store-like sizes; gen-v2-sample
 made and looked at, M2's generator unmoved); changed 2026-11-06 (owner's
-call): tilted blocks sized by their digits, the sample remade. Next: S9.
+call): tilted blocks sized by their digits, the sample remade; changed
+2026-11-07, before S9's code (owner's calls): synth-val-v2's skipped
+blocks drawn at a fresh size, and the generation job at 48 GB; S9's
+laptop part done 2026-11-08 (the trial checked, the job written). Next:
+S9's job on the cluster.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -2324,6 +2328,125 @@ shares; real-val-rot180 165 photos and 187 dates; the render sheet's
 pixels as the laptop's.
 **Commits:** `feat: synth-val-v2 strata, embossed measured at last`,
 `feat: generation of gen-v2 at scale, and the 180° sets`
+
+**The laptop's part, 2026-11-08.** The plan's additions `efd3d0f`, then
+code `ce1b8c5` (the strata, M2's sizes in a gen-v2 spec) and `fd7abd4` (M2b's
+layout and check, `generate.py --milestone m2b`, `derive_sets.py --only
+rot180`, the job). 738 tests pass (717 before: 21 new, 9 in
+`tests/test_synth_v2.py`, 11 in `tests/test_synth_batch.py`, 1 in the new
+`tests/test_derive_sets.py`); each code commit passes alone, in a worktree
+with the laptop's data and nothing skipped (726, 738). What was found:
+
+- **M2 didn't move.** `spec_hash(GEN)` is still `3fc14178…` and the strata's
+  `ba77f1bd…`; `GEN_V2` keeps S8's `2c8b24d5…`. S5's gen-sample and S8's
+  gen-v2-sample are each remade byte for byte by a test (500 photos each),
+  so gen-v2 draws as S8 drew it. 100 of M2's photos (gen 0 to 29, each
+  synth-val stratum's first 10), made by `f1442ae`'s code and by the new
+  code, give the same JPEGs and sidecar lines. All 15,638 of M2's files on
+  the laptop hash the same before this slice and after everything in it
+  (one SHA-256 over all, `2fb8b426…`): the trial, its check, both sheets
+  and the 180° sets wrote nothing of M2's.
+- **A scratch run of the trial, before any code was committed, found two
+  problems.** (1) A bug of Claude's: line-pairs' and dense panels' import
+  shares measured a quarter and a third, against a half. A target date
+  loses its role, and half the line-pairs' targets (a third of the dense
+  panels') were import dates. The rows now find an import date by its
+  word; in gen-v2 the two counts agree on every block, so S8's shares
+  don't move. (2) 5 of the 300 line-pair photos had no target. They are
+  narrow portrait photos (557 to 908 px wide) at large heights (30 to 49
+  px digits), where no line-pair fitted in any of M2's 10 fresh draws at
+  one size. The owner chose a fresh size after 10 draws (above). Remade
+  that way, those 5 photos and no other drew a fresh size. The scratch run
+  also measured memory, and the owner chose 48 GB (above).
+- **The trial** (`generate.py --milestone m2b --tasks 0-4,200 --workers 4`,
+  run `20261108-003145-m2b-generate`, from `fd7abd4` with a clean tree):
+  5,000 gen-v2 photos and all 2,400 of synth-val-v2 in 159 s. That is 84.9
+  ms a photo per worker (gen-v2's tasks 85 to 99, synth-val-v2's 70). By
+  stage: drawing 38.1, camera 17.6, background 8.6, JPEG 8.4, blending
+  6.2, surface 5.1, writing 0.5, placing 0.3. M2's trial, on 4 workers
+  too, took 79 ms a photo, drawing 24.2: here drawing takes 1.6 times as
+  long and a gen-v2 photo 1.1 to 1.25 times, under S8's +50% on one CPU.
+  Each worker peaked at 833 MB
+  (885 in the scratch run; M2's 773), the main process at 111 MB. Its
+  14,800 files are the scratch run's, byte for byte.
+- **The slowest photo took 13.1 s**: gen-v2's 2,639th. 12 s of it went on
+  drawing a large window block that then found no place, drawn at its size
+  and again at 0.8. A window's glow is blurred at 4x, which costs seconds
+  at large sizes; the next slowest photos, window panels, took 1.1 to 1.6
+  s. It is rare, and making it faster would change gen-v2's pixels, so
+  nothing was changed.
+- **The check on the trial** (`--milestone m2b --check`, run
+  `20261108-003532-m2b-generate-check`, 8.1 s on 4 workers, 229 MB):
+  - gen-v2 incomplete with exactly one problem, "tasks 5-199 not made (no
+    record)", so its manifest says `complete: false`, no list was written
+    and the command exits 1;
+  - synth-val-v2 complete with no problem: its list, sidecar and manifest
+    written;
+  - every image opens whole, and every label file equals the one rebuilt
+    from its sidecar line.
+- **gen-v2's shares over its first 5,000 photos**: all 64 rows pass, and
+  none is off by 3 standard errors. The farthest is windows dotified,
+  25.1% (spec 30%, −2.8 SE, of 696 windows), so 4,000 window blocks were
+  drawn in memory as gen-v2 draws them: 29.2% of those kept are dotified,
+  and only 61 were drawn again. So the trial's figure is noise, not a
+  bias, and the row should pass at 200,000 photos, where the rule is 3
+  points and 3 SE is 0.8.
+- **gen-v2's sizes over those 5,000**, the store's way: 10,138 untilted
+  dates, **34.4 / 43.4 / 22.2%, median 1.750%**. Against v1-train's 35.5 /
+  42.0 / 22.5% and 1.736%, that is −1.1, +1.4 and −0.3 points and +0.014:
+  the check passes. All 11,962 dates, tilted ones included: 29.8 / 39.2 /
+  31.0%, median 1.917%.
+- **synth-val-v2**: 2,400 photos, each with one target. Every block's
+  digits lie in clean's band (medians 2.44 to 2.77% by stratum); 243
+  blocks were skipped (240 found no place, 3 too faint), 222 of them
+  line-pairs; 5 line-pair photos drew a fresh size; 316 share rows, none
+  off. **By eye** (`contact_sheet.py --set synth-val-v2 --per-tag 8`, run
+  `20261108-003549-contact-synth-val-v2`), each row changes its one thing.
+  Targets turn upside down; glued words run into their dates
+  (`EXP:12/08/2021`, `B.B.31102031`); line-pairs show their separators,
+  with the target on either date; dense panels stack tightly with barcode
+  digits and an `Imp.` line; windows show light strokes on dark
+  rectangles, some dotified; embossed relief is soft; worn dates have part
+  faded away; nozzle-row dot-matrix misses whole rows. Every box sits on
+  its print. As in M2's synth-val, some targets are faint: low-contrast ink
+  on busy backgrounds, and faint dot-matrix.
+- **The 180° sets on the laptop** (`derive_sets.py --only rot180
+  --workers 4`, 23 s): **real-val-rot180 165 photos and 187 dates**, as
+  planned; real_rot180 937 photos (1,057 dates) and synth_rot180 11,844
+  (16,652); worst box error 0.0 px. They are written under `m2b/` and listed
+  in `m2b/manifests/derived.json`; M2's files are unchanged (above). A
+  sheet of 12 turned validation dates shows every box on its print,
+  upside down. 2.85 GB on the laptop, where M2 kept no turned training
+  copies; real-val-rot180 is the M2b suite's.
+- **The render sheet**, `render_sheet.py --v2` on the laptop (run
+  `20261108-003625-render-sheet-v2`, `sheet.png` SHA-256 `a91a5045…`), to
+  compare with the cluster's pixels.
+- **The job's size** (owner's point 5):
+  - **memory**: a worker peaks near 1 GB on the cluster (laptop 833 to
+    885 MB, times M2's 900/773), so 24 come to about 25 GB if all peak at
+    once. The check's main process held 2.4 GB for 200,000 gen-v2 sidecar
+    lines (the trial's 5,000 parsed 40 times over), with their guards,
+    shares, counts and sizes in 72 s; with the lines' text twice, about
+    3.3 GB. 48 GB, the owner's call.
+  - **time**: the trial's stages scaled by M2 S6's laptop-to-cluster
+    ratios (drawing 1.57, camera 1.73, writing 41 ms) give about 161 ms a
+    photo per worker: 202,400 photos in about 23 minutes on 24 CPUs (S8's
+    225 ms: 31). Then the check (M2's took 25 s for 52,100 photos; here
+    about 4 times the photos and its parsing), and the 180° sets (M2 S2's
+    turned sets: 2.5 minutes on 16 CPUs). That is under an hour of the
+    4 asked (`short` allows 6).
+  - **disk**: gen-v2's photos average 186.8 kB, 37.4 GB for 200,000; with
+    synth-val-v2 (0.43 GB), the label files, the sidecars twice (0.38 GB
+    each), the 180° sets (2.85 GB) and the cluster's sample, about 42 GB.
+    The quota is read on the cluster.
+- **Searched**: S9's added lines for every v1, v2 and v3 photo name (and
+  stem, 5 characters or more), the HEIC names, every design id and every
+  word of one (4 characters or more): no name and no id; 3 common words of
+  design ids match (`clear`, `fresh`, `training`).
+- **Not checked yet**: everything on the cluster, which couldn't be reached
+  from off campus on 2026-11-07 and 11-08: the fonts there, the job, the
+  pixels across machines, the quota. Not run: a deliberate-bug run (S9's
+  slice asks for none); the learnings guide (not written).
 
 ### S10. Step 2 and the M2b suite · laptop · *releases job B*
 
