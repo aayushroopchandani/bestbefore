@@ -15,9 +15,9 @@ The project covers the full pipeline, from data to deployment:
   synthetic generator that draws what public data misses, across 200,000+
   generated photos. Fine-tuning on real photos of Indian products is under
   way.
-- **Date reader :** reads each date as day / month / year and tells
+- **Date reader:** reads each date as day / month / year and tells
   the expiry from the manufacture date.
-- **Readability checker :** small enough to run on a phone's live
+- **Readability checker:** small enough to run on a phone's live
   camera preview, warning staff before they take a photo that can't be read.
 
 Models train on a university GPU cluster. Every result is measured against
@@ -28,6 +28,36 @@ by failure type, not reported as one headline number.
 
 <sub>Expiry dates from the ExpDate test set, each hard to read in a
 different way. Photos: ExpDate (KIST, CC BY 4.0), cropped.</sub>
+
+### What sets it apart
+
+- **Rules before results.** Each milestone's plan writes its decision
+  rules as code, and its predictions in plain words, before any GPU time
+  is spent. Validation photos make every choice, the test sets are scored
+  once, and predictions that failed are reported as failed.
+- **Labels from the ink.** The synthetic generator knows every glyph it
+  draws, so each box is the tight rectangle round that text's ink after
+  bending, turning and shrinking. No box is estimated.
+- **A fair ablation.** M2's six arms each change one thing, the training
+  data or the input size, and each trains on the same budget of 2.56
+  million images, under one recipe, with three seeds.
+- **A GPU queue that runs itself.** Slurm jobs are queued and held on day
+  one, so they keep their place in a queue that can take days while the
+  code is still being written. Once running, they share one task list
+  through atomic claims, stop stalled runs and submit their own
+  replacements.
+- **Every number traceable.** Each run records its settings, git commit,
+  seed and library versions, and each training run the hashes of the data
+  it trained on. Each generated photo comes from its own seeded random
+  generator, and each report is written by a script from the records
+  alone.
+- **Leaks hunted down.** A perceptual-hash search over all 13,625 ExpDate
+  photos, checked by eye, found one validation photo reused as the
+  background of 14 synthetic training photos. They leave training from M2
+  on.
+- **Private photos stay private.** The retailer's photos are never
+  committed or published, and the store test set never leaves the
+  laptop. It was frozen by its hash before any training on store photos.
 
 ---
 
@@ -72,55 +102,169 @@ to move closer or turn the pack **before** taking the photo. Once a photo
 is taken, the detector finds the dates and the reader reads them.
 
 ```mermaid
-flowchart LR
-    CAM["Phone camera<br/>live preview"] --> CHK{"Readability checker<br/>in the browser"}
+flowchart TD
+    CAM["Phone camera<br/>live preview"] --> CHK{"Readability<br/>checker"}
     CHK -- "unlikely to read" --> WARN["Warn: move closer,<br/>turn the pack"]
     WARN --> CAM
     CHK -- "looks readable" --> SHOT["Photo taken"]
     SHOT --> DET["Date detector<br/>finds every date"]
-    DET --> READ["Date reader<br/>reads each date"]
-    READ --> OUT["expiry, mfg date, format<br/>as JSON"]
     SHOT --> BAR["Barcode decoder"]
-    OUT --> INV["Inventory record"]
+    DET --> READ["Date reader<br/>expiry, mfg date and<br/>format, as JSON"]
+    READ --> INV["Inventory record"]
     BAR --> INV
+    class DET built
+    class CHK,READ planned
+    classDef built fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef planned stroke-dasharray:5 4
 ```
+
+<sub>Green: built and measured. Dashed: still to build (M3 to M5).</sub>
 
 ### How the models are built
 
+Each model starts from public data, adds what this project makes or
+collects, and hands its output to the next one.
+
 ```mermaid
 flowchart TD
-    subgraph public["Public data"]
-        PROD["ExpDate Products<br/>1,767 real + 11,858 synthetic photos"]
-        CROPS["ExpDate Date and Components<br/>578,000 synthetic crops<br/>of dates and their parts"]
+    subgraph pub["Public: ExpDate"]
+        PROD[("Products<br/>1,767 real +<br/>11,858 synthetic photos")]
+        CROPS[("Date and Components<br/>578,000 synthetic crops")]
     end
-    GEN["Synthetic generator<br/>dot-matrix, sideways, curved,<br/>Indian date formats"]
-
-    PROD --> YOLO["Converted to YOLO format"]
-    YOLO --> DET["Date detector<br/>small YOLO, trained on the cluster"]
+    subgraph own["Made or collected here"]
+        GEN["Synthetic generator<br/>M2: 52,100 photos<br/>M2b: gen-v2"]
+        STORE[("Store sets v1 and v3<br/>private, split<br/>by pack design")]
+    end
+    PROD --> DET["Date detector, YOLO11<br/>M1: ExpDate<br/>M2: + generated dates<br/>at 1,280 px<br/>M2b: + store photos,<br/>larger sizes tried"]
     GEN --> DET
-    CROPS --> READ["Date reader<br/>trained on date crops"]
-    GEN --> READ
-    READ --> DMG["Millions of damaged copies<br/>blur, glare, low light, rotation"]
-    DMG --> LBL["Labelled by the reader:<br/>still read right, or not?"]
-    LBL --> CHK["Readability checker"]
-    CHK --> PHONE["ONNX, quantised<br/>runs in a phone browser"]
+    STORE -- "M2b" --> DET
+    DET --> READ["Date reader, M3<br/>day, month, year;<br/>expiry told from mfg"]
+    CROPS --> READ
+    GEN -.-> READ
+    READ --> DMG["Damaged copies, M4<br/>each labelled: does<br/>the reader still<br/>read it right?"]
+    DMG --> CHK["Readability checker, M4"]
+    CHK --> PHONE["ONNX, quantised, M5<br/>runs in a phone browser"]
+    class DET built
+    class READ,DMG,CHK,PHONE planned
+    class STORE private
+    classDef built fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef planned stroke-dasharray:5 4
+    classDef private fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
 ```
 
 The checker learns from the reader itself. Each damaged copy is labelled
 by whether the reader still gets the date right, so the checker learns
 what actually makes reading fail, rather than a proxy like blur.
 
-### How it is judged
+### The synthetic generator
+
+ExpDate's dates are upright, mostly numeric and fairly large; the
+store's are often sideways, spelt out (`December 2026`) and small. So the
+generator draws those kinds of date onto real pack photos, one block of
+text at a time:
+
+```mermaid
+flowchart TD
+    subgraph blocks["Each of 1 or 2 blocks"]
+        TXT["Text<br/>41 date formats,<br/>keywords, lot codes,<br/>prices as decoys"]
+        STY["Print style<br/>solid, dot-matrix,<br/>label or embossed"]
+        BIG["Render at 4×<br/>one ink mask per token"]
+        WARP["Bend and turn<br/>tilt, sideways,<br/>can or cap"]
+        SHR["Shrink to print size<br/>soft, as a camera<br/>sees it"]
+        INK["Place and blend<br/>on a plain free spot;<br/>too faint: inked again"]
+        TXT --> STY --> BIG --> WARP --> SHR --> INK
+    end
+    BG[("ExpDate training photo<br/>a real pack surface")] --> INK
+    INK --> CAM["Camera effects<br/>on the whole photo<br/>defocus, motion, noise,<br/>glare, dim light, JPEG"]
+    CAM --> JPG["the photo"]
+    CAM --> LBL["YOLO labels<br/>boxes from the ink"]
+    CAM --> SIDE["a JSON line<br/>every choice made,<br/>each date's role<br/>and value"]
+```
+
+- **Dot-matrix from any font.** The renderer samples a font on a grid 7 or
+  9 dots tall and draws a dot wherever the text covers at least 40% of a
+  cell. At 5 rows the digits garbled, so 5 was dropped
+  ([`experiments/m2-dot-rows`](experiments/m2-dot-rows/README.md)).
+- **Dates among look-alikes.** Panels print the date in the same font as
+  prices, weights and batch codes, so the model has to learn what a date
+  says rather than how it stands out.
+- **Fonts held out.** 16 font families draw the training photos; 4 others
+  draw only the validation photos, so a score there can't come from
+  memorised fonts.
+- **Same photo, however it is split.** Photo `i` of a set is drawn from
+  its own generator, seeded `[set_seed, i]`, and every share and range
+  lives in one frozen spec whose SHA-256 goes into every manifest. One
+  24-CPU job made M2's 52,100 photos in 328 seconds.
+
+### Laptop, cluster and GitHub
+
+Code is written and tested on a laptop, training runs on the university
+cluster's H100s, and the retailer's photos stay where the rules allow. A
+milestone moves between them like this:
+
+```mermaid
+sequenceDiagram
+    participant L as Laptop
+    participant G as GitHub
+    participant C as Cluster (Slurm)
+    L->>C: day one: GPU jobs submitted, held
+    L->>G: plan, code and tests
+    G->>C: pulled on the login node
+    Note over C: CPU job: generate and derive the photo sets
+    L->>C: M2b only: store training copies,<br/>renamed, metadata stripped
+    Note over C: GPU jobs released: the chain<br/>trains, scores and decides
+    C->>L: run records and weights
+    Note over L: the store test set scored once, on the CPU
+    L->>G: report, aggregate numbers only
+```
+
+Store photos never went to the cluster until M2b, and the test set (v2)
+never does: it is scored on the laptop's CPU. The training copies of v1
+and v3 go upright and renamed (`v1-0001.jpg`), in sRGB with every bit of
+metadata dropped (20 of v1's photos carried a GPS position), into a
+folder only the owner can read. The map back to the photos' names stays
+on the laptop.
+
+### The GPU work queue
+
+The queue for the cluster's 4 H100s is first come, first served, and
+waits of days are normal. So each milestone submits its GPU jobs **held**
+on day one, before the code exists: a released job keeps its place in
+line, and the job script reads the chain's code only when it starts.
+Every GPU job then runs the same loop over one shared task list:
+
+```mermaid
+flowchart TD
+    START(["GPU job starts"]) --> PICK{"Next task?"}
+    PICK -- "ready, not done,<br/>not claimed, and twice<br/>its estimate fits in<br/>the time left" --> CLAIM["Claim it with os.mkdir<br/>atomic: of two jobs,<br/>one wins"]
+    CLAIM --> RUN["Train or score it<br/>no progress for 2 hours:<br/>stopped; failed twice:<br/>left for a person"]
+    RUN --> DEC["Write each decision<br/>whose inputs are now<br/>complete: loader,<br/>pilot gate, detector"]
+    DEC --> PICK
+    PICK -- "none" --> LEFT{"Tasks left?"}
+    LEFT -- "yes" --> REPL(["Submit its own<br/>replacement, held<br/>if nothing is ready"])
+    LEFT -- "no" --> FREE(["Exit, freeing the GPU"])
+```
+
+A claim whose job Slurm no longer lists is taken over, even one left by
+the same job before a requeue after a node failure. M2's chain took its
+three decisions on its own as their inputs arrived: the data loader (8
+workers, within 2% of the fastest), the pilot gate (a short run had to box
+half of the generated validation dates before about 30 GPU-hours went to
+the generated arms; it boxed 97%) and the M2 detector.
+
+### How a result is earned
 
 ```mermaid
 flowchart LR
-    STORE["Store photos<br/>private, never published"] --> FROZEN["Labelled and frozen<br/>expiry, tight boxes, failure tag"]
-    FROZEN --> EVAL["Evaluation"]
-    A["Baseline A<br/>RapidOCR + date regex"] --> EVAL
-    B["Baseline B<br/>Scanify's rule-based reader"] --> EVAL
-    MODELS["Trained models"] --> EVAL
-    EVAL --> TABLE["Results by failure type<br/>dot-matrix, sideways, curved,<br/>small print, clean"]
+    PLAN["Plan<br/>decision rules as code,<br/>predictions in writing"] --> TRAIN["Train<br/>every run records<br/>commit, seed, data"]
+    TRAIN --> CHOOSE["Choose<br/>on validation<br/>photos only"]
+    CHOOSE --> TEST["Test once<br/>ExpDate test and the<br/>frozen store set"]
+    TEST --> REPORT["Report<br/>by a script, from the<br/>records, by failure tag"]
 ```
+
+Baselines A and B are scored on the same test photos, and every number in
+a report is read from the run records, so a result can't drift from the
+runs behind it.
 
 ---
 
@@ -155,19 +299,26 @@ Every model has to beat both of these on the same photos:
 
 ```mermaid
 flowchart LR
-    M0["M0<br/>Data and test set"] --> M1["M1<br/>Date detector"]
-    M1 --> M2["M2<br/>Synthetic generator"]
-    M2 --> M3["M3<br/>Date reader"]:::now
-    M3 --> M4["M4<br/>Readability checker"]
-    M4 --> M5["M5<br/>On the phone"]
-    classDef now stroke-width:3px
+    M0["M0<br/>Data and<br/>test set"] --> M1["M1<br/>Date<br/>detector"]
+    M1 --> M2["M2<br/>Synthetic<br/>generator"]
+    M2 --> M2b["M2b<br/>Store photos,<br/>bigger detector"]
+    M2b --> M3["M3<br/>Date<br/>reader"]
+    M3 --> M4["M4<br/>Readability<br/>checker"]
+    M4 --> M5["M5<br/>On the<br/>phone"]
+    class M0,M1,M2 done
+    class M2b now
+    class M3,M4,M5 planned
+    classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef now fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
+    classDef planned stroke-dasharray:5 4
 ```
 
 | | Milestone | Done when | Status |
 |---|---|---|---|
-| M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | **done** |
-| M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | **done** |
-| M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | **done** |
+| M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | **done** 2026-10-21 |
+| M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | **done** 2026-10-21 |
+| M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | **done** 2026-10-28 |
+| M2b | Store photos and a bigger detector | the M2b detector scored once on store set v2, by tag, cause and seen or unseen pack design, next to M1 and M2 | **in progress** |
 | M3 | Date reader | end-to-end date accuracy vs baselines A and B, by tag | next |
 | M4 | Readability checker | AUROC on held-out copies; SmartDoc-QA and SPAQ agreement; store photos | planned |
 | M5 | On the phone | size, latency per frame, accuracy kept after quantising | planned |
@@ -291,6 +442,39 @@ comes from the ink it drew. A rule written before any run chose the M2
 detector on validation photos: `gen-rot-1280`, seed 0. ExpDate test and
 the store photos were each scored once, afterwards.
 
+```mermaid
+flowchart TD
+    subgraph pools["Training pools"]
+        REAL[("ExpDate real<br/>937 photos")]
+        SYN[("ExpDate synthetic<br/>11,844 photos")]
+        TURN[("Both, turned<br/>90° or 270°")]
+        GEN[("Generated<br/>50,000 photos")]
+    end
+    pools -- "every arm: the same<br/>2.56 million images<br/>budget, 3 seeds" --> arms
+    subgraph arms["6 arms, 18 runs"]
+        BASE["base<br/>M1's data<br/>0.560"]
+        ROT["rot<br/>+ turned<br/>0.881"]
+        GENA["gen<br/>+ generated<br/>0.817"]
+        GENROT["gen-rot<br/>+ both<br/>0.956"]
+        WIN["gen-rot-1280<br/>+ both, 1,280 px<br/>0.989"]
+        G10["gen10k<br/>10,000 generated × 5<br/>0.800, side question"]
+        BASE ~~~ GENROT
+        ROT ~~~ WIN
+        GENA ~~~ G10
+    end
+    arms --> SUITE["Validation suite<br/>guard: ExpDate<br/>validation<br/>hard: its dates turned,<br/>its dates halved, and<br/>generated dates in<br/>held-out fonts"]
+    SUITE --> RULE{{"Rule fixed before any run<br/>no loss on the guard, then<br/>the best mean score on the<br/>hard sets; within 0.01,<br/>the cheapest"}}
+    RULE --> PICKED["The M2 detector<br/>gen-rot-1280, seed 0"]
+    PICKED --> ONCE["Scored once<br/>ExpDate test: 662 of 665<br/>store photos: 39 of 81<br/>M1's detector: 637 and 18"]
+    class WIN,PICKED win
+    classDef win fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
+```
+
+<sub>Each arm's number is its score: mean mAP@0.5 for dates over the three
+hard validation sets (3 seeds). `gen10k` answers a side question, whether
+more distinct generated photos help (they do, by 1.6 points), and was
+never a candidate.</sub>
+
 | Expiry dates | ExpDate test, found | Store photos, found | Store, boxed at any confidence | Store precision |
 |---|---:|---:|---:|---:|
 | the M1 detector (seed 0) | 637 of 665 | 18 of 81 | 43 | 0.950 |
@@ -301,6 +485,23 @@ the store photos were each scored once, afterwards.
 By store failure tag (mean of 3 seeds), M1 then M2: sideways 0 then 2.7
 of 15, dot-matrix 14.7 then 19 of 20, small print 0 then 5.3 of 15, clean
 7 then 19 of 31.
+
+Every arm on the store photos, next to M1:
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#3b82f6, #d97706"}}}}%%
+xychart-beta
+    title "Store expiry dates, of 81 (mean of 3 seeds)"
+    x-axis ["M1", "base", "rot", "gen", "gen-rot", "gen10k", "gen-rot-1280"]
+    y-axis "Expiry dates" 0 --> 81
+    bar [21.7, 27, 26.3, 38.3, 33.7, 37, 46]
+    line [45, 43, 45.7, 52.7, 55, 49, 70.3]
+```
+
+<sub>Bars: found at each run's own threshold. Line: boxed at any
+confidence. The rule, which never saw a store photo, picked the arm that
+finds the most. The gap between line and bars is dates the model sees but
+doubts; M2b goes after it.</sub>
 
 What it shows:
 
@@ -345,6 +546,72 @@ arm by tag and by cause:
 [`results/m2_detector.md`](results/m2_detector.md); the plan and every
 slice's record:
 [`docs/m2-synthetic-generator.md`](docs/m2-synthetic-generator.md).
+
+### M2b, in progress: the store photos, gen-v2 and a bigger detector
+
+The M2 detector finds 39 of the store's 81 expiry dates. Of the other 42,
+30 get a box below its threshold and 12 none at all. The store gallery
+showed why: a threshold chosen on ExpDate, layouts the generator never
+drew, generated dates about 1.7 times bigger than the store's, and a few
+pack designs behind many of the photos. Since the retailer's owner
+allowed training on the store photos (2026-10-28), M2b goes after all of
+it at once: it fine-tunes on the store photos themselves, draws the
+missing layouts, tries bigger models and picks the threshold on store
+photos.
+
+```mermaid
+flowchart TD
+    subgraph step1["Step 1: public data"]
+        N1["n1280<br/>M2's winning arm,<br/>reused"]
+        S1["s1280<br/>yolo11s,<br/>3 seeds"]
+        M1P["m1280<br/>yolo11m,<br/>1-seed probe"]
+    end
+    subgraph step2["Step 2: store photos"]
+        MIX["Each epoch:<br/>20% store photos,<br/>design-balanced,<br/>turned 4 ways;<br/>80% replay: ExpDate,<br/>turned copies, gen-v2"]
+        RECIPES["Recipes on n:<br/>ft, or ft2 in<br/>two stages;<br/>side arm: ft-gen50k"]
+    end
+    CTRL["Control: no training<br/>M2's weights, with a<br/>threshold set on<br/>store photos; its<br/>seeds set the band"]
+    step1 --> step2
+    step2 --> RULES{{"Rules R1 to R3<br/>best on v1-val,<br/>nothing forgotten;<br/>within the noise<br/>band, the cheapest"}}
+    CTRL --> RULES
+    RULES --> ADD["Rule R4: add-ons kept<br/>only if they earn it<br/>3-seed ensemble,<br/>test-time rotation,<br/>1,536 px input"]
+    ADD --> FINAL["Scored once, on the<br/>laptop: store set v2<br/>by tag, cause and<br/>seen or unseen design;<br/>ExpDate test"]
+    class CTRL control
+    classDef control stroke-dasharray:5 4
+```
+
+The generator's second version draws what the store gallery showed and
+M2 never drew, and sizes each block from the store's own date sizes.
+Every new feature is off in M2's spec, which keeps its hash, so M2's
+photos still come out byte for byte (tests check it).
+
+```mermaid
+mindmap
+  root((gen-v2))
+    Layouts
+      Upside-down print
+      A keyword glued to its date
+      Two dates on one line
+      Dense stacked panels
+    Print
+      Light laser marks on a dark window
+      Missing rows of dots
+      Worn, half-rubbed ink
+    Words around dates
+      Import dates and their keywords
+      Barcode digits
+      Unit prices
+    Size
+      Drawn from the store's own date sizes
+```
+
+Where it stands (2026-11-08): store set v2, 99 new photos, is labelled
+and frozen as the new test set. Store sets v1 and v3 are split by pack
+design (80 photos train, 34 validate), boxed for keywords and exported to
+the cluster. gen-v2 is written and checked on a laptop trial. Next, one
+CPU job makes its 200,000 photos, while step 1's GPU job waits in the
+queue. Plan and every slice's record:
+[`docs/m2b-store-and-size.md`](docs/m2b-store-and-size.md).
 
 ---
 
@@ -495,6 +762,29 @@ bestbefore/
 └── results/         summary tables in git; per-run outputs are not
 ```
 
+How the code is layered: job scripts call thin entry points, the logic
+lives in one library, and every run leaves a record that the reports are
+built from.
+
+```mermaid
+flowchart TD
+    SLURM["slurm/<br/>cluster job scripts"] --> CLI["scripts/<br/>command-line<br/>entry points"]
+    CLI --> lib
+    subgraph lib["src/bestbefore/"]
+        DATA["Data<br/>expdate, yolo, derived,<br/>store, store_train"]
+        SYNTH["synth/<br/>spec, text, render,<br/>warp, compose,<br/>camera, make"]
+        MODEL["Model and scoring<br/>detector,<br/>detection_eval,<br/>baselines/"]
+        RULES["Milestones<br/>m1, m2, m2b:<br/>arms, mixes,<br/>decision rules"]
+        INFRA["Infrastructure<br/>chain, slurm,<br/>runs, config"]
+        DATA ~~~ RULES
+        SYNTH ~~~ INFRA
+        MODEL ~~~ INFRA
+    end
+    lib --> REC[("results/runs/<br/>one record per run")]
+    REC --> REP["results/<br/>reports, written<br/>from the records"]
+    TESTS["tests/<br/>pytest"] -.-> lib
+```
+
 ## Documentation
 
 - [`docs/m0-data-and-test-set.md`](docs/m0-data-and-test-set.md): the M0
@@ -514,6 +804,10 @@ bestbefore/
   M2 plan: the generator, the ablation and every slice's record
 - [`results/m2_detector.md`](results/m2_detector.md): the M2 ablation's
   results, from the validation suite to the store photos
+- [`docs/m2b-store-and-size.md`](docs/m2b-store-and-size.md): the M2b
+  plan: store fine-tuning, gen-v2, model size and every slice's record
+- [`results/store_designs.md`](results/store_designs.md): store pack
+  designs and the v1 split, as counts only
 
 ---
 
