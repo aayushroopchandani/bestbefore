@@ -947,6 +947,55 @@ packages; `paddleocr` reads one real-val crop on a CPU node with both
 models; files hashed. **Commits:** `docs: m3 plan` (this file, first),
 `feat: m3 gpu job script and the read and vlm extras`
 
+**In progress 2026-11-12** (the session stopped at a usage limit; the
+rest of S1 is listed under *Left*). Departure: `docs: m3 plan` was
+already committed (`c8b431f`), so S1's first commit is the feat.
+
+- **The queue at 17:33** (`squeue --me`): M2b's `73832` and `73906`, both
+  held, nothing running; S9's job `73944` `COMPLETED` (14:34 to 15:00). Two
+  queued, so the rule gives **two** held M3 jobs (4 of 5, one slot free).
+  `slurm/m3_gpu.sbatch` (`421f2c6`) is on the cluster; the owner submits
+  `cd ~/bestbefore && sbatch --hold slurm/m3_gpu.sbatch` twice. It checks
+  for `m3_chain.sh` before `nvidia-smi` (tested on the laptop: exit 1
+  without it, the chain run with it).
+- **Quota:** 182.1 GB of 950 used (`lfs quota`), before any M3 download.
+- **The main venv**, with no M2b job running: `pip install -e
+  ".[read,vlm]"` with a constraints file of all 68 installed packages
+  (`pip freeze --exclude-editable`), so nothing installed could move. The
+  freeze before and after differ by **28 added packages and nothing else**
+  (torch `2.11.0+cu128`, ultralytics 8.4.177, numpy 2.4.6, OpenCV 5.0.0,
+  Pillow 12.3.0 kept); `pip check` clean. transformers 5.22.2 (the newest)
+  needs no other torch. Added: transformers 5.22.2, peft 0.21.2,
+  accelerate 1.15.0, lmdb 3.0.0, onnx 1.23.2, onnxruntime 1.31.1 (CPU and
+  Azure providers), huggingface_hub 2.4.0, tokenizers 0.23.3, safetensors
+  0.8.0, protobuf 7.36.2 and their own dependencies. Records in
+  `~/bestbefore-data/env/m3-s1/` (freezes, constraints, dry runs, test
+  output).
+- **M2b unchanged:** `m2b_chain.py --dry-run` prints the same 36 lines
+  before and after; the whole suite gives 737 passed, 2 skipped before and
+  after (the same two skips, laptop-only data and pixels), output identical
+  but for timing.
+- **transformers 5.22.2 holds** `Qwen3VLForConditionalGeneration`, and
+  PP-OCRv6 as `pp_ocrv6_small_rec`, `pp_ocrv6_tiny_rec`,
+  `pp_ocrv6_small_det` and `pp_ocrv6_medium_det` (also PP-OCRv5's four,
+  `pp_lcnet_v4`): S6's PyTorch route has a model to check.
+- **`ocr-cpu`'s dry run** (`~/venvs/ocr-cpu` made, nothing installed yet):
+  paddlex 3.7.2 pins `opencv-contrib-python==4.10.0.84`, RapidOCR 1.2.3
+  pulls `opencv-python` (5.0.0.93): two packages writing one `cv2/`. To do:
+  install RapidOCR with `--no-deps` (its other needs come with paddlex,
+  plus `six`), one OpenCV; Pillow pinned to 12.3.0 as in the main venv.
+  paddlex caps numpy below 2.4 (2.3.5 there).
+- **Found in passing (M2b's):** the cluster's `.env` sets only
+  `EXPDATE_DIR`, `CHECKPOINT_DIR`, `GENERATED_DIR`; M2b's dry run says
+  "`$STORE_TRAIN_DIR` unset". M2b S10 and M3 S2 both need it set to
+  `~/bestbefore-data/store`.
+- **Left:** `ocr-cpu`'s install; the downloads with SHA-256s, versions
+  and licences into `docs/datasets.md` (PP-OCRv6 small rec and det,
+  Qwen3-VL-2B-Instruct, the official GGUF); llama.cpp at a pinned tag
+  (`module load cmake/3.31.4`, gcc 12.3.0, 4 threads, all CPU variants);
+  `slurm/m3_cpu.sbatch env` with the one-crop PaddleOCR check; the owner's
+  `squeue` showing the held jobs; CLAUDE.md's cluster facts (owner's OK).
+
 ### S2. The crop experiment · laptop, then a CPU job · *submits 1 CPU job*
 
 **Question:** fed a tight date box, how well does an untrained reader
