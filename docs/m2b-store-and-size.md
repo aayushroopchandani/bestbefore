@@ -24,7 +24,9 @@ done 2026-11-12 (gen-v2, synth-val-v2 and the 180° sets made on the
 cluster and checked; a crash met at scale fixed first); changed 2026-11-12,
 before S10's code (owner's go-ahead): the smoke on a CPU node of the
 cluster, the replay's 180° copies, ft2's stages, R2 without a recipe, the
-band first. Next: S10.
+band first; S10 done 2026-11-12 (step 2, the M2b suite and the rules R1 to
+R3, smoked on a CPU node of the cluster; the frozen layers didn't move;
+stage 2 ready). Next: job B's release, then S11.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -616,9 +618,12 @@ def mix(arm: StepTwo, pools: Mapping[str, list[Path]], designs: Mapping[str, str
 | `s1280-<R2's recipe>` | `s1280-s{k}` | gen-v2 | as R2 chose | s0, s1, s2 |
 | `m1280-<R2's recipe>` | `m1280-s{k}` | gen-v2 | as R2 chose | only if R1 passes |
 
-Ultralytics' frozen layers still update their batch-norm statistics in
-training mode. S10 measures how far they move during stage 1 and records
-it; nothing is changed for it.
+Ultralytics 8.4.177 keeps a frozen layer's batch-norm modules in eval
+mode, so their statistics don't move: S10's smoke measured stage 1 and
+found none of the frozen layers' weights or statistics changed. Every ft2
+run measures it again and stops if a frozen weight moves. **(corrected
+2026-11-12, S10: the plan first said the frozen layers' statistics still
+update in training mode.)**
 
 ---
 
@@ -2660,6 +2665,182 @@ band, budget or share of the plan changes):
 - **The cluster's `.env`** gains `STORE_TRAIN_DIR=~/bestbefore-data/store`
   (missing, as M3 S1 found), added by the owner.
 
+**Done 2026-11-12.** Code `3e1d020` (step 2), `93e9420` (the M2b suite) and
+`6b43d15` (the chain and the rules), after the plan's change `3aa946e`.
+760 tests pass (739 before: 21 new, in `tests/test_m2b_rules.py`,
+`tests/test_score_suite.py` and `tests/test_chain.py`), and each code
+commit passes alone, in a worktree with the laptop's data and nothing
+skipped (747, 752, 760). On the cluster, at the owner's word: `git pull` to
+`6b43d15`; `STORE_TRAIN_DIR` added to its `.env` by Claude (the owner's
+request, not the owner's step as written above); the CPU smoke, job
+**`73951`**, submitted by Claude. What was found:
+
+- **Stage 1 is complete**, pulled and checked: the smoke, the three
+  controls, `s1280` s0–s2 and `m1280-s0` all `finished`, the five trained
+  runs scored on M2's suite; their 13 record files are byte-identical on
+  both machines, every `last.pt` they name is on the cluster, and there were
+  no failures or claims. Job A ran from 2026-11-08 16:55 to 11-09 11:25 and
+  left `73906` held, with 19 tasks left.
+  - `s1280` trained 230.3 to 239.4 minutes a run, 177 to 184 images a
+    second (the plan's 4 hours), and scored on M2's suite in 1.6 minutes;
+  - `m1280-s0` trained 395.6 minutes, **107 images a second**: 6.6 hours,
+    under the plan's 7 and faster than S2's estimate (about 80 a second,
+    7.5 to 12.4 hours);
+  - GPU memory at batch 16 and 1,280 px (Ultralytics' `GPU_mem` in job A's
+    log): `s1280` 16.3 GB and **`m1280` 30.8 GB**, where S2 estimated about
+    44 GB from the laptop's backward pass (M1's `s1280`, which validated
+    every epoch, peaked at 21.1 GB).
+- **R1 isn't known yet** (above): no run has an M2b suite. The GPU job
+  scores the control and then step 1 on it first.
+- **The main venv still holds the pinned versions** after M3 S1 extended it:
+  torch `2.11.0+cu128`, ultralytics 8.4.177 (numpy 2.4.6, OpenCV 5.0.0,
+  Pillow 12.3.0), read on the login node; the smoke's records name the same.
+- **M2's chain is unchanged**: its dry run prints the same 47 lines at
+  `6ee18bf` and at `6b43d15` (the chain's task list may now be made from the
+  decisions, `Chain.task_list`; M2's passes its fixed list), on the laptop's
+  records.
+- **Step 2's mix on the cluster's own lists** (seed 0, read-only on the
+  login node): the five list sizes M2's runs recorded (937, 937, 11,844,
+  11,844, 50,000) are the lists' sizes today. Pools: 320 store copies (80
+  photos in 4 turns, 31 designs), real 937 upright and 1,874 turned,
+  synthetic 11,844 and 23,688, generated 200,000 (gen-v2) or 50,000 (M2's
+  gen50k). An epoch lists 4,991 store lines (161 a design, all 320 copies
+  among them), real 709 + 709, synthetic 2,987 + 2,987 and generated
+  12,609: **24,992 photos**, the store's 20.0%. ft trains 10 epochs (249,920
+  images), warmup 0.3, mosaic off for the last; ft2 5 + 5, warmup 0.15 and
+  mosaic off for the last of each. Of the turned copies drawn, 51.5% (real)
+  and 50.7% (synthetic) are upside down.
+- **The smoke** (job `73951`, `short`, `cn1`, 24 CPUs, 64 GB, started
+  20:58:43; `slurm/m2b_smoke_cpu.sbatch step2`):
+  - `smoke-n1280-ft-cpu` started from the control's seed 0, M2's last.pt
+    (`8c9a03c7…`, as S2 recorded it), on 413 photos an epoch: 93 store
+    lines, real 11 + 11, synthetic 48 + 48, generated 202, every pool read
+    and none corrupt. Ultralytics trained as asked (MuSGD, `lr0` 0.001,
+    `freeze` none, batch 16, 1,280 px, 1 epoch, warmup 0.03), with 0 loader
+    workers on a CPU (as S2 found); 2.8 minutes, 3 min 15 s in all.
+  - `smoke-n1280-ft2-cpu`: stage 1 with `freeze` 11 at `lr0` 0.001 (1.6
+    minutes; layers 0 to 10 listed as frozen), into `<run>-stage1/`; stage
+    2 from stage 1's `last.pt`, `freeze` none at `lr0` 0.0005 (2.2
+    minutes), into the run's own folder; 3 min 50 s in all. Both stages
+    applied as asked; the record's `applied` and `stage` show stage 2's, and
+    `stages` both.
+  - The `n1280-ft` smoke scored on the M2b suite on the CPU
+    (`score_suite.py --suite m2b`): 12.1 minutes for all 7 sets (5,070
+    photos, each predicted and then validated by Ultralytics, about 40 ms an
+    image), `suite-m2b.json` written whole, with both thresholds, synth-val-v2
+    by its 8 strata, v1-val by its 5 tags and its 63 dates by size band (23
+    / 28 / 12). Its numbers are a one-epoch smoke's and mean nothing.
+    Ultralytics' validation folders are empty, and no box of a photo was
+    kept.
+  - The job: `COMPLETED`, 19 min 15 s, `sacct`'s sampled `MaxRSS` 17.1 GB
+    (of 64).
+- **What the smoke left on the cluster** (the home folder is 700, so none
+  of it is reachable by others):
+  - v1-val's label cache, `store/labels/val.cache` (box coordinates of the
+    34 numbered photos, no pixels), written with mode 664 where S6 made
+    every store file 600: the owner chmods it (below). Ultralytics rewrites
+    it only when its photos change, so once is enough;
+  - every step-2 run's label cache (`$EXPDATE_DIR/yolo/labels/real-train.cache`,
+    664) lists its store lines' boxes and numbered paths beside ExpDate's;
+  - the training-batch mosaics (`train_batch*.jpg`) beside each run's
+    weights show store photos, as S6 expected; never pulled.
+- **The frozen layers didn't move at all** (ft2's stage 1, from M2's s0 to
+  stage 1's `last.pt`, both as Ultralytics loads them): in layers 0 to 10,
+  0 of 1,357,104 convolution weights, 0 of 8,368 batch-norm weights and
+  biases, and 0 of 4,184 running means and 0 of 4,184 running variances
+  changed; in the layers it trained, 1,085,421 of 1,247,436 values (87%).
+  So Ultralytics 8.4.177 holds a frozen layer's batch-norm statistics, as
+  its source said (`_model_train` puts those modules in eval mode), and
+  [Step 2](#step-2-store-fine-tuning) and the risk on it are corrected
+  (owner's go-ahead, before the code). The check stays in every ft2 run: a
+  frozen weight that moves stops it.
+- **Ultralytics' label cache** for a step-2 run lands beside the first label
+  file in sorted path order, `$EXPDATE_DIR/yolo/labels/real-train.cache`,
+  where every run of M1 to M2b's step 1 has written its own; each step-2 run
+  rewrites it for its lists. v1-val's lands in the store export's
+  `labels/val.cache` (S6 expected it; `check_export` ignores it).
+- **The cluster's dry run before the release** (after the `.env` line and
+  the smoke): stage 1 done; the 9 step-2 runs on `n` ready; step 2 on `s`
+  waiting for R2, and `m`'s runs for R1; the control's three M2b-suite
+  scores ready, every other run's waiting for the noise band. **Nothing
+  waits on data**, and nothing is blocked, failed or claimed; no decision
+  yet. The smoke's runs are named apart (`smoke-n1280-ft-cpu`, ...), so the
+  chain counts none of them.
+- **Stage 2's GPU time**, from step 1's measured speeds (`n` 208, `s` 181,
+  `m` 107 images a second) and M2's suite's 1.5 to 2.5 minutes a score (the
+  M2b suite holds 5,070 photos against 2,471: about twice as long):
+
+  | GPU work | Runs | Each | GPU hours |
+  |---|---:|---|---:|
+  | the M2b suite: the control and step 1 | 7 | about 4 min | 0.5 |
+  | `n` step 2 (3 arms) | 9 | 20 min of training, about 5 of setup, cold reads and validation, 4 of scoring | 4.4 |
+  | `s` step 2 | 3 | 23 + 5 + 4 min | 1.6 |
+  | **without `m`'s seeds** | | | **about 6.5** |
+  | `m` by R1: seeds 1 and 2, both suites | 2 | 6.6 h + 7 min | 13.4 |
+  | `m` step 2 | 3 | 39 + 5 + 5 min | 2.5 |
+  | **with them** | | | **about 22.5** |
+
+  Every run fits: the longest, an `m` seed, takes about 6.6 of the job's
+  72 hours, and the chain starts it only with 14 hours left (twice the
+  plan's 7). An epoch takes 2 to 4 minutes and a run's setup minutes (the
+  smoke's 413 photos were read in under 2 s), far inside the watchdog's 2
+  hours; a score about 5 of the timeout's 60 minutes.
+- **Jobs**: our jobs were `73832` and `73906` (M2b) and `73946`, `73947`
+  (M3), all held, and `73951`, the smoke. `73832`, submitted 2026-10-31, is
+  the oldest waiting GPU job: it gets the first H100 to free up, at the
+  latest about 2026-11-15 01:00 (a 3-day job on `cn6` ends then), earlier
+  if any job ends early. `73906`, submitted 2026-11-09, waits behind four
+  other users' jobs.
+- **Details fixed while writing** (no rule, band, budget or share changed):
+  - **`mix()` takes the pools**, not the arm (the arm only chooses them,
+    `replay_lists`); each replay pool is drawn without repeats with its own
+    seed, `"{seed}/{pool}"`, so the pools' order changes nothing.
+  - **A run's lists** go to `results/runs/<id>/lists/<pool>.txt`, absolute
+    paths, the store's numbered; their lines, distinct photos and SHA-256
+    are in `run.json`, beside the pools' sizes, every manifest's hash and
+    the store export's. It validates on real-val, as M2's runs.
+  - **The store export is checked** against its manifest
+    (`store_train.check_export`) at the start of every step-2 run.
+  - **Starting weights**: the `checkpoint` of the step-1 run's record, its
+    SHA-256 in the new run's `start`; the control's own recorded SHA-256 is
+    compared first.
+  - **ft2 as one run**: `applied` and `stage` in `run.json` follow the
+    stage, so the watchdog sees stage 2 start; each stage's record, with
+    its applied arguments, time and checkpoint, under `stages`. `freeze` is
+    read back with what Ultralytics applied and checked against the stage's
+    recipe.
+  - **`train_detector.py` refuses** `--cache`, `--budget-share` and
+    `--smoke-lists` for a step-2 arm, and `--epoch-photos` without
+    `--epochs`.
+  - **`suite-m2b.json`**: `threshold` is `threshold_store` (v1-val's),
+    `threshold_m2` beside it; each set's counts at `threshold`, and under
+    `at_threshold_m2`; by stratum or tag (v1-val by photo tag); v1-val's
+    dates `by_size`. Every set is needed. v1-val is a set of its own
+    (`sets.py`'s `v1-val`, `m2b.load_v1_val`), whose per-photo files go to
+    `data/store/runs/`, as the store set's.
+  - **`score_suite.py` finds the control's weights** on the laptop too (by
+    `weights_from`, M2's copy), for S13's device check should R3 keep M2's
+    weights.
+  - **Chain task names**: `suite-m2b-<run>` for the M2b suite;
+    `score-m2b-<run>` stays M2's suite. The dry run's column is 30 wide.
+  - **The rules read the M2b suite** for the control too (its real-val and
+    synth-val scored again there), not M2's `suite.json`. "Beats" (R1) is
+    strictly greater; "within the band" includes its edge, as M2's.
+  - `pull_cluster_results.sh` brings `results.csv` from M2b's checkpoint
+    folders too; a two-stage run's first stage lands in `<id>-stage1/`.
+- **Searched**: S10's 1,840 added lines (from `6ee18bf`: the code, this
+  plan's change and this record) against all 213 photo names of v1, v2 and v3
+  (and stems of 5 characters or more, 313 in all; v2's from S4's
+  `designs.json`, no v2 file opened), the HEIC names, all 92 design ids and
+  their 128 words of 4 characters or more: no name and no id; 2 common
+  words of design ids match (`clear`, `training`).
+- **Not checked:** a step-2 run on a GPU, so its speed, the cold first read
+  of its photos and the M2b suite's time there stay estimates (the GPU job's
+  first runs measure them); two jobs writing one label cache at once (only
+  one job is released); R1 to R3 on real suites (none exists); whether the
+  store lines' repeats are memorised (v1-val's and v2's unseen designs will
+  show it, S11 and S14); the learnings guide (not written).
+
 ### S11. Step 2 on `n` · cluster, then laptop
 
 **Goal:** the noise band, R2, and the side question on gen-v2.
@@ -2842,8 +3023,10 @@ results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed
   frame differently.
 - **gen-v2 looks pasted.** The look check against real store crops (S8);
   synth-val-v2 high but real sets flat would say so, as in M2.
-- **Two-stage's "frozen" batch-norm statistics still move** in Ultralytics.
-  Measured in S10 and recorded.
+- **Two-stage's frozen layers** could still change in training. They don't
+  in Ultralytics 8.4.177, batch-norm statistics included (S10's record), and
+  every ft2 run checks them. **(corrected 2026-11-12, S10: the plan first
+  said the statistics still move.)**
 - **`m` is slower than estimated.** Its seed 0 measures it; R1 decides
   whether any more is spent.
 - **The queue is long** (S1). The jobs keep their places; S4 to S9 fill the
