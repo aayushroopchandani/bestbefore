@@ -1585,3 +1585,33 @@ def test_a_strata_block_without_a_place_is_drawn_at_a_fresh_size_after_10_tries(
     monkeypatch.setattr(make, "_place", fails(1000))
     s = make.make_one(0, CLEAN, val_pool, 2, stratum="clean").sidecar        # M2's synth-val: one size, 10 draws
     assert len(sizes) == 10 and len(set(sizes)) == 1 and not s["blocks"]
+
+
+@needs_fonts
+def test_a_worn_patch_skips_a_date_the_ink_defects_emptied():
+    """Met at scale (S9's job crashed at gen-v2's photo 17,868 on the
+    cluster): small dot-matrix print can lose every dot under the ink line
+    to the density field, before the wear is chosen, and the patch then
+    looked for that date's ink. It now picks among dates with ink; a drawing
+    that lost a date's ink is drawn again anyway, as before."""
+    from bestbefore.synth.spec import GEN_V2
+    rng = np.random.default_rng(0)
+    for _ in range(249):                     # the scratch search's first crash, block 248 (dot-matrix, 3.1 px)
+        block = T.random_block(rng, GEN_V2.text, V2.text)
+        style = ("dot-matrix", "solid", "window")[int(rng.integers(3))]
+        family = fonts.random_family(rng, "train")
+        geometry = W.random_geometry(rng, GEN_V2.geometry, V2.geometry)
+        size, seed = float(rng.uniform(3.0, 9.0)), int(rng.integers(2**62))
+    assert (style, round(size, 3)) == ("dot-matrix", 3.119)
+    d = make.draw_v2(block, style, family, size, geometry, seed, GEN_V2)          # raised TypeError before
+    boxed = [t.cls is not None for t in block.tokens]
+    assert any(box is None for box, b in zip(d.boxes, boxed) if b)                # it lost a date: drawn again
+    # the patch, given a layer whose one date has no ink, picks none rather than that one
+    layer = R.render(block, "dot-matrix", family, 12, np.random.default_rng(1), GEN_V2.style, V2.style)
+    dates = [i for i, t in enumerate(block.tokens) if t.cls == "date"]
+    faint = replace(layer, tokens=tuple(replace(s, alpha=s.alpha * 0.1) if i == dates[0] and s is not None else s
+                                        for i, s in enumerate(layer.tokens)))
+    for k in range(20):
+        wear = compose.random_wear(np.random.default_rng(k), faint, block, "dot-matrix",
+                                   replace(V2.compose, worn=1.0))
+        assert wear is None or wear.token in dates[1:]

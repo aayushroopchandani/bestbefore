@@ -389,11 +389,15 @@ def random_wear(rng: np.random.Generator, layer: Layer, block, style: str, spec:
     """A worn patch for a block drawn at 4x, `on` with share spec.worn on
     solid, dot-matrix and window print (None on others): 1 to 3
     characters wide (a character the digits' height, as the density's) and
-    1 to 2 lines tall, centred on a date picked uniformly, somewhere along
-    it. Every number is drawn whether it is on or not."""
+    1 to 2 lines tall, centred on a date picked uniformly among those with
+    ink, somewhere along it. Every number is drawn whether it is on or not.
+    A date can arrive with no ink: small dot-matrix print faded below the
+    ink line by the defects laid on before the wear (M2b S9, met at scale).
+    Its drawing is drawn again whatever the wear, as it has no box to keep."""
     if style not in spec.worn_styles:
         return None
-    dates = [i for i, (t, s) in enumerate(zip(block.tokens, layer.tokens)) if t.cls == "date" and s is not None]
+    dates = [i for i, (t, s) in enumerate(zip(block.tokens, layer.tokens))
+             if t.cls == "date" and s is not None and render.ink_box(s) is not None]
     if not dates:
         return None
     on = bool(rng.random() < spec.worn)
