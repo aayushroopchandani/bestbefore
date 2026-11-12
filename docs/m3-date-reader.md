@@ -4,8 +4,8 @@ Planned 2026-11-11, after a discussion with the owner the same day (the
 three readers, the data, the baselines, the crop experiment). Status:
 **in progress**; S1 done on the cluster 2026-11-12 (GPU jobs `73946` and
 `73947` held; the main venv extended with M2b unchanged; `ocr-cpu`; the
-models fetched and hashed; llama.cpp built), its CPU check waiting for
-the owner's job. Next: S2. M2b is still in progress (S10 next there);
+models fetched and hashed; llama.cpp built; the CPU check passed on
+`cn1`, its AMX variant set aside). Next: S2. M2b is still in progress (S10 next there);
 every slice here that needs one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
 
@@ -949,9 +949,9 @@ packages; `paddleocr` reads one real-val crop on a CPU node with both
 models; files hashed. **Commits:** `docs: m3 plan` (this file, first),
 `feat: m3 gpu job script and the read and vlm extras`
 
-**Done on the cluster 2026-11-12, except the CPU check** (the owner's
-job, below). A first session stopped at a usage limit after the main venv;
-a second finished the rest. Departures: `docs: m3 plan` was already
+**Done 2026-11-12.** A first session stopped at a usage limit after the
+main venv; a second finished the rest, and submitted the CPU check jobs at
+the owner's word (`73948`, `73949`, `73950`). Departures: `docs: m3 plan` was already
 committed (`c8b431f`), so S1's first commit is the feat; S1 also wrote
 `scripts/fetch_m3_models.py` and `scripts/check_m3_env.py`, which the
 plan's layout didn't name, and `slurm/m3_cpu.sbatch` (planned for S2) with
@@ -1048,21 +1048,56 @@ a first task, `env`.
     isn't a "device"), so the CPU check generates 8 tokens, whose log names
     the variant loaded;
   - the login node `mn1` is a Xeon Gold 6442Y too (2 × 24 cores, 96
-    threads) with AVX-512 BF16 and AMX.
+    threads) with AVX-512 BF16 and AMX;
+  - **its AMX variant dies on the cluster** (below), so
+    `libggml-cpu-sapphirerapids.so` is kept in `build/bin/disabled/` (with
+    a README saying why): ggml scans `build/bin` only, not its folders, and
+    picks the best of the 13 left, `zen4` (AVX-512 VBMI, VNNI, BF16).
 - **Found in passing (M2b's):** the cluster's `.env` sets only
   `EXPDATE_DIR`, `CHECKPOINT_DIR`, `GENERATED_DIR`; M2b's dry run says
   "`$STORE_TRAIN_DIR` unset". The export is there (`~/bestbefore-data/store`,
   mode 700). M2b S10 and M3 S2 both need the line added; not changed here.
-- **The CPU check, the owner's job:** `cd ~/bestbefore && sbatch
-  --cpus-per-task=4 --mem=16G --time=00:30:00 slurm/m3_cpu.sbatch env`.
-  It cuts real-val's first date crop (`img_00003.jpg`, `21.05.26`, about
-  234 × 17 px with a 0.15 margin), reads it with PaddleOCR's recogniser
-  alone and its full pipeline and with RapidOCR, all from local files with
-  no internet, loads Qwen3-VL's config and processor offline, opens the
-  ONNX recogniser, and runs llama.cpp's binaries. Its log is read in S2's
-  session, or here if it ends first.
-- **Not checked:** the CPU check itself (above); llama.cpp loading a GGUF
-  or reading a photo (S7); `convert_hf_to_gguf.py`'s Python needs (S7: they
+- **The CPU check** (`sbatch --cpus-per-task=4 --mem=16G --time=00:30:00
+  slurm/m3_cpu.sbatch env`, on `short`; `cn1` each time, kernel
+  `4.18.0-477.10.1.el8_8`, no internet):
+  - **job `73948` (`3414dea`) failed, in llama.cpp only.** Everything
+    before it passed, as in `73950` below; then `llama-completion` died
+    with **`Illegal instruction`** at its first computation (the warm-up),
+    after loading the `sapphirerapids` variant;
+  - **job `73949`, a one-off diagnosis** (in `~/bestbefore-data/env/
+    m3-s1/diag/`, not in the repo): a small C test runs AMX tile
+    instructions on `cn1` after the same permission request ggml makes
+    (`arch_prctl`, XTILEDATA granted), so AMX itself works there; the
+    `sapphirerapids` variant, with Q8_0 weights repacked into its AMX
+    buffer, dies with SIGILL again; and each other variant, forced alone
+    beside a copy of the binary, runs: `zen4`, `cooperlake`, `icelake`,
+    `cascadelake`, `skylakex`, `haswell` at **22.4 to 23.0 tokens a
+    second** on 4 CPUs, `x64` at 10.5. So the fault is in `b12017`'s AMX
+    path, not the node; why wasn't looked into;
+  - **job `73950` (`9e14f5e`) passed**, in 32 s: the main venv's packages
+    at their versions; Qwen3-VL-2B's config and processor offline in 0.3 s
+    (`Qwen3VLProcessor`, patch 16, merge 2: a visual token per 32 × 32 px;
+    pixels between 65,536 and 16,777,216 by default, so S7 sets its own
+    cap); the safetensors config is `pp_ocrv6_small_rec`; the ONNX
+    recogniser takes `x [N, 3, 48, W]` and gives **18,710 classes** a frame;
+    the crop, real-val's first date (`img_00003.jpg`, `21.05.26`, 240 ×
+    23 px with a 0.15 margin). In `ocr-cpu`: PaddleOCR loads all three
+    models from the local cache; **the recogniser alone reads
+    `21.05.26`, score 0.996** (0.09 s); **the full pipeline finds no text
+    line** on that crop (0 lines), nor does **RapidOCR's** (0 lines): one
+    crop, no evidence yet, but S2's question in small. llama.cpp loads
+    `zen4` and runs 84 tokens a second on the prompt, 23 generating;
+  - **ONNX Runtime pins a thread per core of the whole node** unless told
+    how many: inside a 4-CPU job each pin fails (`pthread_setaffinity_np
+    failed ... Specify the number of threads explicitly`). Harmless here,
+    but 48 threads on 4 CPUs would crawl, so every session of ours sets
+    `intra_op_num_threads` to the job's CPUs (the check does since
+    `9e14f5e`); RapidOCR's own sessions still print it (129 lines);
+  - `sacct`'s `MaxRSS` for `73950` reads **27.5 GB under a 16 GB limit**,
+    and the job wasn't killed: the sample overcounts here (shared or mapped
+    pages counted more than once, likely; not looked into).
+- **Not checked:** llama.cpp loading the projector or reading a photo
+  (S7); `convert_hf_to_gguf.py`'s Python needs (S7: they
   may want their own venv); the PyTorch route for PP-OCRv6 (S6); Paddle's
   GPU build (`~/venvs/paddle-gpu`, only if S6 picks the Paddle route);
   whether the GPU nodes' CPUs match the CPU nodes' (llama.cpp picks its
