@@ -16,10 +16,12 @@ from .samples import Sample
 # tags; gen-v2-sample, gen-v2, synth-val-v2: M2b's, under $GENERATED_DIR/m2b/,
 # with real-val-rot180 (the validation photos turned 180°).
 # store: store test set v1 (store.V1), the retailer's photos that M0 to
-# M2 were tested on.
+# M2 were tested on. v1-val: its validation part from M2b on, with v3's
+# (S5b), as the store export in $STORE_TRAIN_DIR holds it: numbered copies,
+# the M2b suite's store set (m2b.load_v1_val).
 DERIVED = {**m2.DERIVED_SETS, **m2b.DERIVED_SETS}
 GENERATED = {**m2.GENERATED_SETS, **m2b.GENERATED_SETS}
-NAMES = (*expdate.SPLITS, "real-val", *DERIVED, *GENERATED, "store")
+NAMES = (*expdate.SPLITS, "real-val", *DERIVED, *GENERATED, "store", m2b.STORE_SET)
 
 
 def load_set(name: str) -> list[Sample]:
@@ -36,10 +38,13 @@ def load_set(name: str) -> list[Sample]:
         return derived.load_yolo_set(home.list_path(GENERATED[name]), home.sidecar_path(GENERATED[name]))
     if name == "store":
         return store.load_samples(store.V1)
+    if name == m2b.STORE_SET:
+        return m2b.load_v1_val()
     raise ValueError(f"unknown set {name!r}; one of {', '.join(NAMES)}")
 
 
 def runs_root(name: str) -> Path | None:
     """Where a run on this set keeps its files: data/store/runs/ for the
-    store photos, which never go into results/; the default otherwise."""
-    return store.RUNS_DIR if name == "store" else None
+    store photos (v1-val's too), which never go into results/; the default
+    otherwise."""
+    return store.RUNS_DIR if name in ("store", m2b.STORE_SET) else None

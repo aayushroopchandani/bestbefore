@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import random
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -369,6 +369,83 @@ def frozen_problems(drift: dict) -> list[str]:
     return [f"{kind}: {drift[kind]['changed']} of {drift[kind]['values']} values changed, "
             f"by up to {drift[kind]['max_abs']:.3g}"
             for kind in ("conv", "bn_affine") if drift.get(kind, {}).get("changed")]
+
+
+# --- The M2b suite (S10) ---------------------------------------------------------
+
+# Every run is scored on these ("The validation suite, M2b"): M2's four sets,
+# real-val-rot180, synth-val-v2 (per stratum) and v1-val, the store set:
+# store set v1's validation part with v3's (S5b), as the store export holds it.
+STORE_SET = "v1-val"
+SUITE = (*m2.SUITE, *DERIVED_SETS, "synth-val-v2", STORE_SET)
+SUITE_FILE = "suite-m2b.json"
+# Cause 4's size bands: a date's box short side over its photo's long side.
+SIZE_BANDS = (("under 1.5%", 0.0, 0.015), ("1.5-2.5%", 0.015, 0.025), ("2.5% and up", 0.025, float("inf")))
+
+
+def suite_list(name: str) -> Path:
+    """The image list behind an M2b suite set."""
+    if name == STORE_SET:
+        folder = store_train_dir()
+        return folder / read_json(folder / "manifest.json")["settings"]["lists"]["val"]
+    if name in m2.SUITE:
+        return m2.list_file(m2.SUITE[name])
+    return list_path({**DERIVED_SETS, **GENERATED_SETS}[name])
+
+
+def suite_missing(name: str) -> str | None:
+    """Why an M2b suite set can't be scored yet, or None."""
+    if name == STORE_SET:
+        return store_export_missing()
+    if name in m2.SUITE:
+        return m2.suite_missing(name)
+    return list_missing({**DERIVED_SETS, **GENERATED_SETS}[name])
+
+
+def load_v1_val(folder: Path | None = None) -> list:
+    """v1-val as Samples: the export's validation photos, numbered (v1-0004,
+    v3-0002, ...), each box labelled as the manifest names it in its label
+    file's order (expiry, mfg, other_date, or a keyword's class), so expiry
+    dates count apart, and each photo with its failure tag. A label file
+    whose classes don't follow its manifest is refused."""
+    from .store_train import YOLO_LABEL
+
+    folder = folder or store_train_dir()
+    manifest = read_json(folder / "manifest.json")
+    samples = []
+    for image in derived.read_list(folder / manifest["settings"]["lists"]["val"]):
+        sample, photo = derived.load_sample(image), manifest["photos"][image.stem]
+        if [YOLO_LABEL[label] for label in photo["labels"]] != [b.label for b in sample.boxes]:
+            raise ValueError(f"{image.name}: its label file doesn't follow its labels in the manifest")
+        samples.append(replace(sample, tag=photo["tag"], boxes=tuple(
+            replace(b, label=label) for b, label in zip(sample.boxes, photo["labels"]))))
+    return samples
+
+
+def date_size(box, width: int, height: int) -> float:
+    """A date's size as the store measures it (Cause 4): its box's short
+    side over its photo's long side, so a sideways date counts its height."""
+    x1, y1, x2, y2 = box.xyxy
+    return min((x2 - x1) * width, (y2 - y1) * height) / max(width, height)
+
+
+def found_by_size(samples: Sequence, at_05, threshold: float, threshold_m2: float) -> dict:
+    """The labelled dates of `samples` by size band: per band, how many,
+    how many found at IoU 0.5 at `threshold` and at `threshold_m2`, and how
+    many boxed at any confidence. `at_05` is detection_eval.evaluate's
+    matching of these samples, which lists their dates in this same order."""
+    from .samples import DATE_LABELS
+
+    sizes = [date_size(b, s.width, s.height) for s in samples for b in s.boxes if b.label in DATE_LABELS]
+    if len(sizes) != len(at_05.truth_conf):
+        raise ValueError(f"{len(sizes)} dates, but {len(at_05.truth_conf)} matched")
+    out = {}
+    for band, low, high in SIZE_BANDS:
+        conf = [c for c, size in zip(at_05.truth_conf, sizes) if low <= size < high]
+        out[band] = {"dates": len(conf), "found": sum(c >= threshold for c in conf),
+                     "found_at_threshold_m2": sum(c >= threshold_m2 for c in conf),
+                     "boxed_at_any_confidence": sum(c >= 0.0 for c in conf)}
+    return out
 
 
 # --- Run records ----------------------------------------------------------------

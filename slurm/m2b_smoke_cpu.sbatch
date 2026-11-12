@@ -11,7 +11,8 @@
 # step2: n1280-ft and n1280-ft2 from the control's seed 0, one epoch a stage
 #        on an epoch of 400 photos drawn by m2b.mix (store lines and every
 #        replay pool), before GPU job B's release; ft2's run records how its
-#        frozen stage moved the frozen layers.
+#        frozen stage moved the frozen layers. Then the ft smoke is scored on
+#        the M2b suite, so the suite's first real run isn't in the GPU job.
 #SBATCH --job-name=m2b-smoke-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -39,6 +40,7 @@ case "$task" in
                 --epoch-photos 400 --device cpu --name "smoke-$arm-cpu" --workers 8
             echo "$arm done $(date '+%F %T')"
         done
+        python scripts/score_suite.py --milestone m2b --suite m2b --run smoke-n1280-ft-cpu --device cpu
         ;;
     *)
         echo "unknown task $task: step1 or step2"

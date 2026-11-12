@@ -8,8 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
-from bestbefore import m2, m2b, runs, slurm
+from bestbefore import m2, m2b, runs, sets, slurm, store
 from bestbefore.derived import write_list
 
 # The list sizes M2's arms table was worked out from (test_m2_rules.py).
@@ -549,6 +550,9 @@ def test_frozen_drift_counts_what_a_frozen_stage_moved():
     assert m2b.frozen_problems(moved) == ["conv: 4 of 10 values changed, by up to 0.5"]
 
 
+BOXES = ("0.5 0.5 0.2 0.1", "0.2 0.5 0.1 0.1")     # each made-up photo's two boxes, in YOLO's form
+
+
 def made_up_export(folder: Path, photos_per_design: dict[str, int]) -> None:
     """A store export as export_store_yolo.py writes it, small: each training
     photo in its 4 turns, one validation photo, every file in the manifest
@@ -559,13 +563,14 @@ def made_up_export(folder: Path, photos_per_design: dict[str, int]) -> None:
     photos["v1-0900"] = {"part": "val", "design": "d99", "tag": "sideways", "labels": ["mfg", "expiry"]}
     folders = {"train": {"train_0": 0, "train_90": 1, "train_180": 2, "train_270": 3}, "val": {"val": 0}}
     lines = {"train": [], "val": []}
-    for name, p in photos.items():
+    for k, (name, p) in enumerate(photos.items()):
         for f in folders[p["part"]]:
-            for kind, ext, text in (("images", "jpg", f"{f}/{name}"),
-                                    ("labels", "txt", "0 0.5 0.5 0.2 0.1\n1 0.2 0.5 0.1 0.1\n")):
-                path = folder / kind / f / f"{name}.{ext}"
+            image, labels = folder / "images" / f / f"{name}.jpg", folder / "labels" / f / f"{name}.txt"
+            for path in (image, labels):
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text)
+            Image.new("RGB", (64, 48), (40 * k % 256, 90, 160)).save(image, quality=95)
+            classes = [{"expiry": 0, "mfg": 0, "due": 1}[label] for label in p["labels"]]
+            labels.write_text("".join(f"{c} {xywh}\n" for c, xywh in zip(classes, BOXES)))
             lines[p["part"]].append(f"./images/{f}/{name}.jpg\n")
     for part, name in (("train", "train.txt"), ("val", "val.txt")):
         (folder / name).write_text("".join(lines[part]))
@@ -745,3 +750,53 @@ def test_step_2_starts_only_from_its_step_1_runs_record(load_script, monkeypatch
     with pytest.raises(SystemExit, match="doesn't match its manifest"):
         script.main(["--milestone", "m2b", "--arm", "n1280-ft", "--name", "x", *SMOKE[2:], "--seed", "1"])
     assert calls == []
+
+
+# --- The M2b suite (S10) ---------------------------------------------------------------
+
+def test_the_m2b_suite_is_m2s_and_three_more_sets(monkeypatch, step2):
+    root, _ = step2
+    assert m2b.SUITE == ("real-val", "real-val-rot", "real-val-small", "synth-val", "real-val-rot180",
+                         "synth-val-v2", "v1-val")
+    assert m2b.suite_list("v1-val") == root / "store" / "val.txt"
+    assert m2b.suite_list("real-val") == root / "expdate" / "yolo" / "val.txt"
+    assert m2b.suite_list("real-val-rot180") == m2b.list_path("real_val_rot180")
+    assert m2b.suite_list("synth-val-v2") == m2b.list_path("synth_val_v2")
+    assert m2b.suite_missing("v1-val") is None and m2b.suite_missing("synth-val") is None
+    assert m2b.suite_missing("real-val-rot180").startswith("not made yet")
+    assert m2b.suite_missing("synth-val-v2").startswith("not made yet")
+    monkeypatch.delenv("STORE_TRAIN_DIR")
+    assert "$STORE_TRAIN_DIR unset" in m2b.suite_missing("v1-val")
+
+
+def test_v1_val_is_the_exports_validation_part_with_its_roles_and_tags(step2):
+    root, _ = step2
+    [sample] = sets.load_set("v1-val")
+    assert sample.id == "v1-0900.jpg" and sample.tag == "sideways" and (sample.width, sample.height) == (64, 48)
+    assert [b.label for b in sample.boxes] == ["mfg", "expiry"]          # the manifest's, in label-file order
+    assert sample.boxes[0].xyxy == pytest.approx((0.4, 0.45, 0.6, 0.55))
+    assert sets.runs_root("v1-val") == sets.runs_root("store") == store.RUNS_DIR
+    # A label file whose classes don't follow the manifest: refused.
+    (root / "store" / "labels" / "val" / "v1-0900.txt").write_text("1 0.5 0.5 0.2 0.1\n0 0.2 0.5 0.1 0.1\n")
+    with pytest.raises(ValueError, match="v1-0900.jpg: its label file doesn't follow"):
+        m2b.load_v1_val()
+
+
+def test_dates_by_size_band_as_the_store_measures_them():
+    from bestbefore.detection_eval import Prediction, evaluate
+    from bestbefore.samples import Box, Sample
+    boxes = {"small": (0.0, 0.0, 0.1, 0.01),          # 100 x 8 px on 1,000 x 800: 0.8%
+             "middle": (0.2, 0.2, 0.4, 0.22),         # 200 x 16 px: 1.6%
+             "sideways": (0.5, 0.1, 0.53, 0.4)}       # 30 x 240 px: its short side, 3%
+    photo = Sample("a.jpg", Path("/a.jpg"), 1000, 800,
+                   (Box("expiry", boxes["small"]), Box("due", (0.6, 0.6, 0.7, 0.7)), Box("mfg", boxes["middle"])))
+    other = Sample("b.jpg", Path("/b.jpg"), 1000, 800, (Box("other_date", boxes["sideways"]),))
+    preds = {"a.jpg": [Prediction("date", boxes["small"], 0.9), Prediction("date", boxes["middle"], 0.2)],
+             "b.jpg": []}
+    at_05 = evaluate([photo, other], preds, 0.5)
+    assert m2b.found_by_size([photo, other], at_05, threshold=0.5, threshold_m2=0.1) == {
+        "under 1.5%": {"dates": 1, "found": 1, "found_at_threshold_m2": 1, "boxed_at_any_confidence": 1},
+        "1.5-2.5%": {"dates": 1, "found": 0, "found_at_threshold_m2": 1, "boxed_at_any_confidence": 1},
+        "2.5% and up": {"dates": 1, "found": 0, "found_at_threshold_m2": 0, "boxed_at_any_confidence": 0}}
+    with pytest.raises(ValueError):
+        m2b.found_by_size([photo], at_05, 0.5, 0.1)

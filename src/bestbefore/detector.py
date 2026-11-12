@@ -280,6 +280,69 @@ def score_suite(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dic
     return out
 
 
+def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dict:
+    """Score a run on the M2b suite (docs/m2b-store-and-size.md, "The
+    validation suite, M2b"): M2's four sets, real-val-rot180, synth-val-v2
+    and v1-val, every one needed.
+
+    Two thresholds, each the best F2 for dates: `threshold`, on v1-val
+    (threshold_store, decision 13), and `threshold_m2`, on the three real
+    sets pooled (M2's rule, recorded beside it). Per set, as M2's suite: found
+    at IoU 0.5 and 0.3, precision and false boxes per photo at `threshold`,
+    the same at `threshold_m2` under at_threshold_m2, boxed at any
+    confidence, per stratum or tag where photos carry one, and Ultralytics'
+    mAP per class; v1-val's dates also by size band. Counts only: no box of
+    a photo is kept. Each set's dataset file and Ultralytics' (empty)
+    validation folders go under out_dir/suite-m2b/, never beside weights
+    another run owns (the control's are M2's).
+    """
+    from ultralytics import YOLO
+
+    from . import m2, m2b, sets
+
+    if lacking := m2.missing({name: m2b.suite_missing(name) for name in m2b.SUITE}):
+        raise FileNotFoundError(f"the M2b suite needs every set: {lacking}")
+    model = YOLO(str(checkpoint))
+    matched = {}
+    for name in m2b.SUITE:
+        samples = sets.load_set(name)
+        preds = predict_samples(model, samples, imgsz, device)
+        matched[name] = samples, evaluate(samples, preds, 0.5), evaluate(samples, preds, 0.3)
+    beta = m2.THRESHOLD_BETA
+    conf, f_store = best_threshold(matched[m2b.STORE_SET][1], beta=beta)
+    conf_m2, f_m2 = best_threshold(pooled([matched[n][1] for n in m2.THRESHOLD_SETS]), beta=beta)
+    out = {"checkpoint": str(checkpoint), "imgsz": imgsz, "suite": "m2b",
+           "threshold": conf, "threshold_rule": f"best F{beta:g} for dates on {m2b.STORE_SET}",
+           "f2_at_threshold": round(f_store, 4),
+           "threshold_m2": conf_m2,
+           "threshold_m2_rule": f"best F{beta:g} for dates on {' + '.join(m2.THRESHOLD_SETS)}, pooled",
+           "f2_at_threshold_m2": round(f_m2, 4), "missing": {}}
+    folder = out_dir / "suite-m2b"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in m2b.SUITE:
+        samples, at_05, at_03 = matched[name]
+        out[name] = _two_thresholds(at_05, at_03, conf, conf_m2)
+        tags = [t for t in dict.fromkeys(s.tag for s in samples) if t]
+        if tags:
+            out[name]["by_tag"] = {t: _two_thresholds(at_05, at_03, conf, conf_m2, {t}) for t in tags}
+        if name == m2b.STORE_SET:
+            out[name]["by_size"] = m2b.found_by_size(samples, at_05, conf, conf_m2)
+        listed = str(m2b.suite_list(name))
+        # Ultralytics wants a train entry too; validating never reads it.
+        data = dataset_yaml(expdate_dir() / "yolo", [listed], folder / f"{name}.yaml", val=listed)
+        out[name].update(_val_metrics(model, data, "val", imgsz, device, folder / "val", name, conf))
+    return out
+
+
+def _two_thresholds(at_05: Matches, at_03: Matches, conf: float, conf_m2: float,
+                    tags: set | None = None) -> dict:
+    """_summaries at the M2b suite's threshold, and found at IoU 0.5 and 0.3
+    at M2's threshold beside them."""
+    return {**_summaries(at_05, at_03, conf, tags),
+            "at_threshold_m2": {"iou0.5": summary(at_05, conf_m2, tags),
+                                "iou0.3": summary(at_03, conf_m2, tags)}}
+
+
 def _val_metrics(model, data: Path, split: str, imgsz: int, device, project: Path | None,
                  name: str, conf: float) -> dict:
     """Ultralytics' mAP per class on one split of a dataset file, and its own
