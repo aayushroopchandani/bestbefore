@@ -2,10 +2,12 @@
 
 Planned 2026-11-11, after a discussion with the owner the same day (the
 three readers, the data, the baselines, the crop experiment). Status:
-**planned**, no slice started. M2b is still in progress (S9's generation
-job is next there); every slice here that needs one of M2b's outputs says
-so. The learnings guide (`learnings/m3.md`) is written separately, later,
-as for M2.
+**in progress**; S1 done on the cluster 2026-11-12 (GPU jobs `73946` and
+`73947` held; the main venv extended with M2b unchanged; `ocr-cpu`; the
+models fetched and hashed; llama.cpp built), its CPU check waiting for
+the owner's job. Next: S2. M2b is still in progress (S10 next there);
+every slice here that needs one of M2b's outputs says so. The learnings
+guide (`learnings/m3.md`) is written separately, later, as for M2.
 
 **Goal.** Read the expiry date on a photo: find every date (M2b's
 detector), read each one (a reader trained on cropped dates), tell the
@@ -947,54 +949,124 @@ packages; `paddleocr` reads one real-val crop on a CPU node with both
 models; files hashed. **Commits:** `docs: m3 plan` (this file, first),
 `feat: m3 gpu job script and the read and vlm extras`
 
-**In progress 2026-11-12** (the session stopped at a usage limit; the
-rest of S1 is listed under *Left*). Departure: `docs: m3 plan` was
-already committed (`c8b431f`), so S1's first commit is the feat.
+**Done on the cluster 2026-11-12, except the CPU check** (the owner's
+job, below). A first session stopped at a usage limit after the main venv;
+a second finished the rest. Departures: `docs: m3 plan` was already
+committed (`c8b431f`), so S1's first commit is the feat; S1 also wrote
+`scripts/fetch_m3_models.py` and `scripts/check_m3_env.py`, which the
+plan's layout didn't name, and `slurm/m3_cpu.sbatch` (planned for S2) with
+a first task, `env`.
 
-- **The queue at 17:33** (`squeue --me`): M2b's `73832` and `73906`, both
+- **The queue.** At 17:33 (`squeue --me`): M2b's `73832` and `73906`, both
   held, nothing running; S9's job `73944` `COMPLETED` (14:34 to 15:00). Two
-  queued, so the rule gives **two** held M3 jobs (4 of 5, one slot free).
-  `slurm/m3_gpu.sbatch` (`421f2c6`) is on the cluster; the owner submits
-  `cd ~/bestbefore && sbatch --hold slurm/m3_gpu.sbatch` twice. It checks
-  for `m3_chain.sh` before `nvidia-smi` (tested on the laptop: exit 1
-  without it, the chain run with it).
-- **Quota:** 182.1 GB of 950 used (`lfs quota`), before any M3 download.
+  queued, so the rule gave **two** held M3 jobs. `slurm/m3_gpu.sbatch`
+  (`421f2c6`) checks for `m3_chain.sh` before `nvidia-smi` (tested on the
+  laptop: exit 1 without it, the chain run with it). The owner submitted
+  **`73946` and `73947`** at 17:52:44; at 18:50 both `PENDING`,
+  `JobHeldUser`, `gpu`, 24 CPUs, 96 GB, 3 days: 4 of 5 submitted, one slot
+  for CPU jobs.
+- **Quota:** 182.1 GB of 950 before, 191.1 GB after the downloads (models
+  7.1 GB, `ocr-cpu` 1.4 GB, llama.cpp's build).
 - **The main venv**, with no M2b job running: `pip install -e
   ".[read,vlm]"` with a constraints file of all 68 installed packages
   (`pip freeze --exclude-editable`), so nothing installed could move. The
   freeze before and after differ by **28 added packages and nothing else**
   (torch `2.11.0+cu128`, ultralytics 8.4.177, numpy 2.4.6, OpenCV 5.0.0,
   Pillow 12.3.0 kept); `pip check` clean. transformers 5.22.2 (the newest)
-  needs no other torch. Added: transformers 5.22.2, peft 0.21.2,
-  accelerate 1.15.0, lmdb 3.0.0, onnx 1.23.2, onnxruntime 1.31.1 (CPU and
-  Azure providers), huggingface_hub 2.4.0, tokenizers 0.23.3, safetensors
-  0.8.0, protobuf 7.36.2 and their own dependencies. Records in
-  `~/bestbefore-data/env/m3-s1/` (freezes, constraints, dry runs, test
-  output).
+  needs no other torch, so no separate venv. Added: transformers 5.22.2,
+  peft 0.21.2, accelerate 1.15.0, lmdb 3.0.0, onnx 1.23.2, onnxruntime
+  1.31.1 (CPU and Azure providers), huggingface_hub 2.4.0, tokenizers
+  0.23.3, safetensors 0.8.0, protobuf 7.36.2 and their own dependencies.
+  Records in `~/bestbefore-data/env/m3-s1/` (freezes, constraints, dry
+  runs, test output, the build log).
 - **M2b unchanged:** `m2b_chain.py --dry-run` prints the same 36 lines
   before and after; the whole suite gives 737 passed, 2 skipped before and
   after (the same two skips, laptop-only data and pixels), output identical
-  but for timing.
+  but for timing (4 min 45 s and 2 min 57 s on the login node, niced).
 - **transformers 5.22.2 holds** `Qwen3VLForConditionalGeneration`, and
   PP-OCRv6 as `pp_ocrv6_small_rec`, `pp_ocrv6_tiny_rec`,
   `pp_ocrv6_small_det` and `pp_ocrv6_medium_det` (also PP-OCRv5's four,
   `pp_lcnet_v4`): S6's PyTorch route has a model to check.
-- **`ocr-cpu`'s dry run** (`~/venvs/ocr-cpu` made, nothing installed yet):
-  paddlex 3.7.2 pins `opencv-contrib-python==4.10.0.84`, RapidOCR 1.2.3
-  pulls `opencv-python` (5.0.0.93): two packages writing one `cv2/`. To do:
-  install RapidOCR with `--no-deps` (its other needs come with paddlex,
-  plus `six`), one OpenCV; Pillow pinned to 12.3.0 as in the main venv.
-  paddlex caps numpy below 2.4 (2.3.5 there).
+- **`~/venvs/ocr-cpu`** (Python 3.11.11, pip 24.0 as a fresh venv brings):
+  paddlepaddle 3.2.0 (CPU, no CUDA), paddleocr 3.7.0, paddlex 3.7.2,
+  rapidocr-onnxruntime 1.2.3, onnxruntime 1.31.1, numpy 2.3.5 (paddlex
+  caps it below 2.4), Pillow 12.3.0 (pinned to the main venv's, so both
+  decode a crop alike); 73 packages, 1.4 GB. **One OpenCV:** paddlex pins
+  `opencv-contrib-python==4.10.0.84` and RapidOCR asks for
+  `opencv-python` (the resolver chose 5.0.0.93), two packages writing one
+  `cv2/`; so RapidOCR went in with `--no-deps` (all its other needs come
+  with paddlex, plus `six`). `pip check`'s one complaint is that, as
+  expected; `cv2` is 4.10.0, contrib modules present. Note for S2:
+  RapidOCR here runs on OpenCV 4.10, baselines A and B ran on the laptop's.
+- **PaddleOCR's models.** PaddleX 3.7.2 knows PP-OCRv6 `tiny`, `small` and
+  `medium`, detector and recogniser, each with `_pretrained` training
+  weights. Its OCR pipeline defaults to the medium pair, plus
+  `PP-LCNet_x1_0_textline_ori` (the angle classifier), and page
+  orientation and unwarping models (for scanned pages: off on crops, not
+  fetched). Its detector enlarges an image only when its short side is
+  under **64 px** (`limit_type: min`), against RapidOCR 1.2.3's 736:
+  Scanify's crop failure shouldn't repeat there as it did, which S2 will
+  show. PaddleX fetches `PaddlePaddle/<model>` from Hugging Face into
+  `$PADDLE_PDX_CACHE_HOME/official_models/`, and finds them there offline
+  with `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`; fonts are fetched only
+  to draw results.
+- **The downloads** (`scripts/fetch_m3_models.py`, into
+  `$CHECKPOINT_DIR/pretrained/` beside the YOLO weights): PP-OCRv6 small
+  recogniser (Paddle, ONNX, safetensors), small detector, the angle
+  classifier, the recogniser's `.pdparams` training weights, Qwen3-VL-2B-
+  Instruct and the official GGUF (Q8_0, F16 projector). 43 files, 7.1 GB,
+  each repo pinned to its commit, every LFS file matching Hugging Face's
+  SHA-256; all in `docs/datasets.md`. From the login node: Qwen's 4.27 GB
+  in 40 s, the GGUF pair's 2.65 GB in 30 s, the `.pdparams` (124.9 MB)
+  from Baidu's BOS in 20 s. The recogniser's dictionary is inside its
+  `inference.yml` (no separate file).
+- **Licences:** all **Apache-2.0** (model cards), none gated; the
+  `.pdparams` states none itself and is PaddleOCR's (Apache-2.0); the
+  GGUF repo has no LICENSE file, only its card's tag. Nothing stops this
+  use.
+- **llama.cpp** at tag **`b12017`** (commit `5047748f`, 2026-10-30, about
+  two weeks old; every build tag is published as a prerelease), in
+  `~/opt/llama.cpp`, built on the login node with `module load
+  cmake/3.31.4` and **gcc-toolset-12** (`source
+  /opt/rh/gcc-toolset-12/enable`: gcc 12.2.1, binutils 2.38), 4 threads,
+  niced: 269 s, 124 MB. Options `GGML_NATIVE=OFF GGML_BACKEND_DL=ON
+  GGML_CPU_ALL_VARIANTS=ON LLAMA_CURL=OFF LLAMA_USE_PREBUILT_UI=OFF`, no
+  tests or examples: 14 CPU variants (x64 to Sapphire Rapids, Zen 4), the
+  best picked when a binary starts, so one build serves every node.
+  Binaries include `llama-server`, `llama-mtmd-cli`, `llama-completion`,
+  `llama-cli`, `llama-quantize`. Found on the way:
+  - **the first build failed**, with the default compiler (OpenHPC's gcc
+    12.3.0), on the Sapphire Rapids variant only: the system assembler,
+    binutils 2.30 (RHEL 8.8), doesn't know AMX instructions (`tileloadd`,
+    `tdpbssd`). gcc-toolset-12's assembles them;
+  - **llama.cpp's configure downloads a web UI** from a moving `latest`
+    tag by default (`LLAMA_USE_PREBUILT_UI=ON`): turned off, so the build
+    fetches nothing unpinned. `llama-server` runs without its web page; S7
+    needs only its HTTP API;
+  - `llama-server --version`: `0.8.0-dev (build 1, commit 5047748)` (build
+    1: a shallow clone); `llama-cli --list-devices` lists none (the CPU
+    isn't a "device"), so the CPU check generates 8 tokens, whose log names
+    the variant loaded;
+  - the login node `mn1` is a Xeon Gold 6442Y too (2 × 24 cores, 96
+    threads) with AVX-512 BF16 and AMX.
 - **Found in passing (M2b's):** the cluster's `.env` sets only
   `EXPDATE_DIR`, `CHECKPOINT_DIR`, `GENERATED_DIR`; M2b's dry run says
-  "`$STORE_TRAIN_DIR` unset". M2b S10 and M3 S2 both need it set to
-  `~/bestbefore-data/store`.
-- **Left:** `ocr-cpu`'s install; the downloads with SHA-256s, versions
-  and licences into `docs/datasets.md` (PP-OCRv6 small rec and det,
-  Qwen3-VL-2B-Instruct, the official GGUF); llama.cpp at a pinned tag
-  (`module load cmake/3.31.4`, gcc 12.3.0, 4 threads, all CPU variants);
-  `slurm/m3_cpu.sbatch env` with the one-crop PaddleOCR check; the owner's
-  `squeue` showing the held jobs; CLAUDE.md's cluster facts (owner's OK).
+  "`$STORE_TRAIN_DIR` unset". The export is there (`~/bestbefore-data/store`,
+  mode 700). M2b S10 and M3 S2 both need the line added; not changed here.
+- **The CPU check, the owner's job:** `cd ~/bestbefore && sbatch
+  --cpus-per-task=4 --mem=16G --time=00:30:00 slurm/m3_cpu.sbatch env`.
+  It cuts real-val's first date crop (`img_00003.jpg`, `21.05.26`, about
+  234 × 17 px with a 0.15 margin), reads it with PaddleOCR's recogniser
+  alone and its full pipeline and with RapidOCR, all from local files with
+  no internet, loads Qwen3-VL's config and processor offline, opens the
+  ONNX recogniser, and runs llama.cpp's binaries. Its log is read in S2's
+  session, or here if it ends first.
+- **Not checked:** the CPU check itself (above); llama.cpp loading a GGUF
+  or reading a photo (S7); `convert_hf_to_gguf.py`'s Python needs (S7: they
+  may want their own venv); the PyTorch route for PP-OCRv6 (S6); Paddle's
+  GPU build (`~/venvs/paddle-gpu`, only if S6 picks the Paddle route);
+  whether the GPU nodes' CPUs match the CPU nodes' (llama.cpp picks its
+  variant at run time either way).
 
 ### S2. The crop experiment · laptop, then a CPU job · *submits 1 CPU job*
 
