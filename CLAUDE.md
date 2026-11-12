@@ -233,7 +233,12 @@ this repo.
   `squeue --me` lists only our own jobs. While 2 of our jobs run, a waiting
   one shows reason `QOSMaxJobsPerUserLimit` (seen 2026-10-23).
   `sacct`'s `MaxRSS` is sampled, so it can be far under the true peak
-  (4.7 GB reported for 24 workers that each peaked near 0.9 GB, M2 S6).
+  (4.7 GB reported for 24 workers that each peaked near 0.9 GB, M2 S6),
+  and it can overcount too: 27.5 GB for a job limited to 16 GB that wasn't
+  killed (M3 S1, job 73950). **ONNX Runtime** starts a thread per core of
+  the whole node (48) and pins each unless told how many; inside a job's
+  cgroup every pin fails (`pthread_setaffinity_np failed`). Set
+  `intra_op_num_threads` to the job's CPUs in every session (M3 S1).
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. It is
@@ -328,7 +333,11 @@ this repo.
   also `gnu14/14.2.0`, `llvm/latest`, `intel/2025.0.4`. llama.cpp `b12017`
   is built in `~/opt/llama.cpp` (CPU only, every CPU variant, picked at
   run time; 269 s on 4 threads); its configure downloads a web UI from a
-  moving tag unless `LLAMA_USE_PREBUILT_UI=OFF` (M3 S1).
+  moving tag unless `LLAMA_USE_PREBUILT_UI=OFF` (M3 S1). **Its AMX variant
+  (`sapphirerapids`) dies with `Illegal instruction`** at the first
+  computation on `cn1`, though AMX itself runs there (a C test, job
+  73949), so it is kept in `build/bin/disabled/` and ggml picks `zen4`
+  (AVX-512 VNNI, BF16): Qwen3-VL-2B Q8_0 at 23 tokens a second on 4 CPUs.
 - **GPU driver:** 560.35.05 on both GPU nodes (`nvidia-smi` in M1's job on
   `cn6`, 2026-10-15, and M2's on `cn5`, 2026-10-24; the 570.86 first
   written here was seen on neither). Install PyTorch from the `cu128`
