@@ -236,7 +236,9 @@ this repo.
   (4.7 GB reported for 24 workers that each peaked near 0.9 GB, M2 S6).
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
-  number of files; about 65 GB was already used on 2026-10-14. **There is
+  number of files; about 65 GB was already used on 2026-10-14. It is
+  Lustre: `quota` prints nothing, and `lfs quota -h -u $USER /home` shows
+  it (182 GB used on 2026-11-12, after M2b S9). **There is
   no scratch filesystem** and `$SCRATCH` is unset; no purge policy was
   found. Millions of full-size damaged photos (M4) would not fit: make
   them on the fly, or store small crops (a million 30 KB crops is 30 GB).
@@ -246,7 +248,9 @@ this repo.
   took 15 to 40 ms on average, with stalls of up to 17 s. A GPU node's
   file cache makes a second read fast: Ultralytics read `base`'s training
   photos at 7.6 MB/s cold on `cn5`, and at about 2.8 GB/s in the next run
-  minutes later (2026-10-24, M2 S7).
+  minutes later (2026-10-24, M2 S7). A CPU node's cache helps the same way:
+  a second job on `cn1` loaded the generator's backgrounds in 2.8 s,
+  against 24.8 s cold half an hour before (2026-11-12, M2b S9).
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
   model weights on the login node before submitting a job.
@@ -263,11 +267,20 @@ this repo.
   `~/bestbefore-data` is 775 and the umask 0002. The store export lives in
   `~/bestbefore-data/store/`. A `du` over all of `~/bestbefore-data` (M2's
   generated photos) ran over 5 minutes on the login node without finishing.
+- **Fetching files from it:** `scp` doesn't expand braces in a remote
+  path (it speaks SFTP); fetch several at once with
+  `ssh bbhpc 'cd DIR && tar cf - FILES' | tar xf -` (M2b S9).
 - **CPUs:** compute nodes are Intel Xeon Gold 6442Y (x86-64); the laptop
   is arm64. With the same library versions, floating-point results still
   differ in their last bits, so generated photos match the laptop's
   byte for byte only mostly (85% in M2 S6; the rest within a few grey
-  levels). A busy 24-CPU job ran the generator about 1.6 times slower per
+  levels). gen-v2 (M2b S9) matched for about 90% of photos, and 11 of
+  7,400 sidecar lines differed (a block placed elsewhere, a box 1 px off,
+  the JPEG quality drawn after the noise), never a block's size. A photo
+  that drifts draws its later blocks its own way, so a crash can be met on
+  the cluster only: S9's first job crashed on a photo the laptop draws
+  fine. A gen-v2 worker peaked at 1.8 GB there, twice the laptop's
+  measure, so its 24 workers asked 48 GB. A busy 24-CPU job ran the generator about 1.6 times slower per
   photo than the laptop's cores. The laptop (8 GB of RAM) can't train at
   1,280 px: a batch of 16 keeps 13 to 55 GiB for the backward pass
   (yolo11n to yolo11m), and even a 1-photo run froze it in Ultralytics'

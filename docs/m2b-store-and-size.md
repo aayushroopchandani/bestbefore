@@ -2573,6 +2573,10 @@ held), none running. What was found:
   photo 17,868 drifted from the laptop's; whether another crash only the
   cluster's drifts can reach remains (the job made all 202,400 photos);
   a deliberate-bug run (none asked); the learnings guide (not written).
+- **`CLAUDE.md`** gained, with the owner's OK: the Lustre quota command,
+  a CPU node's cache, fetching several files with `tar` over `ssh`, and
+  gen-v2's match with the laptop, its crash met only on the cluster and
+  its workers' 1.8 GB.
 
 ### S10. Step 2 and the M2b suite · laptop · *releases job B*
 
