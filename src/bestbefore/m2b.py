@@ -468,10 +468,130 @@ def decisions_path(root: Path | None = None) -> Path:
     return (root or runs.RUNS_DIR) / "m2b-decisions.json"
 
 
+def suite_of(run: str, root: Path | None = None) -> dict | None:
+    """A finished run's M2b suite (suite-m2b.json); None until it is scored."""
+    run_dir = finished_run(run, root)
+    return read_json(run_dir / SUITE_FILE) if run_dir else None
+
+
+def arm_suites(arm: str, root: Path | None = None) -> list[dict | None]:
+    """An arm's M2b suite for every seed, in SEEDS order; None where a seed
+    isn't scored yet. n1280's are the control's."""
+    return [suite_of(f"{arm}-s{s}", root) for s in SEEDS]
+
+
+# --- The decision rules (written before any M2b run, "Decision rules") ------------
+
+NOISE = 0.01               # real-val and synth-val, as M2
+NOISE_STORE_MIN = 0.03     # v1-val: one date of about 60 is about 1.7 points
+GUARDED = ("real-val", "synth-val")
+
+
+def v1_val_map50(suites: Sequence[dict]) -> float:
+    """Mean mAP@0.5 for dates on v1-val over the seeds' M2b suites."""
+    return m2.map50_date(suites, (STORE_SET,))
+
+
+def noise_store(control: Sequence[dict]) -> float:
+    """The noise band on v1-val: the spread (highest minus lowest) of
+    mAP@0.5 for dates over the control's three seeds (M2's n1280, no
+    store training), at least NOISE_STORE_MIN. For means of 3 seeds, the
+    range is about a two-sigma band. Fixed once the control is scored,
+    before any M2b run is."""
+    values = [s[STORE_SET]["map50"]["date"] for s in control]
+    return max(max(values) - min(values), NOISE_STORE_MIN)
+
+
+def guard(suites: Sequence[dict], control: Sequence[dict]) -> bool:
+    """No forgetting: mean mAP@0.5 for dates on real-val and on synth-val,
+    each no more than NOISE under the control's."""
+    return all(m2.at_least(m2.map50_date(suites, (name,)), m2.map50_date(control, (name,)) - NOISE)
+               for name in GUARDED)
+
+
+def probe_m(m: dict, s: Sequence[dict], control: Sequence[dict]) -> bool:
+    """R1. m1280 earns 2 more seeds and step 2 only if seed 0's v1-val
+    mAP@0.5 beats every s1280 seed's, and it passes the guard."""
+    beats = all(m[STORE_SET]["map50"]["date"] > x[STORE_SET]["map50"]["date"] for x in s)
+    return beats and guard([m], control)
+
+
+def decide_recipe(n_runs: Mapping[str, Sequence[dict]], band: float, control: Sequence[dict]) -> str | None:
+    """R2, on n. Eligible: the guard. Then the highest mean v1-val
+    mAP@0.5; any recipe within `band` of it goes to the simplest. None if
+    no recipe passes the guard (S10): step 2 on s and m then waits for a
+    person, and so does R3."""
+    ok = [r for r in RECIPES if guard(n_runs[r], control)]
+    if not ok:
+        return None
+    best = max(v1_val_map50(n_runs[r]) for r in ok)
+    return next(r for r in ok if m2.at_least(v1_val_map50(n_runs[r]), best - band))
+
+
+CANDIDATES = ("n1280", "n1280-ft", "s1280", "s1280-ft", "m1280", "m1280-ft")
+#             cheapest first: inference cost, then training cost;
+#             "-ft" stands for R2's recipe (ft or ft2)
+
+
+def decide_detector(suites: Mapping[str, Sequence[dict | None]], band: float,
+                    control: Sequence[dict]) -> str:
+    """R3. Only candidates with all 3 seeds scored take part (without R1,
+    m1280 has one). Eligible: the guard. Then the highest mean v1-val
+    mAP@0.5; any candidate within `band` of it goes to the cheapest. The
+    M2b detector is that arm's seed 0, at its threshold_store, unless R4
+    adopts the ensemble. `suites` is keyed by CANDIDATES' names; n1280's
+    are the control's, so n1280 always takes part."""
+    scored = [c for c in CANDIDATES if c in suites and len(suites[c]) == len(SEEDS)
+              and None not in suites[c]]
+    ok = [c for c in scored if guard(suites[c], control)]
+    best = max(v1_val_map50(suites[c]) for c in ok)
+    return next(c for c in ok if m2.at_least(v1_val_map50(suites[c]), best - band))
+
+
+def candidate_runs(recipe: str, with_m: bool) -> dict[str, str]:
+    """R3's candidates and the arm each stands for: "-ft" is R2's recipe;
+    m1280 and m1280-ft take part only once R1 has given m its seeds."""
+    sizes = ("n", "s", "m") if with_m else ("n", "s")
+    return {c: c.replace("-ft", f"-{recipe}") for c in CANDIDATES if c[0] in sizes}
+
+
 def decisions(root: Path | None = None) -> dict:
-    """Every decision whose inputs are complete: none yet. S10 adds the
-    noise band and rules R1 to R3, which need the M2b suite."""
-    return {}
+    """Every decision whose inputs are complete, from the runs' M2b suites:
+    the noise band (the control's three seeds), R1 (m1280-s0 and s1280's
+    seeds), R2 (n1280-ft and -ft2) and R3 (every candidate, once R1 and R2
+    are known and each candidate's seeds are scored). The chain writes them
+    to results/runs/m2b-decisions.json; the experiments' summarise.py work
+    them out again with this same function and compare."""
+    out: dict = {}
+    control = arm_suites(CONTROL, root)
+    if None in control:
+        return out
+    band = noise_store(control)
+    values = [s[STORE_SET]["map50"]["date"] for s in control]
+    out["noise_store"] = {"band": band, "spread": round(max(values) - min(values), 4),
+                          "control_v1_val_map50": values}
+    s1280, m1280 = arm_suites("s1280", root), suite_of("m1280-s0", root)
+    if None not in s1280 and m1280 is not None:
+        out["R1"] = {"passes": probe_m(m1280, s1280, control), "guard": guard([m1280], control),
+                     "m1280_s0_v1_val_map50": m1280[STORE_SET]["map50"]["date"],
+                     "s1280_v1_val_map50": [s[STORE_SET]["map50"]["date"] for s in s1280]}
+    n_runs = {r: arm_suites(f"{CONTROL}-{r}", root) for r in RECIPES}
+    if all(None not in seeds for seeds in n_runs.values()):
+        out["R2"] = {"recipe": decide_recipe(n_runs, band, control),
+                     "guard": {r: guard(n_runs[r], control) for r in RECIPES},
+                     "v1_val_map50": {r: round(v1_val_map50(n_runs[r]), 4) for r in RECIPES},
+                     "band": band}
+    if "R1" in out and (out.get("R2") or {}).get("recipe"):
+        arms = candidate_runs(out["R2"]["recipe"], out["R1"]["passes"])
+        suites = {c: arm_suites(arm, root) for c, arm in arms.items()}
+        if all(None not in seeds for seeds in suites.values()):
+            chosen = arms[decide_detector(suites, band, control)]
+            out["R3"] = {"arm": chosen, "run": f"{chosen}-s0",
+                         "threshold": suite_of(f"{chosen}-s0", root)["threshold"],
+                         "eligible": [arms[c] for c in suites if guard(suites[c], control)],
+                         "v1_val_map50": {arms[c]: round(v1_val_map50(suites[c]), 4) for c in suites},
+                         "band": band}
+    return out
 
 
 # --- The control (decision 12) ----------------------------------------------------

@@ -294,37 +294,54 @@ def test_the_chain_starts_with_stage_1_and_stage_2_waits_for_its_data(load_scrip
     stage2 = {t.name: current[t.name] for t in script.TASKS if t.stage == 2 and not t.score}
     assert len(stage2) == 17 and all(s.status == "waiting" for s in stage2.values())
     for name, s in stage2.items():
-        if name.startswith(("m2b-m1280-s1", "m2b-m1280-s2")):
-            assert "R1" in s.note
-            continue
-        for needed in ("store set v2's labels frozen (M0 D6)", "store set v1's export",
-                       "real_rot180, synth_rot180 not made yet", "step 2's code and rules (S10)"):
-            assert needed in s.note, (name, needed)
-        assert ("gen_v2" in s.note) == ("gen50k" not in name)      # the side arm keeps M2's gen50k
+        if name.startswith("m2b-m1280"):                        # m's seeds and step 2: R1 first
+            assert s.note.startswith("waiting for R1"), name
+        elif name.startswith("m2b-s1280"):                       # step 2 on s: R2 first
+            assert s.note.startswith("waiting for R2") and "<recipe>" in name, name
+        else:
+            for needed in ("store set v2's labels frozen (M0 D6)", "store set v1's export",
+                           "real_rot180, synth_rot180 not made yet"):
+                assert needed in s.note, (name, needed)
+            assert ("gen_v2" in s.note) == ("gen50k" not in name)      # the side arm keeps M2's gen50k
     assert current["score-m2b-smoke"].note == "waiting for m2b-smoke to finish"
-    assert sum(t.score for t in script.TASKS) == 7               # smoke, s x 3, m x 3
-    assert not any(t.score and t.arm == m2b.CONTROL for t in script.TASKS)   # M2 scored them
+    assert sum(t.score and t.suite == "m2" for t in script.TASKS) == 7   # smoke, s x 3, m x 3
+    assert not any(t.score and t.suite == "m2" and t.arm == m2b.CONTROL for t in script.TASKS)
+    # Every run but the smoke is scored on the M2b suite, the control's seeds first.
+    m2b_suite = [t for t in script.TASKS if t.score and t.suite == "m2b"]
+    assert len(m2b_suite) == 24 and [t.name for t in m2b_suite[:3]] == [
+        "suite-m2b-n1280-s0", "suite-m2b-n1280-s1", "suite-m2b-n1280-s2"]
 
 
-def test_stage_2_waits_for_s10_even_with_all_its_data(load_script, cluster, monkeypatch):
+def test_step_2_on_n_waits_for_each_of_its_data(load_script, step2, monkeypatch):
     script = load_script("m2b_chain")
-    monkeypatch.setattr(script.store, "TEST_SET_V2_SHA256", "0" * 64)
-    (cluster / "store").mkdir()
-    (cluster / "store" / "manifest.json").write_text("{}")
-    monkeypatch.setenv("STORE_TRAIN_DIR", str(cluster / "store"))
-    for name in m2b.STEP2_LISTS:
-        write_list(m2b.list_path(name), [Path(f"/{name}/0.jpg")])
-    m2b.manifest_path("derived").parent.mkdir(parents=True)
-    m2b.manifest_path("derived").write_text(json.dumps({"sets": {"real_rot180": {}, "synth_rot180": {}}}))
-    m2b.manifest_path("gen-v2").write_text(json.dumps({"complete": True}))
+    root, _ = step2
+    n_tasks = [t for t in script.TASKS if t.stage == 2 and t.arm in STEP2_N and not t.score]
+    assert len(n_tasks) == 9
+    assert all(states(script)[t.name].status == "ready" for t in n_tasks)       # S10's dry run
+    # Each piece of data, missing alone: v2 frozen, the store export on the cluster,
+    # gen-v2 (not the side arm's), the 180° sets.
+    frozen = script.store.TEST_SET_V2_SHA256
+    monkeypatch.setattr(script.store, "TEST_SET_V2_SHA256", None)
+    assert all("store set v2's labels frozen (M0 D6)" in states(script)[t.name].note for t in n_tasks)
+    monkeypatch.setattr(script.store, "TEST_SET_V2_SHA256", frozen)
+    monkeypatch.setenv("STORE_TRAIN_DIR", str(root / "nowhere"))
+    assert all("store set v1's export ($STORE_TRAIN_DIR/manifest.json; S6)" in states(script)[t.name].note
+               for t in n_tasks)
+    monkeypatch.setenv("STORE_TRAIN_DIR", str(root / "store"))
+    m2b.manifest_path("gen-v2").write_text(json.dumps({"complete": False}))
     current = states(script)
-    for task in script.TASKS:
-        if task.stage == 2 and task.arm not in m2b.STEP1:
-            assert current[task.name] == script.chain.State(
-                "waiting", "waiting for step 2's code and rules (S10)")
-    assert all(current[t.name].status == "waiting" for t in script.TASKS if t.stage == 2)
-    assert script.run_task(next(t for t in script.TASKS if t.stage == 2), {}) == (
-        "stage 2 isn't written yet (S10)")
+    for t in n_tasks:
+        assert (current[t.name].status == "ready") == t.arm.endswith("-gen50k"), t.name
+        if not t.arm.endswith("-gen50k"):
+            assert current[t.name].note == ("waiting for gen_v2 not yet vouched for by "
+                                            "m2b/manifests/gen-v2.json (S9's generation)")
+    m2b.manifest_path("gen-v2").write_text(json.dumps({"complete": True}))
+    m2b.list_path("real_rot180").unlink()
+    assert all(states(script)[t.name].note == "waiting for real_rot180 not made yet "
+               "(S9's derive_sets.py --only rot180)" for t in n_tasks)
+
+
+STEP2_N = ("n1280-ft", "n1280-ft2", "n1280-ft-gen50k")
 
 
 def test_what_stage_1_waits_for(load_script, cluster):
@@ -368,8 +385,16 @@ def test_each_kind_of_task_runs_as_planned(load_script, cluster, monkeypatch):
     monkeypatch.setattr(script.chain.Chain, "train", lambda self, cmd, run: asked.append(cmd[1:]))
     monkeypatch.setattr(script.chain, "score", lambda cmd, timeout: asked.append(cmd[1:]))
     named = {t.name: t for t in script.TASKS}
-    for name in ("m2b-smoke", "m2b-s1280-s1", "m2b-m1280-s0", "score-m2b-s1280-s1"):
+    for name in ("m2b-smoke", "m2b-s1280-s1", "m2b-m1280-s0", "score-m2b-s1280-s1", "m2b-n1280-ft2-s1",
+                 "suite-m2b-n1280-s0", "m2b-m1280-s2"):
         script.run_task(named[name], {})
+    assert asked[4:] == [
+        ["scripts/train_detector.py", "--milestone", "m2b", "--arm", "n1280-ft2", "--seed", "1",
+         "--name", "n1280-ft2-s1", "--workers", "8"],
+        ["scripts/score_suite.py", "--milestone", "m2b", "--run", "n1280-s0", "--suite", "m2b"],
+        ["scripts/train_detector.py", "--milestone", "m2b", "--arm", "m1280", "--seed", "2",
+         "--name", "m1280-s2", "--workers", "8"]]
+    del asked[4:]
     assert asked == [
         ["scripts/train_detector.py", "--milestone", "m2b", "--arm", "s1280", "--seed", "0",
          "--name", "smoke", "--epochs", "1", "--fraction", "0.02", "--workers", "8"],
@@ -400,7 +425,7 @@ def test_m2bs_chain_keeps_its_own_records_and_writes_nothing_in_a_dry_run(load_s
     chain_.dry_run(slurm.Claims(chain_.claims_dir(), None))
     assert sorted(p for p in cluster.rglob("*")) == before
     out = capsys.readouterr().out
-    assert out.startswith("stage 1: public data\n  m2b-smoke                  ready")
+    assert out.startswith(f"stage 1: public data\n  {'m2b-smoke':30s} ready")
     assert out.endswith("decisions: none yet\n")
 
 
@@ -800,3 +825,155 @@ def test_dates_by_size_band_as_the_store_measures_them():
         "2.5% and up": {"dates": 1, "found": 0, "found_at_threshold_m2": 0, "boxed_at_any_confidence": 0}}
     with pytest.raises(ValueError):
         m2b.found_by_size([photo], at_05, 0.5, 0.1)
+
+
+# --- The decision rules (written before any M2b run, "Decision rules") ------------------
+
+def m2b_suite(v1: float, real: float = 0.99, synth: float = 0.99, threshold: float = 0.25) -> dict:
+    """An M2b suite with the mAP@0.5 for dates the rules read."""
+    return {"threshold": threshold, "real-val": {"map50": {"date": real}},
+            "synth-val": {"map50": {"date": synth}}, "v1-val": {"map50": {"date": v1}}}
+
+
+def three(v1: float, **kw) -> list[dict]:
+    return [m2b_suite(v1, **kw)] * 3
+
+
+CONTROL = [m2b_suite(0.80), m2b_suite(0.85), m2b_suite(0.82)]
+
+
+def test_the_noise_band_and_the_guard():
+    assert m2b.noise_store(CONTROL) == pytest.approx(0.05)                      # the control's spread
+    assert m2b.noise_store(three(0.80)) == m2b.NOISE_STORE_MIN == 0.03          # at least 0.03
+    assert m2b.NOISE == m2.NOISE == 0.01
+    assert m2b.guard(three(0.5, real=0.98, synth=0.98), CONTROL)                # 0.01 under: still in
+    assert not m2b.guard(three(0.9, real=0.979), CONTROL)                       # forgot real-val
+    assert not m2b.guard(three(0.9, synth=0.979), CONTROL)                      # forgot synth-val
+    assert m2b.guard(CONTROL, CONTROL)
+
+
+def test_r1_gives_m_its_seeds_only_if_it_beats_every_s_seed():
+    s = [m2b_suite(0.86), m2b_suite(0.90), m2b_suite(0.88)]
+    assert m2b.probe_m(m2b_suite(0.91), s, CONTROL)
+    assert not m2b.probe_m(m2b_suite(0.90), s, CONTROL)            # a tie with the best s seed doesn't beat it
+    assert not m2b.probe_m(m2b_suite(0.95, real=0.97), s, CONTROL)  # beats them all, but forgets real-val
+
+
+def test_r2_takes_the_simplest_recipe_within_the_band():
+    def recipes(ft, ft2, **kw):
+        return {"ft": three(ft), "ft2": three(ft2, **kw)}
+    assert m2b.decide_recipe(recipes(0.85, 0.87), 0.03, CONTROL) == "ft"     # within the band: the simplest
+    assert m2b.decide_recipe(recipes(0.85, 0.88), 0.03, CONTROL) == "ft"     # the band's edge: still in it
+    assert m2b.decide_recipe(recipes(0.85, 0.89), 0.03, CONTROL) == "ft2"    # beyond it
+    assert m2b.decide_recipe(recipes(0.85, 0.95, synth=0.95), 0.03, CONTROL) == "ft"   # ft2 forgets: out
+    assert m2b.decide_recipe({"ft": three(0.9, real=0.9), "ft2": three(0.9, synth=0.9)}, 0.03, CONTROL) is None
+
+
+def test_r3_takes_the_cheapest_candidate_within_the_band():
+    suites = {"n1280": CONTROL, "n1280-ft": three(0.86), "s1280": three(0.84), "s1280-ft": three(0.88),
+              "m1280": [m2b_suite(0.99), None, None], "m1280-ft": [None] * 3}
+    assert m2b.decide_detector(suites, 0.03, CONTROL) == "n1280-ft"            # within 0.03 of s1280-ft
+    assert m2b.decide_detector({**suites, "s1280-ft": three(0.90)}, 0.03, CONTROL) == "s1280-ft"
+    assert m2b.decide_detector({**suites, "s1280-ft": three(0.95, real=0.95)}, 0.03, CONTROL) == "n1280-ft"
+    # The control's mean is 0.823: s1280 must beat it by more than the band to be chosen over it.
+    only_s = {**suites, "n1280-ft": three(0.70), "s1280": three(0.86), "s1280-ft": three(0.70)}
+    assert m2b.decide_detector(only_s, 0.03, CONTROL) == "s1280"
+    assert m2b.decide_detector({**only_s, "s1280": three(0.84)}, 0.03, CONTROL) == "n1280"   # M2's weights
+    assert m2b.decide_detector({**suites, "m1280": three(0.99)}, 0.03, CONTROL) == "m1280"   # all 3 seeds: in
+    assert m2b.candidate_runs("ft2", with_m=False) == {"n1280": "n1280", "n1280-ft": "n1280-ft2",
+                                                       "s1280": "s1280", "s1280-ft": "s1280-ft2"}
+
+
+def scored(name: str, v1: float, **kw) -> Path:
+    """A finished M2b run with its M2b suite."""
+    run_dir = runs.start_run(f"m2b-{name}", {})
+    runs.update_run(run_dir, status="finished")
+    (run_dir / "suite-m2b.json").write_text(json.dumps(m2b_suite(v1, **kw)))
+    return run_dir
+
+
+def test_decisions_come_as_their_inputs_complete(monkeypatch, tmp_path):
+    for root, m in ((tmp_path / "a", 0.85), (tmp_path / "b", 0.90)):     # R1 fails, then passes
+        monkeypatch.setattr(runs, "RUNS_DIR", root)
+        root.mkdir()
+        assert m2b.decisions() == {}
+        for s, v in enumerate((0.80, 0.82, 0.81)):
+            scored(f"n1280-s{s}", v)
+        assert m2b.decisions() == {"noise_store": {"band": 0.03, "spread": 0.02,
+                                                   "control_v1_val_map50": [0.80, 0.82, 0.81]}}
+        for s, v in enumerate((0.84, 0.85, 0.86)):
+            scored(f"s1280-s{s}", v)
+        scored("m1280-s0", m)
+        r1 = m2b.decisions()["R1"]
+        assert r1 == {"passes": m > 0.86, "guard": True, "m1280_s0_v1_val_map50": m,
+                      "s1280_v1_val_map50": [0.84, 0.85, 0.86]}
+        for s in m2b.SEEDS:
+            scored(f"n1280-ft-s{s}", 0.88)
+            scored(f"n1280-ft2-s{s}", 0.90)
+        r2 = m2b.decisions()["R2"]
+        assert (r2["recipe"], r2["v1_val_map50"], r2["guard"]) == (
+            "ft", {"ft": 0.88, "ft2": 0.9}, {"ft": True, "ft2": True})     # ft2 within the band of 0.03
+        for s in m2b.SEEDS:
+            scored(f"s1280-ft-s{s}", 0.95)
+        d = m2b.decisions()
+        if not r1["passes"]:          # without m, R3 has its four candidates
+            assert (d["R3"]["arm"], d["R3"]["run"], d["R3"]["threshold"]) == ("s1280-ft", "s1280-ft-s0", 0.25)
+            assert list(d["R3"]["v1_val_map50"]) == ["n1280", "n1280-ft", "s1280", "s1280-ft"]
+            continue
+        assert "R3" not in d          # R1 passed: R3 waits for m's seeds and its step 2
+        for s in (1, 2):
+            scored(f"m1280-s{s}", 0.90)
+        for s in m2b.SEEDS:
+            scored(f"m1280-ft-s{s}", 0.97)
+        d = m2b.decisions()
+        assert d["R3"]["arm"] == "s1280-ft"                        # 0.95 within 0.03 of m1280-ft's 0.97
+        assert list(d["R3"]["v1_val_map50"]) == ["n1280", "n1280-ft", "s1280", "s1280-ft", "m1280", "m1280-ft"]
+
+
+def test_step_2_on_s_and_m_waits_for_its_rules_and_takes_r2s_recipe(load_script, step2):
+    script = load_script("m2b_chain")
+    claims = slurm.Claims(script.CHAIN.claims_dir(), "73832")
+
+    def at(decisions: dict) -> dict:
+        return {t.name: s for t, s in script.CHAIN.states(decisions, claims, set()).items()}
+
+    State = script.chain.State
+    current = at({"R1": {"passes": False}, "R2": {"recipe": None}})
+    assert current["m2b-m1280-s1"] == State("blocked", "blocked: R1: m1280-s0 didn't earn m more seeds")
+    assert current["m2b-m1280-<recipe>-s0"].status == "blocked"
+    assert current["m2b-s1280-<recipe>-s2"] == State(
+        "blocked", "blocked: R2: no recipe passed the guard, for a person to look at")
+    current = at({"R1": {"passes": True}, "R2": {"recipe": "ft2"}})
+    assert not any("<recipe>" in name for name in current)          # named by R2's recipe
+    assert current["m2b-s1280-ft2-s0"] == State("waiting", "waiting for m2b-s1280-s0 to finish")
+    assert current["m2b-m1280-s1"].status == "ready"                # R1 passed: m's seed 1, a step-1 run
+    assert current["m2b-m1280-ft2-s1"] == State("waiting", "waiting for m2b-m1280-s1 to finish")
+    scored("s1280-s0", 0.9)
+    assert at({"R1": {"passes": True}, "R2": {"recipe": "ft2"}})["m2b-s1280-ft2-s0"].status == "ready"
+    assert script.summary({"noise_store": {"band": 0.03}, "R1": {"passes": False}, "R2": {"recipe": "ft2"},
+                           "R3": {"arm": "s1280-ft2"}}) == "noise band 0.0300, R1 fails, R2 ft2, R3 s1280-ft2"
+
+
+def test_the_m2b_suite_scores_the_control_first(load_script, step2):
+    script = load_script("m2b_chain")
+    current = states(script)
+    assert current["suite-m2b-n1280-s0"].note == (
+        "waiting for real-val-rot180 not made yet (S9's derive_sets.py --only rot180); "
+        "synth-val-v2 not made yet (S9's generation)")
+    write_list(m2b.list_path("real_val_rot180"), [Path("/m2b/rot180/0.jpg")])
+    write_list(m2b.list_path("synth_val_v2"), [Path("/m2b/synth_val_v2/0.jpg")])
+    derived = json.loads(m2b.manifest_path("derived").read_text())
+    derived["sets"]["real_val_rot180"] = {}
+    m2b.manifest_path("derived").write_text(json.dumps(derived))
+    m2b.manifest_path("synth-val-v2").write_text(json.dumps({"complete": True}))
+    s1280 = scored("s1280-s0", 0.9)                 # trained and scored on M2's suite, as on the cluster
+    s1280.joinpath("suite-m2b.json").rename(s1280 / "suite.json")
+    current = states(script)
+    assert [current[f"suite-m2b-n1280-s{s}"].status for s in m2b.SEEDS] == ["ready"] * 3
+    assert current["suite-m2b-s1280-s0"].note == (
+        "waiting for the noise band: the control's three seeds on the M2b suite")
+    claims = slurm.Claims(script.CHAIN.claims_dir(), "73832")
+    ready = script.CHAIN.states({}, claims, set())
+    assert script.CHAIN.pick(ready, 72 * 3600).name == "suite-m2b-n1280-s0"   # scoring first, the control first
+    banded = script.CHAIN.states({"noise_store": {"band": 0.03}}, claims, set())
+    assert {t.name: s.status for t, s in banded.items()}["suite-m2b-s1280-s0"] == "ready"

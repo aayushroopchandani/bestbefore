@@ -100,6 +100,18 @@ def test_a_tasks_state_done_then_failed_then_waiting_then_claimed(runs_dir):
     assert not (runs_dir / "m2-failures").exists()             # never another milestone's
 
 
+def test_a_milestone_may_name_its_tasks_by_its_decisions(runs_dir):
+    def tasks(decisions):
+        recipe = decisions.get("recipe", "<recipe>")
+        return (Job("mx-a-s0", "a-s0"), Job(f"mx-b-{recipe}-s0", f"b-{recipe}-s0"))
+
+    mx = made_up(tasks=tasks)
+    claims = slurm.Claims(runs_dir / "mx-claims", None)
+    assert [t.name for t in mx.states({}, claims, set())] == ["mx-a-s0", "mx-b-<recipe>-s0"]
+    assert [t.name for t in mx.states({"recipe": "ft2"}, claims, set())] == ["mx-a-s0", "mx-b-ft2-s0"]
+    assert made_up().task_list({"recipe": "ft2"}) == TASKS          # a fixed list stays as it is
+
+
 def test_pick_takes_scoring_first_then_the_lists_order_within_the_time_left(runs_dir):
     mx = made_up()
     ready = {t: chain.State("ready") for t in TASKS}

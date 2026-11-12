@@ -104,7 +104,8 @@ class Chain:
     title: str                                      # M2, as the log names its jobs
     gpu_script: str                                 # what a replacement job runs
     job_name: str                                   # that script's #SBATCH --job-name
-    tasks: Sequence[Task]                           # in the order the chain takes them
+    tasks: Sequence[Task] | Callable[[dict], Sequence[Task]]   # in the order the chain takes them,
+                                                    # or made from the decisions so far (task_list)
     done: Callable[[Task], Path | None]             # the run folder that makes a task done, or None
     waiting_for: Callable[[Task, dict], str | None]  # what it still needs ("blocked: ..." if it never will)
     run_task: Callable[[Task, dict], str | None]    # None if the task succeeded, else why it failed
@@ -150,9 +151,14 @@ class Chain:
             return State("claimed", f"claimed by job {held[0]}")
         return State("ready", f"stale claim of job {held[0]}: will be taken over" if held else "")
 
+    def task_list(self, decisions: dict) -> Sequence[Task]:
+        """Every task, in the order the chain takes them. A milestone may
+        name some by its decisions (M2b's step 2 on s and m, by R2's recipe)."""
+        return self.tasks(decisions) if callable(self.tasks) else self.tasks
+
     def states(self, decisions: dict, claims: slurm.Claims,
                live: set[str] | None) -> dict[Task, State]:
-        return {t: self.state(t, decisions, claims, live) for t in self.tasks}
+        return {t: self.state(t, decisions, claims, live) for t in self.task_list(decisions)}
 
     def pick(self, current: dict[Task, State], time_left: float,
              skip: set[Task] = frozenset()) -> Task | None:
