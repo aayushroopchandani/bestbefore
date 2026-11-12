@@ -202,8 +202,11 @@ this repo.
   `short` (6 h; `cn1` to `cn4`, 48 CPUs and 510 GB each, checked
   2026-11-02), `defaultq` (default, 3 days), `smp` (7 days). One H100 per
   job is plenty for every model here: at batch 16 and 1,280 px,
-  Ultralytics' `GPU_mem` peaked at 10.1 GB for yolo11n (M2) and 21.1 GB
-  for yolo11s (M1); yolo11m is estimated at about 44 GB (M2b S2).
+  Ultralytics' `GPU_mem` peaked at 10.1 GB for yolo11n (M2), 21.1 GB for
+  yolo11s validating every epoch (M1) and 16.3 GB without, and 30.8 GB for
+  yolo11m (M2b step 1; S2 had estimated 44). At 1,280 px one H100 trains
+  208 images a second with yolo11n, 181 with yolo11s and 107 with yolo11m
+  (M2, M2b step 1).
 - **Job limits** (checked 2026-10-22): QOS `limit_gpu_qos` is the
   account's only QOS, so it covers **every** job on every partition,
   CPU-only ones and other projects' too: **2 running** and **5 submitted**
@@ -222,7 +225,8 @@ this repo.
   are DOWN, DRAINED or reserved for jobs in higher priority partitions`
   only means every GPU is busy: there was no reservation (`sinfo -T`) and
   every partition is tier 1 (checked 2026-11-02). A job just submitted
-  can show it for a few seconds before it starts.
+  can show it for a few seconds before it starts. The waiting job first in
+  line shows `Resources`, one behind it `Priority` (seen 2026-11-12).
 - **Inside a job** (Slurm 23.11.4, checked 2026-10-22):
   `SLURM_JOB_END_TIME` holds the job's end (Unix time), so a job can tell
   how long it has left. At the time limit or a `scancel`, every process
@@ -281,8 +285,10 @@ this repo.
   re-export gives every file a new time, so rsync lists all 710 files but
   sends only what changed (1 MB of 166 MB in 11 s). The home folder is 700;
   `~/bestbefore-data` is 775 and the umask 0002. The store export lives in
-  `~/bestbefore-data/store/` (the cluster's `.env` didn't set
-  `STORE_TRAIN_DIR` on 2026-11-12). A `du` over all of `~/bestbefore-data`
+  `~/bestbefore-data/store/`, `STORE_TRAIN_DIR` in the cluster's `.env`
+  since 2026-11-12 (M2b S10). Ultralytics writes v1-val's label cache
+  there, `labels/val.cache`, with mode 664: `chmod 600` it after its first
+  scoring (it is rewritten only if v1-val's photos change). A `du` over all of `~/bestbefore-data`
   (M2's generated photos) ran over 5 minutes on the login node without
   finishing.
 - **Fetching files from it:** `scp` doesn't expand braces in a remote
@@ -307,7 +313,10 @@ this repo.
   validation at the end. A 1-epoch yolo11s smoke at 1,280 px on 793
   photos took 11 minutes on 24 CPUs of `short` (30.5 GB by `sacct`'s
   sample), so training smoke runs go there (`slurm/m2b_smoke_cpu.sbatch`,
-  M2b S2).
+  M2b S2). Its `step2` task (M2b S10, job 73951) trained yolo11n's ft and
+  two-stage smokes on 413 photos in 3 and 4 minutes and scored the M2b
+  suite's 5,070 photos in 12 (about 40 ms an image): 19 minutes in all,
+  17.1 GB by `sacct`'s sample.
 - **Python:** modules `Python/3.11.11` (same minor version as the laptop),
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
   use it. The module provides `python3`, not `python`, and the venv only

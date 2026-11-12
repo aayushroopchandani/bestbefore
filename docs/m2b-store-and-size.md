@@ -2847,6 +2847,10 @@ request, not the owner's step as written above); the CPU smoke, job
   one job is released); R1 to R3 on real suites (none exists); whether the
   store lines' repeats are memorised (v1-val's and v2's unseen designs will
   show it, S11 and S14); the learnings guide (not written).
+- **`CLAUDE.md`** gained, with the owner's OK: `m`'s measured GPU memory and
+  every size's training speed at 1,280 px, `STORE_TRAIN_DIR` in the
+  cluster's `.env` and v1-val's label cache to `chmod`, the step-2 smoke's
+  CPU times, and what `Resources` and `Priority` mean in the queue.
 
 ### S11. Step 2 on `n` · cluster, then laptop
 
