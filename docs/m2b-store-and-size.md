@@ -2738,8 +2738,9 @@ request, not the owner's step as written above); the CPU smoke, job
   of it is reachable by others):
   - v1-val's label cache, `store/labels/val.cache` (box coordinates of the
     34 numbered photos, no pixels), written with mode 664 where S6 made
-    every store file 600: the owner chmods it (below). Ultralytics rewrites
-    it only when its photos change, so once is enough;
+    every store file 600; made 600 by Claude at the owner's word the same
+    evening, after which no entry of the store folder was open to others.
+    Ultralytics rewrites it only when its photos change, so once is enough;
   - every step-2 run's label cache (`$EXPDATE_DIR/yolo/labels/real-train.cache`,
     664) lists its store lines' boxes and numbered paths beside ExpDate's;
   - the training-batch mosaics (`train_batch*.jpg`) beside each run's
