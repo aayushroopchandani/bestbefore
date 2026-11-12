@@ -38,13 +38,15 @@ env)
     $MAIN scripts/check_m3_env.py main "$DIR"
     $OCR -I scripts/check_m3_env.py ocr "$DIR"
     "$LLAMA/llama-server" --version
-    # 8 tokens of text from the official Q8_0 GGUF: the log names the CPU
-    # variant llama.cpp loaded on this node (the photo path is S7's)
+    # 8 tokens of text from the official Q8_0 GGUF; the verbose log names the
+    # CPU variant llama.cpp loaded on this node (the photo path is S7's).
+    # Its AMX variant is kept out of build/bin: it dies with SIGILL (S1).
     PRE=$($MAIN -c 'from bestbefore.config import checkpoint_dir; print(checkpoint_dir() / "pretrained")')
     "$LLAMA/llama-completion" -m "$PRE/Qwen3-VL-2B-Instruct-GGUF/Qwen3VL-2B-Instruct-Q8_0.gguf" \
-        -p "The expiry date 2027-03-01 is" -n 8 -t "$SLURM_CPUS_PER_TASK" --temp 0 -no-cnv \
+        -p "The expiry date 2027-03-01 is" -n 8 -t "$SLURM_CPUS_PER_TASK" --temp 0 -no-cnv -v \
         < /dev/null > "$DIR/llama.log" 2>&1
-    grep -E "load_backend|system_info|CPU :|eval time|The expiry" "$DIR/llama.log" || true
+    grep -E "loaded CPU backend|AMX|eval time" "$DIR/llama.log" | grep -v "amx repack" || true
+    echo "llama.cpp: ok"
     ;;
 *)
     echo "unknown task '${1:-}': one of env"

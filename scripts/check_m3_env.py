@@ -78,8 +78,12 @@ def main_part(out: Path) -> None:
 
     rec = AutoConfig.from_pretrained(pre / f"{PP_REC}_safetensors", local_files_only=True)
     print(f"{PP_REC}_safetensors: model_type {rec.model_type}, architectures {rec.architectures}")
+    # Left to itself, ONNX Runtime starts a thread per core of the whole node
+    # and pins each, which fails inside the job's cgroup: give it the job's CPUs.
+    options = onnxruntime.SessionOptions()
+    options.intra_op_num_threads = int(os.environ.get("SLURM_CPUS_PER_TASK", "1"))
     session = onnxruntime.InferenceSession(str(pre / f"{PP_REC}_onnx" / "inference.onnx"),
-                                           providers=["CPUExecutionProvider"])
+                                           options, providers=["CPUExecutionProvider"])
     for kind, nodes in (("in", session.get_inputs()), ("out", session.get_outputs())):
         for n in nodes:
             print(f"{PP_REC}_onnx {kind}: {n.name} {n.shape} {n.type}")
