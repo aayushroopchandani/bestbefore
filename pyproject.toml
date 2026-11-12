@@ -30,6 +30,13 @@ train = ["ultralytics==8.4.177", "torch==2.11.0", "torchvision==0.26.0"]
 # (axes, characters, licences). OpenCV comes with the train extra
 # (Ultralytics), so generation runs in the training environment.
 synth = ["fonttools"]
+# M3's readers (docs/m3-date-reader.md): crops in LMDB files, CTC readers
+# exported and scored as ONNX.
+read = ["lmdb==3.0.0", "onnx==1.23.2", "onnxruntime==1.31.1"]
+# M3's VLM, Qwen3-VL-2B with LoRA. The newest releases on 2026-11-12, pinned
+# as the cluster installed them, with every package the train extra brought
+# held at its version (M3 S1).
+vlm = ["transformers==5.22.2", "peft==0.21.2", "accelerate==1.15.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
