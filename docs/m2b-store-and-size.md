@@ -21,7 +21,10 @@ call): tilted blocks sized by their digits, the sample remade; changed
 blocks drawn at a fresh size, and the generation job at 48 GB; S9's
 laptop part done 2026-11-08 (the trial checked, the job written); S9
 done 2026-11-12 (gen-v2, synth-val-v2 and the 180° sets made on the
-cluster and checked; a crash met at scale fixed first). Next: S10.
+cluster and checked; a crash met at scale fixed first); changed 2026-11-12,
+before S10's code (owner's go-ahead): the smoke on a CPU node of the
+cluster, the replay's 180° copies, ft2's stages, R2 without a recipe, the
+band first. Next: S10.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -2599,11 +2602,63 @@ held), none running. What was found:
   is at least 0.03); readiness waits for each of v2 frozen, v1 on the
   cluster, gen-v2, the 180° sets and R2.
 
-**Steps:** laptop smoke of `n1280-ft` (1 epoch, tiny fraction, CPU); dry
-runs on both machines; owner: `scontrol release 73832`.
+**Steps:** smoke of `n1280-ft` and `n1280-ft2` on a CPU node of the
+cluster **(changed 2026-11-12, before the code: the laptop can't train at
+1,280 px, S2)**; dry runs on both machines; owner: `scontrol release 73832`.
 **Commits:** `feat: m2b step 2, fine-tuning with replay and the two-stage arm`,
 `feat: the m2b validation suite with the store threshold`,
 `feat: m2b chain, step 2 and the decision rules`
+
+**Added 2026-11-12, before S10's code** (the owner's go-ahead; no rule,
+band, budget or share of the plan changes):
+
+- **The smoke runs on a CPU node of the cluster**, as S2's did:
+  `slurm/m2b_smoke_cpu.sbatch step2` trains `n1280-ft` and `n1280-ft2`, one
+  epoch a stage, on an epoch of 400 photos (`--epoch-photos`, smoke only,
+  recorded, never passed by the chain), then scores the `n1280-ft` smoke on
+  the M2b suite, so the suite's first real run is on a CPU node, not in the
+  GPU job. `--fraction` won't do here: Ultralytics keeps the first photos in
+  sorted path order, so 1% of a step-2 list is ExpDate photos alone, and no
+  store or gen-v2 photo would be read.
+- **The 180° copies in the replay** (decision 8): each ExpDate group keeps
+  gen-rot-1280's half upright, half turned, and its 90°/270° and 180° copies
+  form one turned pool, sampled together, so about half of its turned
+  copies are upside down. Shares of the epoch: real upright 2.8%, real
+  turned 2.8%, synthetic upright 11.9%, synthetic turned 11.9%, generated
+  50.4%, each pool drawn without repeats with the run's seed; the store
+  lines 20%.
+- **ft2's stages**: each stage is M2's schedule over its half of the budget
+  (5 epochs, warmup 3%, mosaic off for its last epoch), so ft2 has 2
+  mosaic-off epochs of 10 where ft has 1. Stage 1's weights go to
+  `<run>-stage1/` beside the run's own checkpoint folder, which holds the
+  final weights, as every run's does.
+- **R2 with no recipe passing the guard** (the plan didn't say): step 2 on
+  `s` and `m` is blocked, and R3 waits, for the owner to look.
+- **The band first**: the M2b suite scores the control's three seeds before
+  any other run, so `noise_store` is fixed before any M2b run is scored, by
+  construction.
+- **The M2b suite's counts are at `threshold_store`**, with
+  `threshold_m2`'s beside them, and v1-val's dates also by Cause 4's size
+  bands. Ultralytics' validation folders go in the run's own results
+  folder, so scoring the control writes nothing into M2's checkpoints.
+- **The store lines stay uncapped** (S6 left it to S10): decision 7 as
+  written. v1-val's designs are all unseen in training, so it shows any
+  memorising.
+- **Frozen batch-norm**: Ultralytics 8.4.177 puts the frozen layers'
+  batch-norm modules in eval mode every epoch (`BaseTrainer._model_train`),
+  and MuSGD skips parameters without a gradient. So the measurement in
+  [Step 2](#step-2-store-fine-tuning) should find nothing moved; S10's
+  record says what it finds, and that sentence is corrected then.
+- **R1 isn't known in S10**: it compares v1-val mAP, which only the M2b
+  suite holds; the GPU job scores the control and step 1 on it first, and
+  R1 follows.
+- **Jobs**: A's replacement, `73906`, is held too. Only `73832` is
+  released: it is the oldest waiting GPU job, and its 3 days cover stage 2
+  (S10's record has the estimate). `73906` waits behind other users' jobs,
+  and two running jobs would fill the account's 2 running slots, holding
+  back M3's CPU jobs.
+- **The cluster's `.env`** gains `STORE_TRAIN_DIR=~/bestbefore-data/store`
+  (missing, as M3 S1 found), added by the owner.
 
 ### S11. Step 2 on `n` · cluster, then laptop
 
