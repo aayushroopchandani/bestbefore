@@ -2791,6 +2791,13 @@ request, not the owner's step as written above); the CPU smoke, job
   latest about 2026-11-15 01:00 (a 3-day job on `cn6` ends then), earlier
   if any job ends early. `73906`, submitted 2026-11-09, waits behind four
   other users' jobs.
+- **Job B released**: `73832`, at 21:37:13 on 2026-11-12, by Claude at the
+  owner's word, after the smoke and the dry run above. It is `PENDING` with
+  reason `Resources`, first of the waiting GPU jobs (its submit time kept,
+  2026-10-31 20:37:55; the jobs behind it show `Priority`, `ReqNodeNotAvail`
+  or their owners' caps). The four H100s run jobs that reach their limits at
+  2026-11-15 01:00 and 11-16 11:25 (`cn6`), 11-18 02:35 and 11-18 10:47
+  (`cn5`), so B starts at the latest about 11-15 01:00. `73906` stays held.
 - **Details fixed while writing** (no rule, band, budget or share changed):
   - **`mix()` takes the pools**, not the arm (the arm only chooses them,
     `replay_lists`); each replay pool is drawn without repeats with its own
