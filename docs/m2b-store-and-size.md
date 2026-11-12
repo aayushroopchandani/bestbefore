@@ -19,8 +19,9 @@ made and looked at, M2's generator unmoved); changed 2026-11-06 (owner's
 call): tilted blocks sized by their digits, the sample remade; changed
 2026-11-07, before S9's code (owner's calls): synth-val-v2's skipped
 blocks drawn at a fresh size, and the generation job at 48 GB; S9's
-laptop part done 2026-11-08 (the trial checked, the job written). Next:
-S9's job on the cluster.
+laptop part done 2026-11-08 (the trial checked, the job written); S9
+done 2026-11-12 (gen-v2, synth-val-v2 and the 180° sets made on the
+cluster and checked; a crash met at scale fixed first). Next: S10.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -2447,6 +2448,131 @@ with the laptop's data and nothing skipped (726, 738). What was found:
   from off campus on 2026-11-07 and 11-08: the fonts there, the job, the
   pixels across machines, the quota. Not run: a deliberate-bug run (S9's
   slice asks for none); the learnings guide (not written).
+
+**On the cluster, done 2026-11-12.** Job **`73944`**, submitted by
+Claude at the owner's word after a first job crashed (below): `short`,
+`cn1`, 24 CPUs, 48 GB, from `01f4fb9` with a clean checkout. Before it,
+on the login node: `git pull` to `c8b431f`, then `01f4fb9`; `fetch_fonts.py`
+checked all 24 files (hashes, the 69 characters, axes, licences); the
+same library builds as the laptop (Pillow 12.3.0, FreeType 2.14.3,
+libjpeg-turbo 3.1.4.1, OpenCV 5.0.0, numpy 2.4.6; Python 3.11.11 against
+3.11.13); our jobs 2 of 5 submitted (job B `73832` and `73906`, both
+held), none running. What was found:
+
+- **The first job crashed, at gen-v2's photo 17,868** (job `73943`, at
+  `c8b431f`, submitted by Claude at the owner's word: `FAILED` after 4 min
+  17 s, 17 tasks done). The cause is a bug in S8's worn patches.
+  `compose.random_wear` chose among dates whose sprite exists, but small
+  dot-matrix print (digits of 3 to 4 px) can lose every dot under the ink
+  line to the density field laid on before the wear, and then
+  `render.ink_box` gave nothing to unpack. The laptop draws photo 17,868
+  without error: across machines a photo can take other draws after a
+  1 px difference (below), so the cluster's copy met a block the laptop's
+  never drew. On purpose, 6,400 small blocks on the laptop gave 6 of these
+  crashes, all dot-matrix. **The fix** (`01f4fb9`): the patch picks among
+  dates with ink. A drawing that lost a date's ink loses that date's box
+  too and is drawn again, so the choice made there was never kept, and the
+  fix changes no photo: the laptop's trial, remade, gives all 14,806 files
+  byte for byte, and S8's sample too (a test). A new test reproduces the
+  crash without the fix; 739 tests pass. That job also hashed M2's files
+  and made the render sheet and the sample, which the second job made
+  again, the same (below).
+- **It ran 26 min 41 s** (14:34:10 to 15:00:51), 8 h 50 min of CPU time,
+  and wrote 40.5 GB (`sacct`), in order:
+  - the render sheet and gen-v2-sample: about 13 s;
+  - the 202,400 photos: 24.1 min, the backgrounds loaded in 2.8 s
+    (24.8 s cold in the first job, on the same node);
+  - the check: 99.7 s;
+  - the 180° sets: about 35 s, synth_rot180's 11,844 photos taking 33.4 s.
+- **Speed: 170.6 ms a photo per worker** (gen-v2's 171.4; median 134.6,
+  95th percentile 311.5), within the laptop's estimate of 161 to 225. By
+  stage: drawing 64.5, writing 38.3, camera 34.9, background 14.9, JPEG
+  9.9, blending 4.4, surface 3.3, placing 0.5. M2 S6's cluster job took
+  150 ms, drawing 37.9: gen-v2 draws 1.7 times as long, and a photo takes
+  1.14 times as long. The slowest photo took 33.4 s (on the laptop, the
+  slowest drew a large window block for 12 s).
+- **Memory: a worker peaked at 1,813 MB**, twice the laptop's 833 to 885
+  MB, and the main process at 318 MB; Slurm's sampled `MaxRSS` says 5.2
+  GB. Had all 24 workers peaked together, 32 GB would not have held, so
+  the owner's 48 GB was needed. Which photo took a worker that high
+  wasn't looked at (its peak isn't recorded per photo).
+- **The check passed**: gen-v2 **200,000 photos and synth-val-v2 2,400,
+  both `complete: true` with no problem**; every image opens whole, every
+  label file equals its sidecar line's, every background and font is from
+  its own set's lists and split, and the fonts match their pinned
+  SHA-256s. The manifests name `GEN_V2`'s `2c8b24d5…` and the strata's
+  `2295a4bd…`, made and checked at `01f4fb9`. The chain's own
+  `m2b.list_missing` finds all five lists vouched for: `gen_v2` (200,000),
+  `real_rot180`, `synth_rot180`, `synth_val_v2` (2,400) and
+  `real_val_rot180`.
+- **gen-v2's shares at 200,000 photos**: all 64 rows within 0.6 points of
+  the spec, the farthest windows dotified 29.4% (−2.1 SE, of 27,462
+  windows; the trial's 25.1% was noise, as measured then), then line-pairs'
+  import dates 49.5% (−1.7 SE). Upside-down 10.05%, glued 30.08%, worn
+  patches 9.98%, nozzle rows 14.8%, windows 9.9%, line-pairs 9.95%, dense
+  panels 10.1% (all within 2 SE). synth-val-v2: all 316 rows of its 8
+  strata pass, its counts are the laptop trial's exactly (2,400 blocks,
+  243 skipped, the same boxes by class), and its 5 line-pair photos at a
+  fresh size are the trial's.
+- **gen-v2's sizes**, over its **411,587 untilted dates: 34.27 / 44.12 /
+  21.61%, median 1.748%**. Against v1-train's 35.5 / 42.0 / 22.5% and
+  1.736%, that is −1.2, +2.1 and −0.9 points and +0.012: the check holds.
+  The middle band runs 2 points over, as the deciles' own log-uniform
+  targets do (44.4%); the trial's 5,000 photos gave −1.1, +1.4 and −0.3.
+  All 483,566 dates, tilted ones included: 29.73 / 39.88 / 30.39%,
+  median 1.899%.
+- **What was made**: 276,849 blocks placed of 280,308 drawn; 1,604 (0.6%)
+  skipped for want of a place and 1,855 (0.7%) as too faint; 15,600 got a
+  fresh ink, 5,620 were drawn again, 2,831 shrank. 483,566 new dates (2.42
+  a photo); boxes with the backgrounds' own: date 741,826, due 366,932,
+  prod 250,338, code 186,858. The photos take 37.30 GB (186.5 kB each)
+  and synth-val-v2's 0.43 GB; the joined sidecars 386 MB and 3.2 MB.
+  The quota read 142.0 GB used before and 182.1 GB after, of 950
+  (`lfs quota`: home is Lustre, and `quota` prints nothing).
+- **The 180° sets**: **real-val-rot180 165 photos and 187 dates**,
+  real_rot180 937 photos (1,057 dates) and synth_rot180 11,844 (16,652),
+  each worst box error 0.0 px. These counts are M2's `real_val_rot`,
+  `real_rot` and `synth_rot`'s exactly, and the laptop's.
+- **M2 didn't change**: its 3 manifests and 8 lists hash the same before
+  the jobs and after (Claude's hashes, and the job's own `diff`, which
+  printed "unchanged"); their files keep their October dates.
+- **The cluster draws the same pixels, almost, and the same sizes**
+  (owner's point 6):
+  - **the render sheet**: the PNG file differs, but all 22,854,650 pixels
+    are the laptop's (the PNG compressor differs, as M2 S6 found); both
+    cluster jobs drew the same bytes;
+  - **gen-v2-sample**, made on the cluster: all 500 label files and the
+    whole sidecar are the laptop's byte for byte, every block, box, size
+    and fit, so its shares and sizes are exactly S8's (untilted 33.17 /
+    41.98 / 24.85%, median 1.812%), which pass; 440 of its 500 JPEGs are
+    the laptop's, and in the other 60 the median photo has 0.0054% of its
+    pixels changed, at most 0.057%, typically by 2 grey levels and at most
+    12 (one 8×8 JPEG block in one photo);
+  - **the trial's 7,400 photos** against the cluster's copies of them:
+    4,505 of 5,000 gen-v2 JPEGs and 2,240 of 2,400 synth-val-v2 JPEGs
+    identical, 4,996 of 5,000 and all 2,400 label files; 11 of 7,400
+    sidecar lines differ. 5 differ only in the JPEG quality drawn after
+    the camera's noise, as M2 S6 found. 1 block landed in another free
+    place. 3 had a layer or a box 1 px off after the warp. 2 differ only
+    in the 4th decimal of how much the ink shows. **No block's size,
+    target, box reached, fit, drawings, style or font differs**: the 1 px
+    differences moved boxes, never a size. In 80 sampled JPEGs that
+    differ with the same sidecar line, the median photo has 0.0028%
+    (gen-v2) and 0.004% (synth-val-v2) of its pixels changed, by at most
+    4 and 7 grey levels;
+  - so the laptop's look shows the pixels trained on for about 90% of
+    photos, and within a few grey levels for nearly all the rest.
+- **Job A had finished**: `73831` ran 2026-11-08 16:55 to 11-09 11:25 on
+  `cn6` (18.5 hours) and left a held replacement, `73906`. Job B (`73832`)
+  stays held for S10; nothing was released.
+- **Not checked:** the cluster's photos by eye (the laptop's sheets show
+  the laptop's copies, which differ in about 10% of photos by a few grey
+  levels); the true peak memory of the 24 workers together, and the
+  check's own peak there (only each worker's peak and Slurm's samples
+  are recorded); which photo took a worker to 1.8 GB; why the cluster's
+  photo 17,868 drifted from the laptop's; whether another crash only the
+  cluster's drifts can reach remains (the job made all 202,400 photos);
+  a deliberate-bug run (none asked); the learnings guide (not written).
 
 ### S10. Step 2 and the M2b suite · laptop · *releases job B*
 
