@@ -238,7 +238,8 @@ this repo.
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. It is
   Lustre: `quota` prints nothing, and `lfs quota -h -u $USER /home` shows
-  it (182 GB used on 2026-11-12, after M2b S9). **There is
+  it (182 GB used on 2026-11-12 after M2b S9, 191 GB after M3 S1's
+  models, venv and llama.cpp build). **There is
   no scratch filesystem** and `$SCRATCH` is unset; no purge policy was
   found. Millions of full-size damaged photos (M4) would not fit: make
   them on the fly, or store small crops (a million 30 KB crops is 30 GB).
@@ -253,7 +254,17 @@ this repo.
   against 24.8 s cold half an hour before (2026-11-12, M2b S9).
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
-  model weights on the login node before submitting a job.
+  model weights on the login node before submitting a job. From there,
+  Hugging Face gave about 100 MB/s (Qwen3-VL-2B's 4.27 GB in 40 s) and
+  Baidu's BOS about 6 MB/s (M3 S1, 2026-11-12).
+- **Pretrained models** live in `$CHECKPOINT_DIR/pretrained/`: YOLO's
+  (`scripts/fetch_pretrained.py`), PP-OCRv6's and Qwen3-VL's
+  (`scripts/fetch_m3_models.py`, pinned revisions and SHA-256s; `--check`
+  re-hashes them). PaddleOCR finds its models without internet when
+  `PADDLE_PDX_CACHE_HOME=$CHECKPOINT_DIR/pretrained/paddlex` and
+  `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`; otherwise it fetches them
+  from Hugging Face on first use. `slurm/m3_cpu.sbatch` also sets
+  `HF_HUB_OFFLINE=1` for transformers.
 - **Copying store photos there** (M2b S6, 2026-11-04): the laptop's `rsync`
   is macOS's openrsync (protocol 29; the cluster has rsync 3.1.3). It
   refuses `--chmod=D700,F600`, accepts `--chmod=u=rwX,go=` but applies
@@ -265,14 +276,18 @@ this repo.
   re-export gives every file a new time, so rsync lists all 710 files but
   sends only what changed (1 MB of 166 MB in 11 s). The home folder is 700;
   `~/bestbefore-data` is 775 and the umask 0002. The store export lives in
-  `~/bestbefore-data/store/`. A `du` over all of `~/bestbefore-data` (M2's
-  generated photos) ran over 5 minutes on the login node without finishing.
+  `~/bestbefore-data/store/` (the cluster's `.env` didn't set
+  `STORE_TRAIN_DIR` on 2026-11-12). A `du` over all of `~/bestbefore-data`
+  (M2's generated photos) ran over 5 minutes on the login node without
+  finishing.
 - **Fetching files from it:** `scp` doesn't expand braces in a remote
   path (it speaks SFTP); fetch several at once with
   `ssh bbhpc 'cd DIR && tar cf - FILES' | tar xf -` (M2b S9).
 - **CPUs:** compute nodes are Intel Xeon Gold 6442Y (x86-64); the laptop
-  is arm64. With the same library versions, floating-point results still
-  differ in their last bits, so generated photos match the laptop's
+  is arm64. The login node `mn1` is the same model (2 × 24 cores, 96
+  threads, AVX-512 BF16 and AMX; checked 2026-11-12). With the same
+  library versions, floating-point results still differ in their last
+  bits, so generated photos match the laptop's
   byte for byte only mostly (85% in M2 S6; the rest within a few grey
   levels). gen-v2 (M2b S9) matched for about 90% of photos, and 11 of
   7,400 sidecar lines differed (a block placed elsewhere, a box 1 px off,
@@ -292,7 +307,28 @@ this repo.
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
   use it. The module provides `python3`, not `python`, and the venv only
   runs after `module load Python/3.11.11` (it needs the module's
-  `libpython3.11.so`).
+  `libpython3.11.so`). Two environments (M3 S1): the main venv
+  `~/bestbefore/.venv` (the train, synth, read and vlm extras), and
+  `~/venvs/ocr-cpu` for CPU jobs (Paddle 3.2.0 CPU, PaddleOCR 3.7.0,
+  RapidOCR 1.2.3), which holds **one OpenCV**: PaddleX pins
+  `opencv-contrib-python==4.10.0.84` and RapidOCR asks for `opencv-python`,
+  two packages writing one `cv2/`, so RapidOCR goes in with `--no-deps`.
+  `~/venvs` holds other projects' venvs too. A fresh venv from the module
+  starts with pip 24.0. **To add packages without moving any:** `pip
+  freeze --exclude-editable > constraints.txt`, then `pip install -c
+  constraints.txt ...` (`--dry-run --report r.json` first shows what would
+  come); M3 S1 added 28 packages that way and changed none. The whole test
+  suite (737 tests) takes 3 to 5 minutes on the login node, niced.
+- **Building code** on the login node: it is shared, so a few threads
+  (`-j 4`), niced. The default compiler is OpenHPC's gcc 12.3.0 (module
+  `gnu12`, loaded), with the system's binutils 2.30 (RHEL 8.8), which
+  **can't assemble AMX instructions**; `source
+  /opt/rh/gcc-toolset-12/enable` gives gcc 12.2.1 with binutils 2.38, which
+  can. cmake: the system's 3.20.2, modules `cmake/3.24.2` and `3.31.4`;
+  also `gnu14/14.2.0`, `llvm/latest`, `intel/2025.0.4`. llama.cpp `b12017`
+  is built in `~/opt/llama.cpp` (CPU only, every CPU variant, picked at
+  run time; 269 s on 4 threads); its configure downloads a web UI from a
+  moving tag unless `LLAMA_USE_PREBUILT_UI=OFF` (M3 S1).
 - **GPU driver:** 560.35.05 on both GPU nodes (`nvidia-smi` in M1's job on
   `cn6`, 2026-10-15, and M2's on `cn5`, 2026-10-24; the 570.86 first
   written here was seen on neither). Install PyTorch from the `cu128`
