@@ -280,3 +280,80 @@ python scripts/generate.py --check --workers 24
 
 Photo `i` comes from `numpy.random.default_rng([seed, i])` alone, so any
 split into tasks or processes writes the same files.
+
+---
+
+## M3's pretrained models
+
+Fetched on the cluster's login node on 2026-11-12 (M3 S1) by
+`scripts/fetch_m3_models.py`, into `$CHECKPOINT_DIR/pretrained/` beside the
+YOLO weights (`~/bestbefore-data/checkpoints/pretrained/` there); never
+committed. Each Hugging Face repo is pinned to a commit; each weights file
+to its SHA-256, which matched Hugging Face's own LFS hash. 43 files,
+7.1 GB. `python scripts/fetch_m3_models.py --check` hashes them again.
+
+### Licences
+
+| Model | Licence | Where it says so |
+|---|---|---|
+| PP-OCRv6 small recogniser and detector, PP-LCNet x1.0 textline orientation (Paddle, ONNX and safetensors copies) | Apache-2.0 | each repo's model card (`license: apache-2.0`) |
+| `PP-OCRv6_small_rec_pretrained.pdparams` | Apache-2.0, as PaddleOCR | the file states none; it is the training weights PaddleX 3.7.2's own `PP-OCRv6_small_rec.yaml` links, from PaddleOCR (Apache-2.0) |
+| Qwen3-VL-2B-Instruct | Apache-2.0 | the model card |
+| Qwen3-VL-2B-Instruct-GGUF | Apache-2.0 | the model card; the repo holds no LICENSE file |
+
+All allow fine-tuning, and publishing results and fine-tuned weights, with
+the licence and a notice of changes kept.
+
+### Files
+
+| Repo (revision) | File | Bytes | SHA-256 |
+|---|---|---:|---|
+| `PaddlePaddle/PP-OCRv6_small_rec` (`bd619643`) | `inference.pdiparams` | 21,074,618 | `406e1e689c9a7fbb04178007a3fe10cf852afe7bf8bb3bc6dbb9d532b13bd907` |
+| | `inference.json` | 208,004 | `f0bf53c853937a917affdd74467472167727f8ab0f0f7bded01c4a16c27e46e6` |
+| | `inference.yml` (holds the dictionary) | 150,579 | `ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1` |
+| `PaddlePaddle/PP-OCRv6_small_rec_onnx` (`b8f84f0b`) | `inference.onnx` | 21,159,378 | `5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634` |
+| | `inference.json`, `inference.yml` | | the Paddle repo's, byte for byte |
+| `PaddlePaddle/PP-OCRv6_small_rec_safetensors` (`fe049fb1`) | `model.safetensors` | 21,204,736 | `f65a332afe5aa663f0b9d5706f4ae8457b5b4058a842d5c1eb22df505c27d642` |
+| | `config.json` | 1,083 | `8693fd8485e8543e13d0f6dde3891a3f4af9a47fc4e3a391fbed71f8015c899e` |
+| | `preprocessor_config.json` | 206,177 | `2b24fa36f548893f26a931cf44f1a1a6b2b14ed7e2f8f8e28e6848801a8278db` |
+| | `inference.yml` | | the Paddle repo's |
+| `PaddlePaddle/PP-OCRv6_small_det` (`106c9759`) | `inference.pdiparams` | 9,817,888 | `5043d4ccc8d63402ccea8feefcee4db57077431a873e78d2191836a178a492da` |
+| | `inference.json` | 229,307 | `89240f689a4a77aad75ef55a8df0a15c8e1d4980a327d17e58f24bbadde5aeab` |
+| | `inference.yml` | 885 | `193f435274bf9f0b5f71a929bbfbcf148282df7e633b34e7c373e8f44741b516` |
+| `PaddlePaddle/PP-LCNet_x1_0_textline_ori` (`cd237a44`) | `inference.pdiparams` | 6,743,918 | `0de2bcf996cf553e2b848dd7b1769dafffc6917b1ccdf55c1d8efe7909fbf743` |
+| | `inference.json` | 104,399 | `b81929eeaff8e52db0fafb49c9fbfc5bc0572f81641fe0179cc52096323fb4d4` |
+| | `inference.yml` | 735 | `8d5120d0e1a30a9df7ed46aa9119da3796ed066777089d1c1d705f132d5e90f9` |
+| | `config.json` | 2,487 | `c1a2576f9713adabdc4a58d9d654fcc9ea93b6efd0e2d3581d5aab409a33f14f` |
+| Baidu BOS, `paddlex/official_pretrained_model/` (Last-Modified 2026-06-10) | `PP-OCRv6_small_rec_pretrained.pdparams` | 124,912,348 | `25c9bd54b0e5900916e8bb6ada938abeffb1eac1baedac0ca54a45b1c9310825` |
+| `Qwen/Qwen3-VL-2B-Instruct` (`89644892`) | `model.safetensors` (bf16) | 4,255,140,312 | `7de1838c87a5349b016c26a1c3f7d2bc400a3d485f95ef39a7059ffd734977a0` |
+| | `tokenizer.json` | 7,032,403 | `a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7` |
+| | `vocab.json` | 2,776,833 | `ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910` |
+| | `merges.txt` | 1,671,839 | `599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3` |
+| | `tokenizer_config.json` | 10,868 | `c2da771801886ad9ae98181793ffd3dfb7f1af30f6f7c6a4e15d7dbba52e2399` |
+| | `chat_template.json` | 5,502 | `6f8a6a55027e3da5160105556cda5dd69f6423f1c32645f6730d32de7773d0c4` |
+| | `config.json` | 1,505 | `bec4b3d446efa05807365c9e1cec03ac590836879d02f3a6da879971154bdd3b` |
+| | `preprocessor_config.json` | 390 | `27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516` |
+| | `video_preprocessor_config.json` | 385 | `7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13` |
+| | `generation_config.json` | 269 | `1e241830b48b397cb0900101421df5450baddc7adf01e5fc86b5615865f3bae4` |
+| `Qwen/Qwen3-VL-2B-Instruct-GGUF` (`52d6c8ff`) | `Qwen3VL-2B-Instruct-Q8_0.gguf` | 1,834,427,424 | `1e8db19207c8ce0733ddd78c2eff8a9e22c27c82f4443df94c25792ed8fe04f2` |
+| | `mmproj-Qwen3VL-2B-Instruct-F16.gguf` | 819,394,848 | `c3d5afbef5287953acd57b4043d2269456e5761a4eaccb3b71b062996970aea5` |
+
+Each repo's `README.md` came too, and `.gitattributes` from all but the
+GGUF repo (hashed by the script, not listed). The full revisions are in
+the script.
+
+### Notes
+
+- **PaddleOCR finds its models offline** when `PADDLE_PDX_CACHE_HOME` is
+  `$CHECKPOINT_DIR/pretrained/paddlex` and
+  `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` (PaddleX 3.7.2's
+  `utils/flags.py`); otherwise it fetches `PaddlePaddle/<model>` from
+  Hugging Face on first use.
+- **Not fetched:** PaddleOCR's default page models (`PP-LCNet_x1_0_doc_ori`,
+  `UVDoc`; for scanned pages, switched off on crops), the medium and tiny
+  PP-OCRv6 models, the GGUF's other quantisations (F16, Q4_K_M, the Q8_0
+  projector), and the detector's ONNX and safetensors copies.
+- **PaddleOCR 3.7.2's OCR pipeline** defaults to `PP-OCRv6_medium_det` and
+  `_rec`; its detector enlarges an image only when its short side is under
+  64 px (`limit_side_len: 64`, `limit_type: min`), where RapidOCR 1.2.3's
+  does it under 736 px.
