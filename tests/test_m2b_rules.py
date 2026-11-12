@@ -1,6 +1,7 @@
 """M2b's step 1 and its control (docs/m2b-store-and-size.md, S2): step 1 is
 M2's gen-rot-1280 with other weights, and the control is M2's runs as they
 are. Against M2's own code and records, on made-up lists and runs."""
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -148,17 +149,37 @@ def test_the_laptop_smoke_trains_on_bases_lists_at_1280(load_script, monkeypatch
     assert "train: [train_real.txt" in data and "real_rot" not in data
 
 
-def test_m2b_trains_only_its_step_1_arms(load_script):
+def test_m2b_trains_only_its_own_arms(load_script):
     parse = load_script("train_detector").parse_args
     for argv in (["--milestone", "m2b", "--arm", "n1280"],        # M2's runs: the control
                  ["--milestone", "m2b", "--arm", "gen-rot-1280"],  # an M2 arm
                  ["--milestone", "m2", "--arm", "s1280"],          # a step-1 arm, as M2
+                 ["--milestone", "m2", "--arm", "n1280-ft"],       # a step-2 arm, as M2
                  ["--milestone", "m2b"],
                  ["--milestone", "m2b", "--arm", "s1280", "--weights", "yolo11m"]):
         with pytest.raises(SystemExit):
             parse([*argv, "--name", "x"])
     args = parse(["--milestone", "m2b", "--arm", "m1280", "--name", "m1280-s0"])
     assert (args.arm, args.smoke_lists, args.batch) == ("m1280", None, None)
+
+
+def test_step_2s_own_flags(load_script):
+    parse = load_script("train_detector").parse_args
+    step2 = ["--milestone", "m2b", "--arm", "n1280-ft2", "--name", "x"]
+    for more in (["--epoch-photos", "400"],                                  # only with --epochs
+                 ["--smoke-lists", "base", "--fraction", "0.01"],            # step 1's smoke only
+                 ["--cache", "ram"],                                         # no RAM cache
+                 ["--budget-share", "0.1"]):                                 # the budget is BUDGET_FT
+        with pytest.raises(SystemExit):
+            parse([*step2, *more])
+    for argv in (["--milestone", "m2b", "--arm", "s1280", "--name", "x", "--epochs", "1",
+                  "--epoch-photos", "400"],                                  # a step-1 arm
+                 ["--milestone", "m2", "--arm", "base", "--name", "x", "--epochs", "1",
+                  "--epoch-photos", "400"]):
+        with pytest.raises(SystemExit):
+            parse(argv)
+    args = parse([*step2, "--epochs", "1", "--epoch-photos", "400"])
+    assert (args.arm, args.epochs, args.epoch_photos) == ("n1280-ft2", 1, 400)
 
 
 # --- The control (decision 12) -----------------------------------------------------------
@@ -430,3 +451,297 @@ def test_the_store_pool_is_the_exports_training_list_and_designs(tmp_path):
     pool, found = m2b.store_pool(tmp_path)
     assert pool == [tmp_path / "images" / p.parent.name / p.name for p in images]
     assert found == designs                                        # validation photos are no part of it
+
+
+# --- Step 2 (decisions 7 to 11, S10) ----------------------------------------------------
+
+def test_step_2s_arms_recipes_and_schedules():
+    assert set(m2b.STEP2) == {"n1280-ft", "n1280-ft2", "s1280-ft", "s1280-ft2", "m1280-ft",
+                              "m1280-ft2", "n1280-ft-gen50k"}
+    assert {a.start for a in m2b.STEP2.values()} == {"n1280", "s1280", "m1280"}
+    assert m2b.STEP2["n1280-ft-gen50k"] == m2b.StepTwo("n", "ft", "gen50k")   # only the generated pool differs
+    assert all(a.imgsz == 1280 for a in m2b.STEP2.values())
+    assert m2b.FT_RECIPE == {**m2.RECIPE, "lr0": 0.001}                       # a tenth of M2's rate
+    assert m2b.BUDGET_FT * 10 == m2.BUDGET and m2b.RECIPES == ("ft", "ft2")
+    [ft] = m2b.STAGES["ft"]
+    assert ft.recipe() == {**m2b.FT_RECIPE, "freeze": None}
+    first, second = m2b.STAGES["ft2"]
+    assert first.share == second.share == 0.5
+    assert first.recipe() == {**m2b.FT_RECIPE, "freeze": 11}                  # the backbone, layers 0 to 10
+    assert second.recipe() == {**m2b.FT_RECIPE, "freeze": None, "lr0": 0.0005}
+    # An epoch of 24,992 listed photos (the plan's mix): ft 10 epochs, ft2 5 + 5.
+    assert m2b.schedule(24_992, ft) == {"epochs": 10, "warmup_epochs": 0.3, "close_mosaic": 1}
+    assert m2b.schedule(24_992, first) == m2b.schedule(24_992, second) == {
+        "epochs": 5, "warmup_epochs": 0.15, "close_mosaic": 1}
+    assert m2b.schedule(400, first, epochs=1) == {"epochs": 1, "warmup_epochs": 0.03, "close_mosaic": 1}
+
+
+def test_the_replay_keeps_gen_rot_1280s_shares():
+    shares = m2b.REPLAY_SHARES
+    assert sum(shares.values()) == pytest.approx(1.0)
+    # gen-rot-1280 lists 79,310 photos: real ones 3 times, upright and turned alike.
+    assert shares["real"] == shares["real_turned"] == pytest.approx(2_811 / 79_310)
+    assert shares["synthetic"] == shares["synthetic_turned"] == pytest.approx(11_844 / 79_310)
+    assert shares["generated"] == pytest.approx(50_000 / 79_310)
+    # The plan's shares of an epoch, the store's 20% aside: real 5.7%, synthetic 23.9%, generated 50.4%.
+    rest = 1 - m2b.STORE_SHARE
+    assert round(100 * rest * (shares["real"] + shares["real_turned"]), 1) == 5.7
+    assert round(100 * rest * (shares["synthetic"] + shares["synthetic_turned"]), 1) == 23.9
+    assert round(100 * rest * shares["generated"], 1) == 50.4
+    # The 180° copies join the turned pools; the side arm swaps only its generated photos.
+    assert m2b.replay_lists(m2b.STEP2["n1280-ft"]) == {
+        "real": ("train_real",), "real_turned": ("real_rot", "real_rot180"),
+        "synthetic": ("train_synth_clean",), "synthetic_turned": ("synth_rot", "synth_rot180"),
+        "generated": ("gen_v2",)}
+    assert m2b.replay_lists(m2b.STEP2["n1280-ft-gen50k"])["generated"] == ("gen50k",)
+
+
+def made_up_replay(sizes: dict[str, int]) -> dict[str, list[Path]]:
+    return {pool: [Path(f"/{pool}/{i:06d}.jpg") for i in range(n)] for pool, n in sizes.items()}
+
+
+def test_the_mix_draws_its_shares_with_its_seed():
+    sizes = {"real": 937, "real_turned": 2 * 937, "synthetic": 11_844, "synthetic_turned": 2 * 11_844,
+             "generated": 20_000}
+    images, designs = made_up_pool({f"d{k:02d}": 1 + k % 5 for k in range(31)})   # 31 designs, as v1-train
+    pools = {"store": images, **made_up_replay(sizes)}
+    lists = m2b.mix(pools, designs, seed=0)
+    counts = {pool: len(paths) for pool, paths in lists.items()}
+    assert counts == {"store": 4_991, "real": 709, "real_turned": 709, "synthetic": 2_987,
+                      "synthetic_turned": 2_987, "generated": 12_609}
+    assert sum(counts.values()) == 24_992                       # ft: 10 epochs, 249,920 images
+    for pool in sizes:                                          # each replay photo at most once
+        assert len(set(lists[pool])) == counts[pool] and set(lists[pool]) <= set(pools[pool])
+    assert Counter(designs[p.stem] for p in lists["store"]) == {d: 161 for d in set(designs.values())}
+    # The same seed, the same lists, in whatever order the pools come; another seed, another sample.
+    assert m2b.mix(dict(reversed(list(pools.items()))), designs, seed=0) == lists
+    other = m2b.mix(pools, designs, seed=1)
+    assert all(other[pool] != lists[pool] for pool in lists)
+    # The turned pools hold their quarter turns and their half turns about equally.
+    halves = made_up_replay({**sizes, "real_turned": 0})
+    halves["real_turned"] = ([Path(f"/real_rot/{i}.jpg") for i in range(937)]
+                             + [Path(f"/real_rot180/{i}.jpg") for i in range(937)])
+    turned = m2b.mix({"store": images, **halves}, designs, seed=0)["real_turned"]
+    assert 0.45 < sum(p.parent.name == "real_rot180" for p in turned) / len(turned) < 0.55
+    with pytest.raises(ValueError, match="the generated pool holds 100 photos"):
+        m2b.mix({**pools, "generated": pools["generated"][:100]}, designs, seed=0)
+
+
+def test_frozen_drift_counts_what_a_frozen_stage_moved():
+    import numpy as np
+    before = {"model.0.conv.weight": np.ones((2, 3)), "model.0.bn.weight": np.ones(2),
+              "model.0.bn.bias": np.zeros(2), "model.0.bn.running_mean": np.zeros(2),
+              "model.0.bn.running_var": np.ones(2), "model.0.bn.num_batches_tracked": np.array(7),
+              "model.1.conv.weight": np.ones(4), "model.10.m.0.attn.qkv.bn.running_var": np.ones(3),
+              "model.11.cv1.conv.weight": np.ones(5), "model.23.dfl.conv.weight": np.arange(4.0)}
+    after = {**before, "model.0.bn.running_mean": np.array([0.0, 0.25]),
+             "model.0.bn.num_batches_tracked": np.array(9), "model.11.cv1.conv.weight": np.full(5, 0.5)}
+    drift = m2b.frozen_drift(before, after, layers=11)
+    assert drift["layers"] == 11
+    assert drift["conv"] == {"tensors": 2, "values": 10, "changed": 0, "max_abs": 0.0, "mean_abs": 0.0}
+    assert (drift["bn_affine"]["values"], drift["bn_affine"]["changed"]) == (4, 0)
+    assert drift["bn_running_mean"] == {"tensors": 1, "values": 2, "changed": 1, "max_abs": 0.25,
+                                        "mean_abs": 0.125}
+    assert drift["bn_running_var"]["tensors"] == 2                    # model.10's too: frozen, not model.1's
+    assert (drift["trained"]["values"], drift["trained"]["changed"]) == (9, 5)   # model.11 on, dfl included
+    assert m2b.frozen_problems(drift) == []                         # statistics are only measured
+    moved = m2b.frozen_drift(before, {**after, "model.1.conv.weight": np.full(4, 1.5)}, layers=11)
+    assert m2b.frozen_problems(moved) == ["conv: 4 of 10 values changed, by up to 0.5"]
+
+
+def made_up_export(folder: Path, photos_per_design: dict[str, int]) -> None:
+    """A store export as export_store_yolo.py writes it, small: each training
+    photo in its 4 turns, one validation photo, every file in the manifest
+    with its SHA-256, so store_train.check_export passes on it."""
+    _, designs = made_up_pool(photos_per_design)
+    photos = {n: {"part": "train", "design": d, "tag": "clean", "labels": ["expiry", "due"]}
+              for n, d in designs.items()}
+    photos["v1-0900"] = {"part": "val", "design": "d99", "tag": "sideways", "labels": ["mfg", "expiry"]}
+    folders = {"train": {"train_0": 0, "train_90": 1, "train_180": 2, "train_270": 3}, "val": {"val": 0}}
+    lines = {"train": [], "val": []}
+    for name, p in photos.items():
+        for f in folders[p["part"]]:
+            for kind, ext, text in (("images", "jpg", f"{f}/{name}"),
+                                    ("labels", "txt", "0 0.5 0.5 0.2 0.1\n1 0.2 0.5 0.1 0.1\n")):
+                path = folder / kind / f / f"{name}.{ext}"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+            lines[p["part"]].append(f"./images/{f}/{name}.jpg\n")
+    for part, name in (("train", "train.txt"), ("val", "val.txt")):
+        (folder / name).write_text("".join(lines[part]))
+    files = {f.relative_to(folder).as_posix(): m2b.sha256(f) for f in sorted(folder.rglob("*")) if f.is_file()}
+    images = {f: sum(p["part"] == part for p in photos.values()) for part, fs in folders.items() for f in fs}
+    (folder / "manifest.json").write_text(json.dumps(
+        {"settings": {"folders": folders, "lists": {"train": "train.txt", "val": "val.txt"}},
+         "counts": {"images": images}, "photos": photos, "files": files}))
+
+
+@pytest.fixture
+def step2(cluster, monkeypatch):
+    """The cluster as S10 finds it: stage 1's lists, M2b's 180° sets and
+    gen-v2, the store export, and the control's records. Lists large enough
+    for an epoch of 400 photos (the smoke's)."""
+    root = cluster
+    sizes = {"real_rot": 40, "train_synth_clean": 100, "synth_rot": 100, "gen50k": 300}
+    for name, n in sizes.items():
+        write_list(m2.list_path(name), [Path(f"/m2/{name}/{i}.jpg") for i in range(n)])
+    (root / "expdate" / "yolo" / "train_real.txt").write_text(
+        "".join(f"./images/real-train/r{i}.jpg\n" for i in range(40)))
+    for name, n in {"real_rot180": 40, "synth_rot180": 100, "gen_v2": 300}.items():
+        write_list(m2b.list_path(name), [Path(f"/m2b/{name}/{i}.jpg") for i in range(n)])
+    m2b.manifest_path("derived").parent.mkdir(parents=True)
+    m2b.manifest_path("derived").write_text(json.dumps({"sets": {"real_rot180": {}, "synth_rot180": {}}}))
+    m2b.manifest_path("gen-v2").write_text(json.dumps({"complete": True}))
+    made_up_export(root / "store", {"d01": 1, "d02": 2, "d03": 1, "d04": 3})
+    monkeypatch.setenv("STORE_TRAIN_DIR", str(root / "store"))
+    controls = {s: m2b.write_control(s) for s in m2b.SEEDS}
+    return root, controls
+
+
+def fake_ultralytics(script, monkeypatch) -> list[dict]:
+    """A stand-in for Ultralytics' training, as train() above, that keeps
+    every call."""
+    calls = []
+
+    def fake_train(weights, data, imgsz, seed, project, name, keep, callbacks, **settings):
+        calls.append(dict(weights=weights, imgsz=imgsz, seed=seed, project=project, name=name, keep=keep,
+                          settings=settings))
+        n = json.loads((data.parent / "run.json").read_text())["config"]["n_listed"]
+
+        class MuSGD:
+            param_groups = [{"momentum": settings["momentum"]}]
+        trainer = SimpleNamespace(
+            args=SimpleNamespace(**{**settings, "imgsz": imgsz, "seed": seed, "warmup_momentum": 0.8}),
+            optimizer=MuSGD(), save_dir=str(project / name),
+            train_loader=SimpleNamespace(dataset=FakeDataset(["x.jpg"] * n), num_workers=8))
+        callbacks["on_train_start"](trainer)
+        callbacks["on_train_end"](trainer)
+        return project / name / "weights" / f"{keep}.pt"
+
+    monkeypatch.setattr(script.detector, "train", fake_train)
+    monkeypatch.setattr(script, "device_name", lambda device: "cpu")
+    return calls
+
+
+def new_run(script, argv: list[str]) -> Path:
+    before = set(runs.RUNS_DIR.iterdir())
+    try:
+        script.main(argv)
+    finally:
+        [run_dir] = set(runs.RUNS_DIR.iterdir()) - before
+    return run_dir
+
+
+SMOKE = ["--seed", "0", "--epochs", "1", "--epoch-photos", "400", "--device", "cpu", "--workers", "8"]
+
+
+def test_ft_trains_its_mix_from_the_controls_weights(load_script, monkeypatch, step2):
+    root, controls = step2
+    script = load_script("train_detector")
+    calls = fake_ultralytics(script, monkeypatch)
+    m2_run = m2.finished_run("gen-rot-1280-s0")
+    m2_last = m2b.m2_weights(m2_run, json.loads((m2_run / "run.json").read_text()))
+    before = snapshot(m2_run, root / "ckpt" / "m2")
+    run_dir = new_run(script, ["--milestone", "m2b", "--arm", "n1280-ft", "--name", "smoke-ft", *SMOKE])
+    record = json.loads((run_dir / "run.json").read_text())
+    config = record["config"]
+    # One training, from the control's weights: M2's last.pt, as its record names and hashes it.
+    [call] = calls
+    assert call["weights"] == m2_last and call["name"] == run_dir.name and call["keep"] == "last"
+    assert call["project"] == root / "ckpt" / "m2b" and (call["imgsz"], call["seed"]) == (1280, 0)
+    assert config["start"] == {"run": controls[0].name, "checkpoint": str(m2_last),
+                               "sha256": json.loads((controls[0] / "run.json").read_text())["checkpoint_sha256"]}
+    settings = call["settings"]
+    assert {k: settings[k] for k in m2b.FT_RECIPE} == m2b.FT_RECIPE and settings["freeze"] is None
+    assert (settings["epochs"], settings["warmup_epochs"], settings["close_mosaic"]) == (1, 0.03, 1)
+    assert (settings["workers"], settings["cache"], settings["fraction"]) == (8, False, 1.0)
+    # Its lists: 400 photos, the store's 20% design-balanced, each pool's share; written and listed.
+    assert {pool: v["photos"] for pool, v in config["lists"].items()} == {
+        "store": 80, "real": 11, "real_turned": 11, "synthetic": 48, "synthetic_turned": 48, "generated": 202}
+    assert config["n_listed"] == config["train_images"] == 400 and config["epoch_photos"] == 400
+    store = (run_dir / "lists" / "store.txt").read_text().splitlines()
+    assert len(store) == 80 and all(line.startswith(str(root / "store" / "images" / "train_")) for line in store)
+    assert all(line.startswith("/m2b/gen_v2/") for line in (run_dir / "lists" / "generated.txt").read_text().splitlines())
+    data = (run_dir / "data.yaml").read_text()
+    assert all(json.dumps(str(run_dir / "lists" / f"{pool}.txt")) in data for pool in config["lists"])
+    assert "\nval: val.txt\n" in data                               # validated on real-val, as M2
+    for pool, v in config["lists"].items():
+        assert v["sha256"] == hashlib.sha256((run_dir / "lists" / f"{pool}.txt").read_bytes()).hexdigest()
+    assert set(config["manifests"]) == {"derived", "m2b/derived", "m2b/gen-v2"}     # no gen50k: gen-v2
+    assert config["store_export"] == m2b.sha256(root / "store" / "manifest.json")
+    # The record: finished, one stage as asked, the final weights in the run's own folder.
+    assert record["status"] == "finished" and record["stage"] == 1
+    assert record["checkpoint"] == str(root / "ckpt" / "m2b" / run_dir.name / "weights" / "last.pt")
+    [stage] = record["stages"]
+    assert stage["applied"]["args"]["freeze"] is None and "frozen" not in stage
+    assert stage["momentum_after_warmup"] == [0.937]
+    # M2's run and weights were only read; the same seed draws the same lists again.
+    assert snapshot(m2_run, root / "ckpt" / "m2") == before
+    again = new_run(script, ["--milestone", "m2b", "--arm", "n1280-ft", "--name", "smoke-ft-again", *SMOKE])
+    assert json.loads((again / "run.json").read_text())["config"]["lists"] == config["lists"]
+
+
+def test_ft2_trains_two_stages_and_checks_its_frozen_layers(load_script, monkeypatch, step2):
+    import numpy as np
+    root, controls = step2
+    script = load_script("train_detector")
+    m2_run = m2.finished_run("gen-rot-1280-s0")
+    start = {"model.0.conv.weight": np.ones(3), "model.0.bn.running_var": np.ones(2),
+             "model.11.cv1.conv.weight": np.ones(4)}
+    trained = {**start, "model.11.cv1.conv.weight": np.full(4, 0.9)}
+    calls = fake_ultralytics(script, monkeypatch)
+    monkeypatch.setattr(script.detector, "weights_state",
+                        lambda path: start if Path(path).parent.parent.name == m2_run.name else trained)
+    run_dir = new_run(script, ["--milestone", "m2b", "--arm", "n1280-ft2", "--name", "smoke-ft2", *SMOKE])
+    record = json.loads((run_dir / "run.json").read_text())
+    first, second = calls
+    stage1_last = root / "ckpt" / "m2b" / f"{run_dir.name}-stage1" / "weights" / "last.pt"
+    assert (first["name"], first["settings"]["freeze"], first["settings"]["lr0"]) == (
+        f"{run_dir.name}-stage1", 11, 0.001)
+    assert first["weights"] == Path(record["config"]["start"]["checkpoint"])
+    assert (second["weights"], second["name"], second["settings"]["freeze"], second["settings"]["lr0"]) == (
+        stage1_last, run_dir.name, None, 0.0005)
+    assert [s["schedule"]["epochs"] for s in record["config"]["stages"]] == [1, 1]
+    s1, s2 = record["stages"]
+    assert (s1["stage"], s1["checkpoint"], s2["start"]) == (1, str(stage1_last), str(stage1_last))
+    assert s1["frozen"]["conv"]["changed"] == 0 and s1["frozen"]["trained"]["changed"] == 4
+    assert "frozen" not in s2 and record["status"] == "finished" and record["epochs_run"] is not None
+    assert record["applied"]["args"]["freeze"] is None and record["stage"] == 2   # the watchdog sees stage 2
+    # A frozen convolution that moved stops the run after stage 1, recorded.
+    moved = {**trained, "model.0.conv.weight": np.full(3, 1.01)}
+    monkeypatch.setattr(script.detector, "weights_state",
+                        lambda path: start if Path(path).parent.parent.name == m2_run.name else moved)
+    calls.clear()
+    with pytest.raises(RuntimeError, match="stage 1 moved its frozen layers: conv: 3 of 3"):
+        new_run(script, ["--milestone", "m2b", "--arm", "n1280-ft2", "--name", "smoke-ft2-moved", *SMOKE])
+    assert len(calls) == 1
+    failed = json.loads((runs.latest_run("m2b-smoke-ft2-moved") / "run.json").read_text())
+    assert failed["status"] == "running" and failed["stages"][0]["frozen"]["conv"]["changed"] == 3
+
+
+def test_step_2_starts_only_from_its_step_1_runs_record(load_script, monkeypatch, step2):
+    root, controls = step2
+    weights, digest, name = m2b.start_weights(m2b.STEP2["n1280-ft2"], 2)
+    assert (name, digest) == (controls[2].name, m2b.sha256(weights))
+    assert m2b.start_missing(m2b.STEP2["s1280-ft"], 1) == "m2b-s1280-s1 to finish"
+    with pytest.raises(FileNotFoundError, match="m2b-s1280-s1 hasn't finished"):
+        m2b.start_weights(m2b.STEP2["s1280-ft"], 1)
+    s1280 = runs.start_run("m2b-s1280-s1", {"arm": "s1280"})
+    last = root / "ckpt" / "m2b" / s1280.name / "weights" / "last.pt"
+    last.parent.mkdir(parents=True)
+    last.write_bytes(b"s1280 seed 1")
+    runs.update_run(s1280, status="finished", checkpoint=str(last))
+    assert m2b.start_weights(m2b.STEP2["s1280-ft2"], 1) == (last, m2b.sha256(last), s1280.name)
+    assert m2b.start_missing(m2b.STEP2["s1280-ft"], 1) is None
+    # M2's weights changed since the control recorded them: refused.
+    m2b.m2_weights(*(lambda d: (d, json.loads((d / "run.json").read_text())))(
+        m2.finished_run("gen-rot-1280-s0"))).write_bytes(b"something else")
+    with pytest.raises(RuntimeError, match="has changed since m2b-n1280-s0 recorded it"):
+        m2b.start_weights(m2b.STEP2["n1280-ft"], 0)
+    # A store export that no longer matches its manifest: nothing trains.
+    script = load_script("train_detector")
+    calls = fake_ultralytics(script, monkeypatch)
+    (root / "store" / "images" / "train_0" / "v1-0001.jpg").write_text("changed")
+    with pytest.raises(SystemExit, match="doesn't match its manifest"):
+        script.main(["--milestone", "m2b", "--arm", "n1280-ft", "--name", "x", *SMOKE[2:], "--seed", "1"])
+    assert calls == []

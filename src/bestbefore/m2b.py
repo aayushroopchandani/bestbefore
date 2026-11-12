@@ -1,21 +1,26 @@
-"""M2b's layout, model sizes, step-1 arms and the no-training control, fixed
-before any run (docs/m2b-store-and-size.md). Step 1 is M2's gen-rot-1280
-arm trained from other COCO weights: only the weights change (decision 1).
-n's step 1 is M2's own three runs, kept as they are and recorded as the
-control (decision 12). scripts/train_detector.py trains a step-1 arm and
-scripts/m2b_chain.py runs them all. S6 adds step 2's store lines, drawn
-from the store export; S10 the rest of step 2 and the decision rules."""
+"""M2b's layout, model sizes, arms and the no-training control, fixed before
+any run (docs/m2b-store-and-size.md). Step 1 is M2's gen-rot-1280 arm
+trained from other COCO weights: only the weights change (decision 1). n's
+step 1 is M2's own three runs, kept as they are and recorded as the control
+(decision 12). Step 2 fine-tunes each step-1 run on the store lines (S6)
+and a replay sample, with one of two recipes (S10).
+scripts/train_detector.py trains an arm and scripts/m2b_chain.py runs them
+all."""
 from __future__ import annotations
 
+import hashlib
 import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from . import derived, m2, runs
 from .config import checkpoint_dir, generated_dir, store_train_dir
 from .runs import read_json
 from .store import sha256
+from .yolo import split_repeats
 
 
 # $GENERATED_DIR/m2b/
@@ -154,6 +159,216 @@ STEP1 = {"s1280": StepOne("s"), "m1280": StepOne("m")}
 # they are. Never trained again, copied or changed.
 CONTROL = "n1280"
 CONTROL_FROM = "gen-rot-1280"
+
+
+# --- Step 2: store fine-tuning (decisions 7 to 11) -----------------------------
+
+STORE_SHARE = 0.20            # store photos' share of every epoch (decision 7)
+EPOCH_PHOTOS = 25_000         # photos listed per epoch: the replay sample plus the store lines
+BUDGET_FT = 256_000           # images per fine-tuning run: 10% of M2's BUDGET (decision 9)
+FT_RECIPE = {**m2.RECIPE, "lr0": 0.001}
+FREEZE = 11                   # two-stage: layers 0 to 10, YOLO11's backbone, frozen in stage 1
+FT2_LR0 = 0.0005              # two-stage: stage 2's rate, half FT_RECIPE's (decision 10)
+
+
+@dataclass(frozen=True)
+class Stage:
+    """One Ultralytics training within a fine-tuning run: its share of
+    BUDGET_FT, and what it changes in FT_RECIPE."""
+    share: float
+    freeze: int | None = None       # Ultralytics' freeze: the first k layers keep their weights
+    lr0: float = FT_RECIPE["lr0"]
+
+    def recipe(self) -> dict:
+        return {**FT_RECIPE, "lr0": self.lr0, "freeze": self.freeze}
+
+
+RECIPES = ("ft", "ft2")           # simplest first (R2)
+STAGES = {"ft": (Stage(1.0),),                                        # the whole network
+          "ft2": (Stage(0.5, freeze=FREEZE), Stage(0.5, lr0=FT2_LR0))}   # the head, then all
+
+
+@dataclass(frozen=True)
+class StepTwo:
+    """A step-2 arm: a size's step-1 runs, seed for seed, fine-tuned with one
+    recipe on the store lines and a replay sample."""
+    size: str                       # n, s or m
+    recipe: str                     # ft or ft2
+    generated: str = "gen_v2"       # the replay's generated photos: gen-v2, or M2's gen50k (decision 11)
+
+    @property
+    def start(self) -> str:
+        """The step-1 arm it starts from: n1280 (the control, M2's weights), s1280 or m1280."""
+        return f"{self.size}1280"
+
+    @property
+    def stages(self) -> tuple[Stage, ...]:
+        return STAGES[self.recipe]
+
+    @property
+    def imgsz(self) -> int:
+        return m2.ARMS[CONTROL_FROM].imgsz
+
+
+STEP2 = {**{f"{size}1280-{recipe}": StepTwo(size, recipe) for size in SIZES for recipe in RECIPES},
+         "n1280-ft-gen50k": StepTwo("n", "ft", "gen50k")}
+
+
+def schedule(n_listed: int, stage: Stage, epochs: int | None = None) -> dict:
+    """A stage's epochs for its share of BUDGET_FT, or `epochs` (smoke runs),
+    with M2's warmup and mosaic-off shares (m2.schedule)."""
+    return m2.schedule(n_listed, stage.share * BUDGET_FT / m2.BUDGET, epochs)
+
+
+# The replay (decision 8): gen-rot-1280's mix without the store, pool by pool.
+# Its lists' sizes, as M2's runs recorded them (and step 1's, which trained on them).
+GEN_ROT_1280_COUNTS = {"train_real": 937, "real_rot": 937, "train_synth_clean": 11_844,
+                       "synth_rot": 11_844, "gen50k": 50_000}
+# Each pool and its lists. The turned pools add ExpDate's 180° copies (S9) to
+# the 90° and 270° ones gen-rot-1280 had, so the turned share stays as it was.
+REPLAY = {"real": ("train_real",), "real_turned": ("real_rot", "real_rot180"),
+          "synthetic": ("train_synth_clean",), "synthetic_turned": ("synth_rot", "synth_rot180"),
+          "generated": ("gen_v2",)}
+
+
+def replay_shares() -> dict[str, float]:
+    """Each replay pool's share of gen-rot-1280's mix: the photos its first
+    list gave there (real ones repeated, as that arm lists them), over all."""
+    mix = m2.mix(m2.ARMS[CONTROL_FROM], GEN_ROT_1280_COUNTS)
+    listed = {name: GEN_ROT_1280_COUNTS[name] * k for name, k in map(split_repeats, mix.lists)}
+    first = {"real": "train_real", "real_turned": "real_rot", "synthetic": "train_synth_clean",
+             "synthetic_turned": "synth_rot", "generated": "gen50k"}
+    return {pool: listed[name] / mix.n_listed for pool, name in first.items()}
+
+
+REPLAY_SHARES = replay_shares()
+
+
+def replay_lists(arm: StepTwo) -> dict[str, tuple[str, ...]]:
+    """The arm's replay pools and their lists: REPLAY, with its generated photos."""
+    return {**REPLAY, "generated": (arm.generated,)}
+
+
+def list_file(name: str) -> Path:
+    """Any list step 2 reads: one of M2b's (MANIFEST_OF), else ExpDate's or M2's."""
+    return list_path(name) if name in MANIFEST_OF else m2.list_file(name)
+
+
+def any_list_missing(name: str) -> str | None:
+    """Why a list step 2 reads can't be used yet, or None: M2b's own, or M2's."""
+    return list_missing(name) if name in MANIFEST_OF else m2.list_missing(name)
+
+
+def replay_pools(arm: StepTwo) -> dict[str, list[Path]]:
+    """Every photo of each of the arm's replay pools, from its lists."""
+    return {pool: [p for name in names for p in derived.read_list(list_file(name))]
+            for pool, names in replay_lists(arm).items()}
+
+
+def manifest_hashes(names: Sequence[str]) -> dict[str, str]:
+    """SHA-256 of every manifest behind these lists: M2's, and M2b's as m2b/<name>."""
+    found = m2.manifest_hashes([n for n in names if n not in MANIFEST_OF])
+    for name in sorted({MANIFEST_OF[n] for n in names if n in MANIFEST_OF}):
+        found[f"m2b/{name}"] = sha256(manifest_path(name))
+    return found
+
+
+def mix(pools: Mapping[str, Sequence[Path]], designs: Mapping[str, str], seed: int,
+        epoch_photos: int = EPOCH_PHOTOS) -> dict[str, list[Path]]:
+    """One run's lists (decisions 7 and 8): "store", the store lines,
+    design-balanced over v1-train's designs and its 4 turns (STORE_SHARE of
+    the epoch, store_lines), and a sample of each replay pool, its share of
+    gen-rot-1280's mix (REPLAY_SHARES) of the rest, drawn with `seed`, each
+    photo at most once. `pools` holds the export's training images under
+    "store" and each replay pool's photos under its name (replay_pools);
+    `designs` maps an exported photo to its design (store_pool). The same
+    seed gives the same lists, in whatever order the pools come."""
+    store_count = round(STORE_SHARE * epoch_photos)
+    lists = {"store": store_lines(pools["store"], designs, store_count, seed)}
+    rest = epoch_photos - store_count
+    for pool, share in REPLAY_SHARES.items():
+        photos, n = sorted(pools[pool]), round(share * rest)
+        if n > len(photos):
+            raise ValueError(f"the {pool} pool holds {len(photos)} photos; the mix draws {n}")
+        lists[pool] = sorted(random.Random(f"{seed}/{pool}").sample(photos, n))
+    return lists
+
+
+def list_text(paths: Sequence[Path]) -> str:
+    """A list file's text: one absolute path a line."""
+    return "".join(f"{p}\n" for p in paths)
+
+
+def list_record(paths: Sequence[Path]) -> dict:
+    """What a run records of one of its lists: its lines, distinct photos and SHA-256."""
+    return {"photos": len(paths), "distinct": len(set(paths)),
+            "sha256": hashlib.sha256(list_text(paths).encode()).hexdigest()}
+
+
+def start_weights(arm: StepTwo, seed: int, root: Path | None = None) -> tuple[Path, str, str]:
+    """A step-2 run's starting weights, from its step-1 run's record, seed
+    for seed (decision 9): the last.pt its run.json names, that file's
+    SHA-256, and the run's folder name. The control's record holds the hash
+    of M2's last.pt, and a file that no longer matches it is refused."""
+    name = f"{arm.start}-s{seed}"
+    run_dir = finished_run(name, root)
+    if run_dir is None:
+        raise FileNotFoundError(f"m2b-{name} hasn't finished: no weights to start from")
+    record = read_json(run_dir / "run.json")
+    weights = Path(record["checkpoint"])
+    if not weights.exists():
+        raise FileNotFoundError(f"{weights}, m2b-{name}'s weights, isn't on this machine")
+    digest = sha256(weights)
+    if record.get("checkpoint_sha256", digest) != digest:
+        raise RuntimeError(f"{weights} has changed since m2b-{name} recorded it")
+    return weights, digest, run_dir.name
+
+
+def start_missing(arm: StepTwo, seed: int, root: Path | None = None) -> str | None:
+    """What a step-2 run waits for before it can start, or None: its step-1 run."""
+    name = f"{arm.start}-s{seed}"
+    return None if finished_run(name, root) else f"m2b-{name} to finish"
+
+
+def frozen_drift(before: Mapping[str, np.ndarray], after: Mapping[str, np.ndarray],
+                 layers: int = FREEZE) -> dict:
+    """How far a frozen stage moved each kind of tensor, from the weights it
+    started from (`before`) to its last.pt (`after`), both as
+    detector.weights_state reads them: in the frozen layers (model.0 to
+    model.<layers - 1>) their convolution weights, batch-norm weights and
+    biases, and batch-norm running means and variances; and every tensor of
+    the layers it trained. Per kind: tensors, values, values changed, and
+    the largest and the mean absolute change. Batch counts aren't compared."""
+    frozen = tuple(f"model.{i}." for i in range(layers))
+    kinds: dict[str, dict] = {}
+    for key in sorted(before):
+        if key.endswith("num_batches_tracked"):
+            continue
+        if not key.startswith(frozen):
+            kind = "trained"
+        elif key.endswith(("running_mean", "running_var")):
+            kind = "bn_" + key.rsplit(".", 1)[1]
+        else:
+            kind = "bn_affine" if ".bn." in key else "conv"
+        diff = np.abs(np.asarray(after[key], np.float64) - np.asarray(before[key], np.float64))
+        k = kinds.setdefault(kind, {"tensors": 0, "values": 0, "changed": 0, "max_abs": 0.0, "sum_abs": 0.0})
+        k["tensors"] += 1
+        k["values"] += diff.size
+        k["changed"] += int((diff > 0).sum())
+        k["max_abs"] = max(k["max_abs"], float(diff.max(initial=0.0)))
+        k["sum_abs"] += float(diff.sum())
+    for k in kinds.values():
+        k["mean_abs"] = k.pop("sum_abs") / k["values"] if k["values"] else 0.0
+    return {"layers": layers, **dict(sorted(kinds.items()))}
+
+
+def frozen_problems(drift: dict) -> list[str]:
+    """What a frozen stage must not do: move a frozen weight (a convolution's,
+    or a batch-norm's weight or bias). Batch-norm statistics are only
+    measured (docs/m2b-store-and-size.md, Step 2)."""
+    return [f"{kind}: {drift[kind]['changed']} of {drift[kind]['values']} values changed, "
+            f"by up to {drift[kind]['max_abs']:.3g}"
+            for kind in ("conv", "bn_affine") if drift.get(kind, {}).get("changed")]
 
 
 # --- Run records ----------------------------------------------------------------

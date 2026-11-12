@@ -31,10 +31,12 @@ SETTINGS = dict(
 )
 PREDICT_CONF = 0.001   # keep nearly every box; thresholds are applied later
 
-# The arguments `applied` reads back off Ultralytics' trainer.
+# The arguments `applied` reads back off Ultralytics' trainer (freeze: M2b's
+# two-stage arm).
 APPLIED_ARGS = ("optimizer", "lr0", "momentum", "warmup_momentum", "warmup_bias_lr",
                 "warmup_epochs", "epochs", "close_mosaic", "patience", "val", "batch",
-                "fliplr", "deterministic", "imgsz", "seed", "fraction", "workers", "cache")
+                "fliplr", "deterministic", "imgsz", "seed", "fraction", "workers", "cache",
+                "freeze")
 
 
 def pretrained_path(name: str) -> Path:
@@ -114,7 +116,7 @@ def applied(trainer) -> dict:
     photos the training set holds (repeats included), and whether they
     are cached in RAM (Ultralytics' own memory check can refuse)."""
     dataset = trainer.train_loader.dataset
-    return {"args": {k: getattr(trainer.args, k) for k in APPLIED_ARGS},
+    return {"args": {k: getattr(trainer.args, k, None) for k in APPLIED_ARGS},
             "optimizer": type(trainer.optimizer).__name__,
             "train_images": len(dataset),
             "distinct_images": len(set(dataset.im_files)),
@@ -127,6 +129,17 @@ def momenta(trainer) -> list[float]:
     """The momentum of every parameter group. After warmup it stays where
     warmup left it, close to the `momentum` argument (decision 9)."""
     return sorted({round(g["momentum"], 4) for g in trainer.optimizer.param_groups})
+
+
+def weights_state(weights: Path) -> dict[str, np.ndarray]:
+    """Every weight and buffer of a checkpoint as Ultralytics loads it to
+    train or predict: its EMA (or its model), in float32, as numpy arrays by
+    name (model.0.conv.weight, model.0.bn.running_mean, ...)."""
+    import torch
+
+    ckpt = torch.load(weights, map_location="cpu", weights_only=False)
+    model = (ckpt.get("ema") or ckpt.get("model")).float()
+    return {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
 
 
 def epochs_run(best: Path) -> int | None:
