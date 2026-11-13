@@ -21,7 +21,7 @@ grew out of. Three readers, each with its own job:
 
 | Reader | Its job | Why |
 |---|---|---|
-| **CRNN + CTC**, written here, the decoder by the owner | learn how text reading works; the reader built from nothing | a fair "from scratch" arm, and the code the others reuse |
+| **CRNN + CTC**, written here, walked through with the owner | learn how text reading works; the reader built from nothing | a fair "from scratch" arm, and the code the others reuse |
 | **PP-OCRv6 small**, fine-tuned | the reader for the phone | the same family as the baselines' own reader, four generations on, pretrained on real text |
 | **Qwen3-VL-2B**, untrained and LoRA fine-tuned | the heavy comparison for the portfolio | reads the whole photo, needs no detector, and can work out a shelf-life expiry |
 
@@ -297,8 +297,8 @@ Each comes with its reason. **(new)** marks a choice not written down
 before; **(changes X)** a departure from an earlier decision.
 
 1. **(changes `CLAUDE.md`'s M3 row: "a recogniser … or a small VLM")
-   Three readers, both kinds.** CRNN + CTC (from scratch, the owner writes
-   its decoder), PP-OCRv6 small (fine-tuned, the phone candidate),
+   Three readers, both kinds.** CRNN + CTC (from scratch, its decoder
+   walked through with the owner), PP-OCRv6 small (fine-tuned, the phone candidate),
    Qwen3-VL-2B (the heavy comparison). Dropped, agreed with the owner:
    **TrOCR** (the same job as the CTC readers at 61M to 334M parameters,
    slow and hard to run in a browser, and a decoder writing one character
@@ -403,7 +403,7 @@ before; **(changes X)** a departure from an earlier decision.
     threshold on validation.
 16. **(new) Score what ships.** Every CTC reader is scored as an ONNX file
     through ONNX Runtime, with one shared pre- and post-processing (the
-    owner's decoder), on both machines; the VLM as one GGUF file (Q8_0)
+    shared decoder), on both machines; the VLM as one GGUF file (Q8_0)
     through llama.cpp. PyTorch and Paddle train; they never score a
     reported number. Parity checks (S5, S6, S7) show the exported file
     reads as its training framework does.
@@ -609,11 +609,11 @@ def life_strip(due: Box, image) -> Box:
   scoring and the phone later.
 - **Batches by aspect:** crops sorted into width buckets, so a batch pads
   little (RapidOCR sorts its batches for the same reason).
-- **Decoding:** greedy CTC, `reader/ctc.py`, **written by the owner**
-  against tests written first: the best class per frame, repeats merged,
+- **Decoding:** greedy CTC, `reader/ctc.py`, written against tests
+  written first and walked through with the owner (S5): the best class per frame, repeats merged,
   blanks dropped, each kept character's probability returned.
 - **Metrics:** exact text (case and spaces folded), character error rate
-  (`reader/metrics.py`'s `cer`, **written by the owner**: edit distance
+  (`reader/metrics.py`'s `cer`, walked through with the owner: edit distance
   over the truth's length), and date-level right / wrong / none
   (`scoring.score` on the parser's dates against the box's truth).
 
@@ -886,8 +886,8 @@ src/bestbefore/
     piles.py          what each pile holds, where its crops come from (S3's)
     data.py           the training stream: mix(), design balance, augmentation, width buckets,
                       the visibility measure (S5)
-    ctc.py            greedy_decode (the owner's), confidences
-    metrics.py        cer (the owner's), exact text, date-level scores
+    ctc.py            greedy_decode, confidences
+    metrics.py        cer, exact text, date-level scores
     crnn.py           the CRNN
     train.py          one training loop for CTC readers (CRNN; PP-OCRv6 on the PyTorch route)
     ppocr.py          PP-OCRv6: dictionary, loading, export, the route check
@@ -909,7 +909,7 @@ slurm/
   crop experiment, crops, visibility, smoke, route checks, GGUF, end to end, ExpDate test)
 tests/
   test_reader_charset.py, test_reader_crops.py, test_reader_shards.py, test_reader_data.py,
-  test_ctc.py (the owner's decoder's spec), test_reader_metrics.py, test_crnn.py,
+  test_ctc.py (the decoder's spec), test_reader_metrics.py, test_crnn.py,
   test_reader_parse.py, test_roles.py, test_pipeline.py, test_vlm.py, test_m3_rules.py,
   test_m3_results.py
 ```
@@ -1415,13 +1415,15 @@ was left; the task remakes it.
 to its frozen value, or is listed and settled with the owner. **Commits:**
 `feat: store date text, typed and frozen`, `docs: m3 plan, S4's text`
 
-### S5. The CRNN · laptop, the owner writes two pieces, then a CPU smoke
+### S5. The CRNN · laptop, then a CPU smoke
 
 - `reader/charset.py`, `reader/crnn.py`, `reader/data.py`,
   `reader/train.py`, `reader/onnx_run.py`, `scripts/train_reader.py
   --reader crnn --arm all --seed 0`, `scripts/export_reader.py`.
-- **The owner writes** `ctc.greedy_decode` and `metrics.cer`, against
-  tests written first (`tests/test_ctc.py`, `tests/test_reader_metrics.py`):
+- **`ctc.greedy_decode` and `metrics.cer`** are written by Claude, not
+  the owner (the owner's choice, 2026-11-13: a change from this plan's
+  first version), against tests written first, then **walked through
+  with the owner line by line** (`tests/test_ctc.py`, `tests/test_reader_metrics.py`):
   repeats merged, blanks dropped, a repeated character kept when a blank
   separates it (`2 0 0 -> "20"`, `2 0 - 0 -> "200"`); `cer("08/2027",
   "08/2021") = 1/7`.
@@ -1463,7 +1465,7 @@ to its frozen value, or is listed and settled with the owner. **Commits:**
   estimate's base).
 
 **Commits:** `feat: crnn reader with ctc, the training stream`,
-`feat: the owner's ctc decoder and character error rate`,
+`feat: ctc greedy decoder and character error rate`,
 `feat: ctc readers exported to onnx, one pre and post`
 
 ### S6. PP-OCRv6: the route and the fine-tune · laptop, then CPU checks
