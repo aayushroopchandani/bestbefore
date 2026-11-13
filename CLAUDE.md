@@ -167,10 +167,12 @@ Plan each milestone as a sliced doc in `docs/` before writing its code.
 
 ## Lessons already measured (don't re-learn them)
 
-- **Crops hurt off-the-shelf OCR.** RapidOCR read fewer dates from perfect
-  hand-drawn crops (25/44) than from the whole photo (31/44). So detector
-  plus RapidOCR on crops will **not** beat baseline B. The gain needs a
-  recogniser trained on crops (M3). Judge M1 only on finding dates.
+- **Crops hurt RapidOCR's full pipeline, not its recogniser.** On tight
+  hand-drawn boxes of v1's 81 expiries, RapidOCR's full pipeline read 34
+  right / 2 wrong (A on the whole photo 49/7, B 57/2), but its recogniser
+  alone, sideways crops turned, read 70/0, and PP-OCRv6 small's 78/0 (M3
+  S2). A detector feeding a recogniser alone can beat B, if it finds the
+  dates. Judge M1 only on finding dates.
 - **Heavy preprocessing hurts OCR.** Adaptive thresholding made it worse;
   mild sharpening helped slightly. Models trained on natural photos want
   natural photos.
@@ -243,6 +245,22 @@ this repo.
   the whole node (48) and pins each unless told how many; inside a job's
   cgroup every pin fails (`pthread_setaffinity_np failed`). Set
   `intra_op_num_threads` to the job's CPUs in every session (M3 S1).
+  RapidOCR 1.2.3 has no option for it: replace
+  `rapidocr_onnxruntime.utils.SessionOptions` before building it
+  (`scripts/crop_experiment.py`). PaddleOCR 3.7 runs on Paddle, not ONNX
+  Runtime, and takes `cpu_threads` (M3 S2).
+- **OCR on CPU nodes is slower than the laptop** (M3 S2, job 73956, `cn1`,
+  8 CPUs): a crop took 27 to 40 ms through RapidOCR's recogniser, 87 to
+  102 ms through PP-OCRv6 small's and 1.2 to 1.5 s through PaddleOCR's
+  full pipeline, 3 to 20 times the laptop's smoke (Apple M2, 4 threads);
+  7,176 reads took 37 minutes where the smoke promised about 6. TotalCPU
+  was 4 h 58 min in 38:55, the threads kept busy; Paddle prints
+  `ReduceMeanCheckIfOneDNNSupport` and an `OMP_NUM_THREADS` warning. Why
+  wasn't looked into (oneDNN on crops of every size, likely). Size such
+  jobs from a cluster smoke. Loading the three PaddleX models took 56 s
+  cold. The reads themselves matched the laptop's: 156 of 156 texts
+  identical, scores within 0.0002. A `short` job of 8 CPUs and 16 GB
+  started at once with one GPU job of ours running.
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. It is
@@ -286,7 +304,11 @@ this repo.
   sends only what changed (1 MB of 166 MB in 11 s). The home folder is 700;
   `~/bestbefore-data` is 775 and the umask 0002. The store export lives in
   `~/bestbefore-data/store/`, `STORE_TRAIN_DIR` in the cluster's `.env`
-  since 2026-11-12 (M2b S10). Ultralytics writes v1-val's label cache
+  since 2026-11-12 (M2b S10). Beside it, `text.json` (M3 S2): each
+  numbered photo's date values, written on the laptop with mode 600 and
+  copied the same way. Store crops cut on the cluster go into owner-only
+  run folders under `~/bestbefore-data/generated/m3/` (the job sets
+  `umask 077`). Ultralytics writes v1-val's label cache
   there, `labels/val.cache`, with mode 664: `chmod 600` it after its first
   scoring (it is rewritten only if v1-val's photos change). A `du` over all of `~/bestbefore-data`
   (M2's generated photos) ran over 5 minutes on the login node without
