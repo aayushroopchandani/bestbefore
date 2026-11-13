@@ -529,6 +529,8 @@ M2b decision 7). Seeded per run and per loader worker.
   augmentation; more would memorise 167 crops (the store-train score
   shows it).
 - In `exp`, real and synth are a third and two thirds.
+- Training crops whose print can't be seen (under `m3.VISIBLE_MIN`, S5)
+  are never drawn; suites keep every crop.
 
 ### Augmentation (fixed, not tuned)
 
@@ -762,6 +764,7 @@ EVALS = 20                     # checkpoints scored per run (every 5%), decision
 PADS = (0.0, 0.15, 0.4)        # S2: padding, as a share of the box's short side
 NOISE_STORE_MIN = 3            # store-val: one crop of 62 is 1.6 points
 WRONG_CAP = 0.02               # wrong among kept reads: B's rate on v1, 2 of 87
+VISIBLE_MIN = None             # S5: training crops under it are never drawn; set by eye on sheets, before any training
 
 def crop_recipe(results: dict) -> dict:
     """R1 (S2). pad: the most right reads, summed over both untrained
@@ -881,7 +884,8 @@ src/bestbefore/
     crops.py          cut with a margin and padding, quarter turns, jitter
     shards.py         the LMDB record, writer, reader, checks
     piles.py          what each pile holds, where its crops come from (S3's)
-    data.py           the training stream: mix(), design balance, augmentation, width buckets
+    data.py           the training stream: mix(), design balance, augmentation, width buckets,
+                      the visibility measure (S5)
     ctc.py            greedy_decode (the owner's), confidences
     metrics.py        cer (the owner's), exact text, date-level scores
     crnn.py           the CRNN
@@ -902,7 +906,7 @@ scripts/
   pull_cluster_results.sh (m3 runs, never crops or weights)
 slurm/
   m3_gpu.sbatch, m3_chain.sh, m3_cpu.sbatch (one CPU script, a task per argument:
-  crop experiment, crops, smoke, route checks, GGUF, end to end, ExpDate test)
+  crop experiment, crops, visibility, smoke, route checks, GGUF, end to end, ExpDate test)
 tests/
   test_reader_charset.py, test_reader_crops.py, test_reader_shards.py, test_reader_data.py,
   test_ctc.py (the owner's decoder's spec), test_reader_metrics.py, test_crnn.py,
@@ -1371,7 +1375,11 @@ What was found:
   gen's sheets alike): ink nearly the colour of its background, dots laid
   over the background photo's own print, or defocus. Their text is
   exact, but the photo doesn't show it. synth-val-v2's worn and
-  low-contrast strata show the same.
+  low-contrast strata show the same. Asked by the owner afterwards, the
+  worst were stretched to full contrast: `#318046` and `#66043` are pure
+  noise. The generator's ink check passed them (0.094 and 0.045 against
+  its bar of 0.04) before its camera added noise of about 5.5 grey
+  levels. S5 leaves such crops out of training (the owner's go-ahead).
 - **ExpDate has black photos:** 36 expdate-synth crops on 30 photos span
   under 16 grey levels inside their box; `img_06565.jpg`, all black (mean
   0.1), has two dates annotated. None in expdate-real or real-val; one in
@@ -1419,8 +1427,37 @@ to its frozen value, or is listed and settled with the owner. **Commits:**
   "08/2021") = 1/7`.
 - **Tests:** the mix's shares and seeding; design balance; padding and
   jitter stay inside the margin; width buckets pad less than random
-  batches; the CRNN's output frames for a 320 px crop; a tiny overfit (50
+  batches; the visibility measure on made-up crops (print at falling
+  contrast under fixed noise falls with it; print visible in colour only
+  still scores; a crop under the cut-off is never drawn); the CRNN's output frames for a 320 px crop; a tiny overfit (50
   crops, loss near zero); ONNX reads equal PyTorch's.
+- **Empty crops left out of training** (moved from Later, the owner's
+  go-ahead 2026-11-13, after S3's sheets). About 4 or 5 of every 64
+  generated crops show no print at all, even with their contrast
+  stretched to full range (the generator checks its ink before the camera
+  adds noise, blur and glare), and ExpDate's black synthetic photos give
+  36 blank crops; each still carries its text. A reader trained on them
+  learns to answer a date from nothing, the wrong read M3 most wants to
+  avoid. So:
+  - `reader/data.py` gets a **visibility measure** of the stored crop:
+    how far the print inside the box stands out from the crop's own
+    noise, in colour (S3's `#441001` shows its print in colour only).
+    It is computed once per record by a pass over each training pile (a
+    CPU job: `m3_cpu.sbatch visibility`) and saved beside its LMDB.
+  - **The cut-off is set by eye, before any training:** sheets of
+    training crops sorted by the measure, from piles `gen`, `expdate-real`
+    and `expdate-synth`, looked at with the owner; the cut-off is where
+    the print stops being readable to a person looking hard. Faint,
+    blurred but readable print stays: it is what the store's dot-matrix
+    and small print look like. Written into `m3.VISIBLE_MIN` with the
+    sheets it was chosen on.
+  - `mix()` skips training crops under the cut-off. **Suites are never
+    filtered** (a reader scored on them is scored on every crop); their
+    measure is recorded so a suite can be split by it.
+  - **Check:** how many each pile loses (about 5% expected for `gen`; over
+    10% of any pile means look again before training), a sheet of the
+    dropped crops (nearly all empty) and one of the kept crops just above
+    the cut-off (all readable).
 - **Smoke:** `m3_cpu.sbatch smoke-crnn` (`short`): 2,000 steps at batch 64
   on `all`; the loss falls; ONNX parity; images a second (the GPU
   estimate's base).
@@ -1568,7 +1605,8 @@ and S13 wait for M2b's detector.
 | CPU work (`short`) | Estimate |
 |---|---|
 | S2 crop experiment, about 7,000 reads | minutes |
-| S3 crops, about 700,000 | under an hour |
+| S3 crops, about 700,000 | under an hour (took 6 minutes) |
+| S5 visibility measure, about 694,000 training crops | minutes |
 | S7 VLM set (25,000 images) and GGUF checks | under an hour |
 | S11 VLM validation through GGUF, 199 photos | about 30 minutes |
 | S12 end to end, 199 photos, every reader | under an hour |
@@ -1667,11 +1705,8 @@ results/           m3_reader.md (committed; runs/ is not)
 - **TrOCR**, only to answer a question the CTC readers can't.
 - **Frame voting** (M6): a date accepted once several frames agree.
 - **int8 quantisation** of the reader (M5).
-- **A visibility filter for training crops** (S3): about 4 or 5 of 64
-  generated crops show no readable print, and ExpDate's black synthetic
-  photos give 36 blank crops, each with its text. If S5's CRNN learns to
-  invent text from blank crops (reads on blank crops that aren't empty),
-  drop crops whose box shows no ink, by a contrast measure checked on
-  sheets first.
+- **The generator's ink check after its camera** (gen-v3, if ever made):
+  S3 found blocks that pass the check and are then buried by camera noise
+  and blur. S5's visibility filter handles it for M3's crops.
 - **Piles copied to a node's own disk** for training, if reading LMDB on
   Lustre holds S5's loader back (S5 measures the loader's pace first).
