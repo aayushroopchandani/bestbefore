@@ -339,6 +339,9 @@ this repo.
   two-stage smokes on 413 photos in 3 and 4 minutes and scored the M2b
   suite's 5,070 photos in 12 (about 40 ms an image): 19 minutes in all,
   17.1 GB by `sacct`'s sample.
+- **The laptop overheats on long CPU runs:** anything heavier than a few
+  seconds (OCR, scoring, smokes) runs as a `short` job; only store set
+  v2's one-time pass stays local.
 - **Python:** modules `Python/3.11.11` (same minor version as the laptop),
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
   use it. The module provides `python3`, not `python`, and the venv only
