@@ -10,6 +10,13 @@
 #         models, one real-val crop read by PaddleOCR (recogniser alone and
 #         full pipeline) and RapidOCR (scripts/check_m3_env.py); llama.cpp
 #         generating 8 tokens from the Q8_0 GGUF, naming its CPU variant
+#   crop-experiment
+#         S2: untrained readers on hand-drawn date boxes (scripts/crop_experiment.py):
+#         cut (main venv), read (ocr-cpu), score (main venv). Store crops and
+#         per-crop reads stay in an owner-only folder under $GENERATED_DIR/m3/;
+#         results/runs/ gets counts only, and R1 in m3-decisions.json.
+#
+#   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #SBATCH --job-name=m3-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -48,8 +55,16 @@ env)
     grep -E "loaded CPU backend|AMX|eval time" "$DIR/llama.log" | grep -v "amx repack" || true
     echo "llama.cpp: ok"
     ;;
+crop-experiment)
+    umask 077                   # store crops: the owner's only (CLAUDE.md)
+    RUN=$($MAIN scripts/crop_experiment.py cut | tail -n 1)
+    $OCR -I scripts/crop_experiment.py read "$RUN" --threads "$SLURM_CPUS_PER_TASK"
+    $MAIN scripts/crop_experiment.py score "$RUN"
+    open=$(find "$RUN" -perm /077 | wc -l)
+    echo "entries open to others in the run folder: $open"
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env"
+    echo "unknown task '${1:-}': one of env, crop-experiment"
     exit 2
     ;;
 esac
