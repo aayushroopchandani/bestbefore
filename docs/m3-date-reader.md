@@ -7,8 +7,10 @@ three readers, the data, the baselines, the crop experiment). Status:
 models fetched and hashed; llama.cpp built; the CPU check passed on
 `cn1`, its AMX variant set aside); S2 done 2026-11-13 (the crop
 experiment, job `73956`: pad 0, turning kept by the owner's departure from
-R1). Next: S3. M2b is still in progress (S10 next there);
-every slice here that needs one of M2b's outputs says so. The learnings
+R1); S3 done 2026-11-13 (the crop shards, job `73958`: 698,988 crops in
+8 piles, 4.7 GiB, every record checked). Next: S4. M2b is still in
+progress (S10 next there); every slice here that needs one of M2b's
+outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
 
 **Goal.** Read the expiry date on a photo: find every date (M2b's
@@ -878,6 +880,7 @@ src/bestbefore/
     charset.py        the character set, case folding, '?'
     crops.py          cut with a margin and padding, quarter turns, jitter
     shards.py         the LMDB record, writer, reader, checks
+    piles.py          what each pile holds, where its crops come from (S3's)
     data.py           the training stream: mix(), design balance, augmentation, width buckets
     ctc.py            greedy_decode (the owner's), confidences
     metrics.py        cer (the owner's), exact text, date-level scores
@@ -1277,6 +1280,114 @@ every record decodes; a crop sheet per pile looked at. **Commits:**
 `feat: m3 crop shards, lmdb records with text and turn`,
 `docs: m3 plan, S3's crops`
 
+**Done 2026-11-13.** Job `73958`, read the same session. Departures:
+
+- `reader/piles.py`, not in the plan's layout: what each pile holds and
+  where its crops come from; `reader/shards.py` holds the record and the
+  LMDB; `crops.cut` cuts a stored crop. A trial pile, `gen-sample`
+  (gen-v2-sample, the laptop's), and a smoke task, `crops-smoke`, which
+  sized the job at the owner's ask.
+- **`expdate-synth` leaves out the 14 synthetic copies** of validation
+  photo `img_00277.jpg` (`m2.REUSED_VAL_COPIES`, M2's decision 18): 16,652
+  dates, not the 16,674 of "What ExpDate and the generator hold", which
+  counts all 11,858 photos. real-val decides checkpoints (decision 17).
+- **The record:** `box` in floats rounded to 0.01 px, not whole pixels;
+  `turn` is the turn a crop was given when cut (0 in a suite), and
+  `tags["upright"]` the turn still needed to stand it upright: 0 in every
+  training pile, a suite's truth for decision 14. JPEG 95 at 4:4:4 (no
+  colour halved round small print).
+- **An ExpDate date's parts come from the frozen parser** on its
+  transcription (`parts_from: parser`): train and synth mark none. A
+  generated date's come from its sidecar (`parts_from: sidecar`), never
+  from its text, as S2 found they must.
+- `m3.EDGE_JITTER` (0.10, the augmentation's edge jitter) is written now,
+  so `make_crops.py` refuses to cut when the recipe's padding plus the
+  jitter won't fit in the margin.
+
+What was found:
+
+- **The recipe** (`m3.crop_recipe_used`): pad 0 with turning kept, R1's
+  run with the owner's departure; 0 + 0.10 fits the margin of 0.5. Every
+  manifest keeps it. Nothing here depends on the pad: crops keep half
+  their box's short side of margin.
+- **ExpDate's own tall dates:** 78 synthetic date boxes are taller than
+  wide (none in real-train or real-val). Of 25 looked at, 23 are upright
+  text drawn tall and 2 sideways dot-matrix, so ExpDate's crops stay as
+  the photo shows them (`shape` counted in the manifest).
+- **The laptop trial** (real-val and gen-sample, 1,888 crops) took 1.6 s
+  with 4 workers; `--check` passed; 1 worker and 4 wrote identical
+  records. **The laptop's real-val and the cluster's are identical byte
+  for byte** (187 of 187 JPEGs, boxes and texts).
+- **The smoke** (job `73957`, the first 2,000 photos of each pile, 24
+  CPUs): 26 s on `cn1`, every check passed. gen ran at 2.8 ms a photo
+  (wall), opening a photo 52 ms per worker against the laptop's 4.4 ms;
+  7.3 KB a crop in LMDB. The owner gave the word for 24 CPUs, 32 GB, 1 h.
+- **The job** (`73958`, `short`, `cn1`, started at once): 21:38 to 21:44,
+  5 min 45 s; TotalCPU 31 min; `sacct` MaxRSS 1.7 GB (sampled). The
+  plan asked 4 h, far more than it took: opening gen-v2's 200,000 photos
+  (37 GB) on 24 workers took 310 s, 1.56 ms a photo, 33.7 ms per worker
+  (the smoke's cold first 2,000: 52 ms).
+
+  | Pile | Crops | Photos | Seconds | `data.mdb` |
+  |---|---:|---:|---:|---:|
+  | expdate-real | 1,057 | 937 | 0.7 | 10 MiB |
+  | expdate-synth | 16,652 | 11,745 | 6.6 | 188 MiB |
+  | gen | 676,218 | 198,552 | 310 | 4,571 MiB |
+  | real-val, real-val-rot, real-val-rot180 | 187 each | 165 each | 0.2 to 0.3 | 1.8 MiB each |
+  | synth-val | 2,100 | 2,100 | 1.0 | 21 MiB |
+  | synth-val-v2 | 2,400 | 2,400 | 1.2 | 26 MiB |
+
+- **`--check` passed on all 8:** every record decodes, lies inside its
+  crop, has text and sound class, role, turns and parts; the counts match
+  the manifest; recounted from the sources, records + skipped = planned
+  (nothing was skipped, and every wanted generated token had a box); the
+  sources' hashes are unchanged; and the planned dates equal what the
+  sources' own manifests hold (1,057 and 16,652 by M2's turned copies,
+  483,566 by gen-v2's, 187 by M2's and M2b's turned copies, 2,100 and
+  2,400 targets). Reading back gen took 5.4 s on 24 workers.
+- **gen:** 483,566 dates (249,771 expiry, 206,780 mfg, 27,015 import),
+  89,314 codes and 103,338 class-less tokens; 404,520 crops needed no
+  turn, 102,330 and 101,129 a quarter either way, 68,239 a half; 228 are
+  taller than wide once upright (steeply tilted blocks). 1,448 photos
+  gave no crop: each has no block (gen-v2 skipped them, as its manifest
+  counts). Its
+  characters: space, `( ) , - . / :`, digits, every capital, and lower
+  case but `q w z`; no `&` or `|`, which only keyword and separator
+  tokens carry.
+- **Suites:** real-val-rot's 187 crops are all tall, 103 to turn a
+  quarter anticlockwise and 84 clockwise, as their photos turned;
+  real-val-rot180's all need a half turn; synth-val keeps its 398
+  sideways targets as cut, synth-val-v2 its 300 upside-down ones.
+- **Parts:** 4 of real-val's 187 dates give the parser no date (as in
+  S2), 12 of expdate-real's 1,057 and 4,034 of expdate-synth's 16,652
+  (2,409 with a year from 2010 to 2014, outside `dates.YEARS`; 1,527
+  without a 4-digit year; 98 other). Parts are for scoring; training
+  reads the text.
+- **Sheets looked at** (64 crops each; all 8 piles and both trial piles,
+  in `$GENERATED_DIR/m3/crops/sheets/` and the laptop's
+  `data/generated/m3/`): boxes sit on the print, texts match it, and
+  every turned crop stands upright. **About 4 or 5 of 64 generated crops
+  show no print a reader could read**, even enlarged (gen-sample's and
+  gen's sheets alike): ink nearly the colour of its background, dots laid
+  over the background photo's own print, or defocus. Their text is
+  exact, but the photo doesn't show it. synth-val-v2's worn and
+  low-contrast strata show the same.
+- **ExpDate has black photos:** 36 expdate-synth crops on 30 photos span
+  under 16 grey levels inside their box; `img_06565.jpg`, all black (mean
+  0.1), has two dates annotated. None in expdate-real or real-val; one in
+  synth-val and one in synth-val-v2. They are kept: 0.2% of the pile.
+- **Size:** 4.71 GiB of LMDB for 3.39 GiB of JPEGs (5.2 KB a crop): each
+  record takes whole 4 KiB pages, 39% more; on the laptop's 16 KiB pages
+  60% more. Quota 196.8 GB of 950 after the job.
+- The whole test suite on the login node: 921 passed, 2 skipped (the same
+  two), in 4 min 32 s.
+
+**Not checked:** how readable generated crops are, beyond the sheets (no
+measure over the pile); reading the piles at a training loader's pace,
+from a GPU node (S5); every one of the 78 tall synthetic boxes (25 looked
+at); the store pile (S4). The crops-smoke folder (`$GENERATED_DIR/m3/crops-smoke/`, 150 MB)
+was left; the task remakes it.
+
 ### S4. Store text · owner in Label Studio, then laptop
 
 - `scripts/propose_store_text.py`: one Label Studio task per v1 and v3
@@ -1489,7 +1600,7 @@ merged VLM 4.5 GB and its GGUF 2.6 GB, CTC checkpoints under 0.3 GB: about
 
 ```
 docs/              m3-date-reader.md; datasets.md gains the PP-OCRv6 and Qwen files
-src/bestbefore/    m3.py, m3_results.py, reader/ (charset, crops, shards, data, ctc,
+src/bestbefore/    m3.py, m3_results.py, reader/ (charset, crops, shards, piles, data, ctc,
                    metrics, crnn, train, ppocr, onnx_run, parse, roles, pipeline, vlm);
                    changed: store.py, store_train.py, sets.py
 scripts/           export_store_text.py, crop_experiment.py, make_crops.py, crop_sheet.py,
@@ -1556,3 +1667,11 @@ results/           m3_reader.md (committed; runs/ is not)
 - **TrOCR**, only to answer a question the CTC readers can't.
 - **Frame voting** (M6): a date accepted once several frames agree.
 - **int8 quantisation** of the reader (M5).
+- **A visibility filter for training crops** (S3): about 4 or 5 of 64
+  generated crops show no readable print, and ExpDate's black synthetic
+  photos give 36 blank crops, each with its text. If S5's CRNN learns to
+  invent text from blank crops (reads on blank crops that aren't empty),
+  drop crops whose box shows no ink, by a contrast measure checked on
+  sheets first.
+- **Piles copied to a node's own disk** for training, if reading LMDB on
+  Lustre holds S5's loader back (S5 measures the loader's pace first).
