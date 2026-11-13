@@ -67,3 +67,31 @@ def crop_recipe(rows: Iterable[dict]) -> dict:
     turn = tall["turned"]["right"] > tall["alone"]["right"] and tall["turned"]["wrong"] <= tall["alone"]["wrong"]
     return {"pad": pad, "turn": turn, "right_alone_turned_by_pad": {str(p): right[p] for p in PADS},
             "tall_at_pad": tall}
+
+
+# The owner's departures from R1, each tied to the run it was made on
+# (docs/m3-date-reader.md, S2). m3-decisions.json keeps R1's own result.
+# On run 20261113-185541, R1 dropped turning: on the 41 tall crops (82
+# reads, both readers, pad 0) it took 0 / 0 / 82 to 71 / 2 / 9. Both wrong
+# reads are one misread, PP-OCRv6 reading 'FEB 2025' as 'FE8 2025' in the
+# right orientation; turning chose the right way up on every tall crop.
+# Without it M3 reads none of them. Kept by the owner on 2026-11-13: a
+# misread is for R4's threshold, not the orientation step.
+CROP_DEPARTURES = {"20261113-185541-m3-crop-experiment": {
+    "turn": True, "date": "2026-11-13",
+    "why": "R1's two added wrong reads are one misread (FEB as FE8) in the right orientation; "
+           "without turning no sideways crop is read"}}
+
+
+def crop_recipe_used(decisions: dict) -> dict:
+    """The crop recipe every M3 crop uses (S3's piles, baseline C): R1's
+    result in m3-decisions.json, with the owner's recorded departures for
+    that run applied. A departure made on another run doesn't carry over:
+    if R1 is run again (a new parser, say), its result stands until the
+    owner decides again."""
+    recipe = decisions.get("crop_recipe")
+    if recipe is None:
+        raise RuntimeError("no crop recipe yet: S2's crop experiment writes it into m3-decisions.json")
+    departure = CROP_DEPARTURES.get(recipe["run"], {})
+    return {"pad": recipe["pad"], "turn": departure.get("turn", recipe["turn"]),
+            "run": recipe["run"], "departures": sorted(k for k in departure if k in ("pad", "turn"))}

@@ -50,6 +50,16 @@ def test_unknown_readers_and_untruthed_crops_count_nothing():
     assert got["pad"] == 0.15
 
 
+def test_recipe_used_applies_departures_to_their_own_run_only():
+    run = next(iter(m3.CROP_DEPARTURES))
+    decided = {"crop_recipe": {"pad": 0.0, "turn": False, "run": run}}
+    assert m3.crop_recipe_used(decided) == {"pad": 0.0, "turn": True, "run": run, "departures": ["turn"]}
+    rerun = {"crop_recipe": {"pad": 0.15, "turn": False, "run": "20991231-000000-m3-crop-experiment"}}
+    assert m3.crop_recipe_used(rerun)["turn"] is False
+    with pytest.raises(RuntimeError):
+        m3.crop_recipe_used({})
+
+
 def test_the_parser_is_frozen():
     assert m3.PARSE_SHA256 is not None
     assert m3.check_parser() == m3.PARSE_SHA256
