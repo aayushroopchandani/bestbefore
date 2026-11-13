@@ -5,7 +5,9 @@ three readers, the data, the baselines, the crop experiment). Status:
 **in progress**; S1 done on the cluster 2026-11-12 (GPU jobs `73946` and
 `73947` held; the main venv extended with M2b unchanged; `ocr-cpu`; the
 models fetched and hashed; llama.cpp built; the CPU check passed on
-`cn1`, its AMX variant set aside). Next: S2. M2b is still in progress (S10 next there);
+`cn1`, its AMX variant set aside); S2 done 2026-11-13 (the crop
+experiment, job `73956`: pad 0, turning kept by the owner's departure from
+R1). Next: S3. M2b is still in progress (S10 next there);
 every slice here that needs one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
 
@@ -213,7 +215,9 @@ date" (decision 11).
 - *"The latest date is the expiry."* Not on the store: 12 of 80 training
   photos show dates but no expiry.
 - *"Crops hurt any reader."* Only measured for RapidOCR's full pipeline on
-  loose panels (above); S2 measures the recogniser alone.
+  loose panels (above); S2 measured the recogniser alone: on tight boxes of
+  v1's 81 expiries it reads 70 (RapidOCR) and 78 (PP-OCRv6), none wrong,
+  against A's 49 and B's 57 from the whole photo.
 
 ---
 
@@ -1148,6 +1152,106 @@ as RapidOCR on the whole photo), the lesson is corrected there, with the
 owner's OK. **Commits:** `feat: m3 date parser for one crop's read, frozen`,
 `feat: the crop experiment, untrained readers on date boxes`,
 `docs: m3 plan, S2's result`
+
+**Done 2026-11-13.** Job `73956`, read the same session. The README
+(`experiments/m3-crop-reading/`) holds the question, the method, R1, the
+owner's guess (written in before any code for the job), every table and
+the decision; `summarise.py` rebuilds them from the reads. Departures: the
+README went in first as its own commit (`d0ff195`); the summary script,
+`crop_scores.py` and `store_text.py` aren't in the plan's layout; R1's
+turning was overruled by the owner (below).
+
+- **The owner's guess:** only `clean` better read alone; PP-OCRv6 the
+  better reader; R1's pad 0.4. Measured: alone (turned) beats the full
+  pipeline on every tag for both readers but small print for RapidOCR
+  (the same); PP-OCRv6 reads more (181 store dates to 165) but 4 wrong to
+  0; the pad is 0 (0.4 the worst).
+- **The parser** (`reader/parse.py`, frozen `026755390a03…` in
+  `m3.PARSE_SHA256`; `score` and `summarise.py` refuse any other). Written
+  from real-train's dates without real-val (26 of its 1,057 are two parts
+  with no year, `02.18`; 2 odd ones, `2021.19.05`), synth's (whose misses
+  are years outside `dates.YEARS`), v1-train's and v3-train's expiry
+  formats (all 11 read: tested) and gen-v2's 39 formats plus its 2 ranges.
+  On every ExpDate real-train and synth date text (17,918, real-val's
+  included, as a check of equality only) its race over `dates.py`'s own
+  patterns gives exactly `dates.find_dates`. Every gen-v2 format reads to
+  its printed date in title, upper and lower case **but `DD.MM.YY`**: in
+  591 of 1,200 draws both readings make a date and `dates.py`'s year-first
+  rule (ExpDate's) wins. Scoring generated crops by date (S10) must use
+  the sidecar's parts and text, not parse the truth. The whole-read rule
+  reads ExpDate's month-day texts as month and year; on real-val 1 truth
+  depends on it, and 4 of 187 transcriptions give no date (left out of
+  date scores).
+- **`text.json`** (`store_text.py`, `scripts/export_store_text.py
+  --values`; kept out of `store.py` and `store_train.py`, which M2b's
+  running job imports: S4's `TEXT_SHA256` should follow suit while M2b
+  runs). 114 photos (80 training, 34 validation), every date box by its
+  label-file line: 198 expiry and mfg boxes, every one with a value (64 and
+  74 training, 29 and 31 validation), 34 other dates without; no expiry box
+  sits on a derived photo. **51 photos carry no EXIF capture month** (32
+  training, 19 validation: all v1's); v1's dated ones are 2026-08, v3's
+  2026-10. Its check ties it to the export's manifest (`842395a5…`) and
+  each line to the manifest's labels. Written at `4d3166e`, SHA-256
+  `168667105890…`; on the cluster `~/bestbefore-data/store/text.json`, 600,
+  `find -perm /077` over the export: 0.
+- **The laptop got its own `~/venvs/ocr-cpu`** with the cluster's versions
+  (paddlepaddle 3.2.0 has a macOS arm64 wheel; paddleocr 3.7.0, paddlex
+  3.7.2, numpy 2.3.5, opencv-contrib 4.10.0.84, onnxruntime 1.31.1,
+  RapidOCR 1.2.3 with `--no-deps` and `six`), and the three PaddleX models
+  (37 MB) copied from the cluster into `data/checkpoints/pretrained/
+  paddlex/`. Smoke: 4 crops of each set, 156 reads in 8 s. **The laptop and
+  `cn1` read those 156 alike:** every text identical, scores within 0.0002.
+- **Libraries, as met:** RapidOCR 1.2.3 has no thread option; its three
+  sessions take theirs from `rapidocr_onnxruntime.utils.SessionOptions`,
+  replaced in the read step (they sit at `text_detector.infer.session`,
+  `text_cls.infer.session`, `text_recognizer.session.session`). The read
+  step records every ONNX Runtime session made and refuses one without the
+  job's threads: 3 were made, all RapidOCR's, so **PaddleOCR 3.7 runs on
+  Paddle, not ONNX Runtime**; it takes `cpu_threads`. RapidOCR returns
+  `('', 1e-50)` for an empty read; its full pipeline drops lines under 0.5.
+- **The cluster.** The three commits added files and changed only
+  `slurm/m3_cpu.sbatch`; M2b's chain has no git or source-tree check, so
+  the pull (`4d3166e`) changed nothing it runs while `73832` ran. The
+  owner gave the word to submit; I ran `sbatch --cpus-per-task=8
+  --mem=16G --time=01:00:00 slurm/m3_cpu.sbatch crop-experiment` (8 CPUs,
+  not the plan's 24: the work was sized at minutes). It started at once
+  on `cn1`, 18:55 to 19:34: cut seconds, models loaded in 56 s, 7,176 reads
+  in 2,240 s, then scoring. The run folder (`~/bestbefore-data/generated/
+  m3/crop-experiment/20261113-185541-m3-crop-experiment/`, 700, crops and
+  per-crop reads) had 0 entries open; its reads were copied, without the
+  crops, to `data/store/runs/` (700).
+- **Slow on `cn1`:** the laptop's smoke promised about 6 minutes; the
+  reads took 37. Per crop, the recognisers alone 27 to 40 ms (RapidOCR)
+  and 87 to 102 ms (PP-OCRv6), the full pipelines 266 to 406 ms and 1.2 to
+  1.5 s. TotalCPU 4 h 58 min in 38:55 on 8 CPUs; `sacct` MaxRSS 1.6 GB.
+  Paddle printed `ReduceMeanCheckIfOneDNNSupport` 15 times and warned that
+  `OMP_NUM_THREADS` isn't 1. Why it is slow wasn't looked into (Paddle's
+  oneDNN meeting crops of every size, likely).
+- **The result** (README, every table): on v1's 81 expiries in frame,
+  baseline A on the whole photo 49 / 7 / 25, B 57 / 2 / 22; on the tight
+  box, RapidOCR's full pipeline 34 / 2 / 45, its recogniser alone (turned,
+  pad 0) **70 / 0 / 11**, PP-OCRv6's **78 / 0 / 3**. On all 198 store crops
+  at pad 0, turned: PP-OCRv6 181 / 4 / 13, RapidOCR 165 / 0 / 33; on
+  real-val 172 / 5 / 6 and 147 / 7 / 29. Every wrong store read alone at
+  pad 0 is an mfg date (two one print's `FEB` read as `FE8`, parsed as
+  August; a year digit; a day). The full pipeline's loss fits Scanify's
+  cause: on real-val RapidOCR's pipeline reads 96 at pad 0 and 41 at 0.15,
+  as the crops 30 px high or less, which skip its detector, fall from 112
+  to 46. **CLAUDE.md's crop lesson was corrected, with the owner's OK.**
+- **R1** (`results/runs/m3-decisions.json`): pad **0** (665 right at 0 and
+  at 0.15, 564 at 0.4; the tie to the smaller), turning **not kept** (tall
+  crops 0 / 0 / 82 as cut, 71 / 2 / 9 turned). **The owner kept turning
+  (2026-11-13), a departure:** both wrong reads are the `FE8` misread in
+  the right orientation (turning picked the right way up on every tall
+  crop), and without turning no tall crop is read. `m3.CROP_DEPARTURES`
+  ties it to this run; `m3.crop_recipe_used()` gives pad 0 with turning to
+  S3 and baseline C, and a rerun of R1 doesn't inherit it.
+- **For later** (the parser is frozen): a month number with a letter glued
+  before it (`FE8 2025`) made a wrong date; a new version could refuse it.
+- **Not checked:** exact text on store crops (S4 types it); the character
+  error rate (the owner's, S5); confidences as decision 15 defines them
+  (the libraries give a mean); why `cn1` is slow; the full set's speed on
+  the laptop.
 
 ### S3. Crop shards · laptop, then a CPU job · *submits 1 CPU job*
 
