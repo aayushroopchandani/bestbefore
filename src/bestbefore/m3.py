@@ -95,3 +95,12 @@ def crop_recipe_used(decisions: dict) -> dict:
     departure = CROP_DEPARTURES.get(recipe["run"], {})
     return {"pad": recipe["pad"], "turn": departure.get("turn", recipe["turn"]),
             "run": recipe["run"], "departures": sorted(k for k in departure if k in ("pad", "turn"))}
+
+
+# --- S3, the crop shards ------------------------------------------------------------
+
+# The loader's jitter (docs/m3-date-reader.md, "Augmentation"): each box
+# edge moved by up to this share of the box's height round the recipe's
+# padding. Crops are cut once with crops.MARGIN of the box's short side, so
+# make_crops.py refuses to cut if the recipe's padding plus this won't fit.
+EDGE_JITTER = 0.10

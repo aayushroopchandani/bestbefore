@@ -15,6 +15,14 @@
 #         cut (main venv), read (ocr-cpu), score (main venv). Store crops and
 #         per-crop reads stay in an owner-only folder under $GENERATED_DIR/m3/;
 #         results/runs/ gets counts only, and R1 in m3-decisions.json.
+#   crops-smoke [N]
+#         S3's sizing: the first N photos (default 2000) of every pile, cut,
+#         timed and checked in $GENERATED_DIR/m3/crops-smoke/ (made again each run)
+#   crops S3: every crop pile into its LMDB shard in $GENERATED_DIR/m3/crops/
+#         (scripts/make_crops.py), every record read back and the counts
+#         checked against the sources (--check), a sheet of 64 crops a pile,
+#         and the size on disk. ExpDate and generated crops only: the store
+#         pile waits for S4's text. Sized from crops-smoke.
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #SBATCH --job-name=m3-cpu
@@ -63,8 +71,24 @@ crop-experiment)
     open=$(find "$RUN" -perm /077 | wc -l)
     echo "entries open to others in the run folder: $open"
     ;;
+crops-smoke)
+    ROOT="$($MAIN -c 'from bestbefore.config import generated_dir; print(generated_dir())')/m3/crops-smoke"
+    rm -rf "$ROOT"
+    $MAIN scripts/make_crops.py --pile all --limit "${2:-2000}" --root "$ROOT" --workers "$SLURM_CPUS_PER_TASK"
+    $MAIN scripts/make_crops.py --check --pile all --root "$ROOT" --workers "$SLURM_CPUS_PER_TASK"
+    du -sh "$ROOT"/*
+    ;;
+crops)
+    ROOT="$($MAIN -c 'from bestbefore.config import generated_dir; print(generated_dir())')/m3/crops"
+    $MAIN scripts/make_crops.py --pile all --workers "$SLURM_CPUS_PER_TASK"
+    $MAIN scripts/make_crops.py --check --pile all --workers "$SLURM_CPUS_PER_TASK"
+    for pile in expdate-real expdate-synth gen real-val real-val-rot real-val-rot180 synth-val synth-val-v2; do
+        $MAIN scripts/crop_sheet.py --pile "$pile"
+    done
+    du -sh "$ROOT"/*
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env, crop-experiment"
+    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops"
     exit 2
     ;;
 esac
