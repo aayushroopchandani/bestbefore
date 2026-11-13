@@ -266,7 +266,7 @@ this repo.
   number of files; about 65 GB was already used on 2026-10-14. It is
   Lustre: `quota` prints nothing, and `lfs quota -h -u $USER /home` shows
   it (182 GB used on 2026-11-12 after M2b S9, 191 GB after M3 S1's
-  models, venv and llama.cpp build). **There is
+  models, venv and llama.cpp build, 197 GB after M3 S3's crops). **There is
   no scratch filesystem** and `$SCRATCH` is unset; no purge policy was
   found. Millions of full-size damaged photos (M4) would not fit: make
   them on the fly, or store small crops (a million 30 KB crops is 30 GB).
@@ -278,7 +278,13 @@ this repo.
   photos at 7.6 MB/s cold on `cn5`, and at about 2.8 GB/s in the next run
   minutes later (2026-10-24, M2 S7). A CPU node's cache helps the same way:
   a second job on `cn1` loaded the generator's backgrounds in 2.8 s,
-  against 24.8 s cold half an hour before (2026-11-12, M2b S9).
+  against 24.8 s cold half an hour before (2026-11-12, M2b S9). Many
+  readers hide the wait: 24 workers on `cn1` opened and decoded gen-v2's
+  200,000 photos (37 GB) in 310 s, 1.6 ms a photo, 34 ms per worker
+  (2026-11-13, M3 S3, job 73958). **LMDB on Lustre** works with one
+  writer and `lock=False` (no lock file): 4.5 GB written in 5 minutes,
+  read back by 24 processes in 5 s. Each record fills whole 4 KiB pages,
+  so 5.2 KB crops take 7 KB (16 KiB pages on the laptop: 60% more).
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
   model weights on the login node before submitting a job. From there,
