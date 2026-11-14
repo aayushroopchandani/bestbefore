@@ -14,9 +14,14 @@ The project covers the full pipeline, from data to deployment:
 - **Date detector:** trained on the public ExpDate dataset, then on a custom
   synthetic generator that draws what public data misses, across 200,000+
   generated photos. Fine-tuning on real photos of Indian products is under
-  way.
+  way: the bigger models are trained, and the store runs are next in the
+  GPU queue.
 - **Date reader:** reads each date as day / month / year and tells
-  the expiry from the manufacture date.
+  the expiry from the manufacture date. Three readers are compared: a
+  CRNN written from scratch, PP-OCRv6 small fine-tuned for the phone, and
+  the vision-language model Qwen3-VL-2B. Before any training, PP-OCRv6
+  small read 78 of 81 store expiries from hand-drawn date boxes, none
+  wrong; the old app reads 57.
 - **Readability checker:** small enough to run on a phone's live
   camera preview, warning staff before they take a photo that can't be read.
 
@@ -67,7 +72,8 @@ During an internship at a pet-supplies retailer, I built **Scanify**, a
 stock-taking app. The retailer's inventory system has no expiry dates, so
 staff photograph each pack and the app reads two things from the photo:
 the barcode (`zxing-cpp`) and the printed expiry date (`RapidOCR`
-followed by a hand-written, rule-based date parser). Later this model will be used.
+followed by a hand-written, rule-based date parser). BestBefore's models
+are meant to take over that reading.
 
 Measured on the store photos, the rules got a long way, then hit a wall:
 
@@ -109,16 +115,19 @@ flowchart TD
     CHK -- "looks readable" --> SHOT["Photo taken"]
     SHOT --> DET["Date detector<br/>finds every date"]
     SHOT --> BAR["Barcode decoder"]
-    DET --> READ["Date reader<br/>expiry, mfg date and<br/>format, as JSON"]
+    DET --> READ["Date reader<br/>reads each date,<br/>picks the expiry"]
     READ --> INV["Inventory record"]
     BAR --> INV
     class DET built
-    class CHK,READ planned
+    class READ now
+    class CHK planned
     classDef built fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef now fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
     classDef planned stroke-dasharray:5 4
 ```
 
-<sub>Green: built and measured. Dashed: still to build (M3 to M5).</sub>
+<sub>Green: built and measured. Amber: being built (M3). Dashed: still to
+build (M4 and M5).</sub>
 
 ### How the models are built
 
@@ -129,28 +138,36 @@ collects, and hands its output to the next one.
 flowchart TD
     subgraph pub["Public: ExpDate"]
         PROD[("Products<br/>1,767 real +<br/>11,858 synthetic photos")]
-        CROPS[("Date and Components<br/>578,000 synthetic crops")]
     end
     subgraph own["Made or collected here"]
-        GEN["Synthetic generator<br/>M2: 52,100 photos<br/>M2b: gen-v2"]
+        GEN["Synthetic generator<br/>M2: 52,100 photos<br/>M2b: gen-v2,<br/>200,000 photos"]
         STORE[("Store sets v1 and v3<br/>private, split<br/>by pack design")]
     end
     PROD --> DET["Date detector, YOLO11<br/>M1: ExpDate<br/>M2: + generated dates<br/>at 1,280 px<br/>M2b: + store photos,<br/>larger sizes tried"]
     GEN --> DET
     STORE -- "M2b" --> DET
-    DET --> READ["Date reader, M3<br/>day, month, year;<br/>expiry told from mfg"]
-    CROPS --> READ
-    GEN -.-> READ
+    DET --> READ["Date reader, M3<br/>CRNN, PP-OCRv6 small<br/>or Qwen3-VL-2B;<br/>expiry told from mfg"]
+    PROD -- "date crops,<br/>with their text" --> READ
+    GEN -- "676,218 crops,<br/>exact text" --> READ
+    STORE -- "M3" --> READ
     READ --> DMG["Damaged copies, M4<br/>each labelled: does<br/>the reader still<br/>read it right?"]
     DMG --> CHK["Readability checker, M4"]
     CHK --> PHONE["ONNX, quantised, M5<br/>runs in a phone browser"]
     class DET built
-    class READ,DMG,CHK,PHONE planned
+    class READ now
+    class DMG,CHK,PHONE planned
     class STORE private
     classDef built fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef now fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
     classDef planned stroke-dasharray:5 4
     classDef private fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
 ```
+
+The reader trains on date crops whose text is known: ExpDate's
+transcriptions, the generator's own record of every token it drew, and
+the store's dates, which the owner types in next. ExpDate's Date and Components sets
+are left out: they are labelled one part at a time (day, month, year),
+not as a printed line.
 
 The checker learns from the reader itself. Each damaged copy is labelled
 by whether the reader still gets the date right, so the checker learns
@@ -211,7 +228,7 @@ sequenceDiagram
     L->>G: plan, code and tests
     G->>C: pulled on the login node
     Note over C: CPU job: generate and derive the photo sets
-    L->>C: M2b only: store training copies,<br/>renamed, metadata stripped
+    L->>C: from M2b: store training copies,<br/>renamed, metadata stripped
     Note over C: GPU jobs released: the chain<br/>trains, scores and decides
     C->>L: run records and weights
     Note over L: the store test set scored once, on the CPU
@@ -223,7 +240,9 @@ never does: it is scored on the laptop's CPU. The training copies of v1
 and v3 go upright and renamed (`v1-0001.jpg`), in sRGB with every bit of
 metadata dropped (20 of v1's photos carried a GPS position), into a
 folder only the owner can read. The map back to the photos' names stays
-on the laptop.
+on the laptop. From M3, a small file of each numbered photo's date values
+goes beside them, and the store's date crops are cut on the cluster into
+folders only the owner can read.
 
 ### The GPU work queue
 
@@ -293,6 +312,12 @@ Every model has to beat both of these on the same photos:
 - **B. Scanify's reader**, the rule-based system above, called from its
   own repository.
 
+M3 adds a third, for the reader only:
+
+- **C. The M2b detector feeding PP-OCRv6 small's recogniser, untrained**,
+  through M3's own parser and rules. The fine-tuned reader against C is
+  what training the reader adds.
+
 ---
 
 ## Roadmap
@@ -306,8 +331,8 @@ flowchart LR
     M3 --> M4["M4<br/>Readability<br/>checker"]
     M4 --> M5["M5<br/>On the<br/>phone"]
     class M0,M1,M2 done
-    class M2b now
-    class M3,M4,M5 planned
+    class M2b,M3 now
+    class M4,M5 planned
     classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef now fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
     classDef planned stroke-dasharray:5 4
@@ -319,7 +344,7 @@ flowchart LR
 | M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | **done** 2026-10-21 |
 | M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | **done** 2026-10-28 |
 | M2b | Store photos and a bigger detector | the M2b detector scored once on store set v2, by tag, cause and seen or unseen pack design, next to M1 and M2 | **in progress** |
-| M3 | Date reader | end-to-end date accuracy vs baselines A and B, by tag | next |
+| M3 | Date reader | end-to-end date accuracy vs baselines A, B and C, by tag | **in progress**, alongside M2b |
 | M4 | Readability checker | AUROC on held-out copies; SmartDoc-QA and SPAQ agreement; store photos | planned |
 | M5 | On the phone | size, latency per frame, accuracy kept after quantising | planned |
 
@@ -581,7 +606,9 @@ flowchart TD
 ```
 
 The generator's second version draws what the store gallery showed and
-M2 never drew, and sizes each block from the store's own date sizes.
+M2 never drew, and sizes each untilted block from the store's own date
+sizes. A tilted block is sized by its digits instead, since the store has
+no tilted dates to copy and a box round tilted text measures the tilt.
 Every new feature is off in M2's spec, which keeps its hash, so M2's
 photos still come out byte for byte (tests check it).
 
@@ -605,24 +632,140 @@ mindmap
       Drawn from the store's own date sizes
 ```
 
-Where it stands (2026-11-08): store set v2, 99 new photos, is labelled
-and frozen as the new test set. Store sets v1 and v3 are split by pack
-design (80 photos train, 34 validate), boxed for keywords and exported to
-the cluster. gen-v2 is written and checked on a laptop trial. Next, one
-CPU job makes its 200,000 photos, while step 1's GPU job waits in the
-queue. Plan and every slice's record:
+Where it stands (2026-11-14):
+
+- **The data is ready.** Store set v2, 99 new photos, is labelled and
+  frozen as the new test set. Store sets v1 and v3 are split by pack
+  design (80 photos train, 34 validate), boxed for keywords and exported
+  to the cluster.
+- **gen-v2 is made:** 200,000 training photos and 2,400 validation photos
+  in 24 minutes on one 24-CPU job, plus the 180°-turned sets, all checked.
+  The job first crashed on a photo the laptop draws fine (floating-point
+  results differ in their last bits between the two machines); the fix
+  came with a test that reproduces it.
+- **Step 1 has trained** (18.5 hours on one H100): `yolo11s` with three
+  seeds and the `yolo11m` probe, which ran 107 images a second in 30.8 GB
+  of GPU memory. The next GPU job scores them on the store's validation
+  photos before step 2 starts.
+- **Step 2 is written and smoke-tested** on a CPU node of the cluster:
+  store fine-tuning with replay, the two-stage recipe, the M2b validation
+  suite and decision rules R1 to R3. Its GPU job was released on
+  2026-11-12, first in line for the next H100 to free up.
+
+Plan and every slice's record:
 [`docs/m2b-store-and-size.md`](docs/m2b-store-and-size.md).
+
+### M3, in progress: the date reader
+
+A detector only finds dates. M3 reads them: it cuts each date box the
+M2b detector finds, turns it upright, reads it, and picks the expiry
+from the dates it read. Three readers are compared, each with its own
+job:
+
+| Reader | Its job |
+|---|---|
+| **CRNN + CTC**, written here from scratch | learn how text reading works, as a fair "from nothing" arm |
+| **PP-OCRv6 small**, fine-tuned | the reader for the phone: about 5 million parameters, pretrained on real text |
+| **Qwen3-VL-2B**, untrained and LoRA fine-tuned | the heavy comparison: reads the whole photo, needs no detector, and can work out an expiry from a shelf life |
+
+```mermaid
+flowchart TD
+    PHOTO["Photo, upright"] --> DET["M2b detector<br/>date boxes and<br/>keyword boxes"]
+    DET --> CUT["Cut each date box<br/>no padding"]
+    CUT --> TURN["Read both ways up<br/>wide: 0° and 180°<br/>tall: 90° and 270°"]
+    TURN --> READ["Reader<br/>CRNN or PP-OCRv6"]
+    READ --> PARSE["Parser<br/>the dates in<br/>the text, or none"]
+    PARSE --> ROLE{{"Expiry: the latest<br/>date, unless a<br/>keyword says mfg"}}
+    ROLE --> OUT["Expiry, or none"]
+    PHOTO -. "no detector" .-> VLM["Qwen3-VL-2B<br/>answers expiry<br/>and mfg itself"]
+    VLM -.-> OUT
+```
+
+<sub>The roles matter: on 12 of the 80 store training photos the latest
+printed date is not the expiry, because the expiry is on another face or
+must be worked out from a shelf life. Dashed: the VLM's own path.</sub>
+
+**First result: crops don't hurt a recogniser.** Scanify had found that
+RapidOCR read fewer dates from hand-drawn crops than from the whole
+photo, so cropping looked like a dead end. But Scanify fed loose panels
+to RapidOCR's **full pipeline**, whose own text detector enlarges any
+image whose short side is under 736 px: a small date box is blown up
+about five times past what it was trained on. M3's first experiment,
+before any training, gave a **tight** box straight to the **recogniser
+alone**. On store set v1's 81 expiries in frame (right / wrong / none):
+
+| v1 expiries | n | A, whole photo | B, whole photo | RapidOCR pipeline, on the box | RapidOCR recogniser, on the box | PP-OCRv6 small recogniser, on the box |
+|---|---:|---:|---:|---:|---:|---:|
+| sideways | 15 | 6 / 4 / 5 | 9 / 0 / 6 | 2 / 0 / 13 | 15 / 0 / 0 | 15 / 0 / 0 |
+| dot-matrix | 20 | 7 / 0 / 13 | 7 / 0 / 13 | 4 / 0 / 16 | 13 / 0 / 7 | 18 / 0 / 2 |
+| small-print | 15 | 14 / 0 / 1 | 14 / 0 / 1 | 14 / 0 / 1 | 14 / 0 / 1 | 15 / 0 / 0 |
+| clean | 31 | 22 / 3 / 6 | 27 / 2 / 2 | 14 / 2 / 15 | 28 / 0 / 3 | 30 / 0 / 1 |
+| **all** | **81** | **49 / 7 / 25** | **57 / 2 / 22** | **34 / 2 / 45** | **70 / 0 / 11** | **78 / 0 / 3** |
+
+<sub>The recognisers read sideways boxes turned both ways and keep the
+read that holds a date. Untrained readers on boxes drawn by hand: the
+ceiling for a perfect detector, not an end-to-end result. Store set v1
+is training data now, so store set v2 judges M3.</sub>
+
+What it shows:
+
+- **The lesson holds for the full pipeline only.** RapidOCR's own
+  pipeline reads 34 from the box, fewer than baseline A's 49 from the
+  whole photo; its recogniser alone reads 70, none wrong.
+- **Turning is what reads sideways dates.** Read as cut, a tall box
+  gives nothing (0 of 41 store crops, both readers); turned 90° and 270°,
+  34 and 37 of 41.
+- **No padding.** A box cut tight and one with a margin of 15% of its
+  print height read the same (665 dates each, both readers, all 385
+  crops); a 40% margin reaches into neighbouring lines and reads 564.
+- **PP-OCRv6 small reads more, RapidOCR is more careful:** 181 of 198
+  store crops (4 wrong, all manufacture dates, two of them `FEB` read as
+  `FE8`) against 165 (none wrong).
+- **A rule overruled, on the record.** The rule written before the run
+  dropped turning, because it added 2 wrong reads to 71 right ones. The
+  owner kept it: without turning no sideways date is read at all, and a
+  misread is for the reader's confidence threshold to catch. The
+  departure is recorded beside the run, so a rerun doesn't inherit it.
+
+This sets a third baseline, **C**: the M2b detector feeding PP-OCRv6
+small's recogniser, untrained. C against the fine-tuned reader is
+exactly what training the reader adds. Details:
+[`experiments/m3-crop-reading`](experiments/m3-crop-reading/README.md).
+
+Where it stands (2026-11-14):
+
+- **The cluster is ready:** M3's GPU jobs held in the queue since day
+  one, the environments set up, the pretrained models fetched at pinned
+  versions and hashed, and llama.cpp built: Qwen3-VL-2B runs on 4 CPUs at
+  23 tokens a second.
+- **The training crops are cut:** 698,988 crops in 8 LMDB files (4.7 GiB)
+  in under 6 minutes on one 24-CPU job. 676,218 come from gen-v2, each
+  with its exact text and turned upright by its block's known turn; the
+  rest are ExpDate's 17,709 date crops and the validation suites. About 4
+  or 5 in 64 generated crops show no print a reader could read (ink
+  nearly the colour of its background, or noise), so training leaves them
+  out.
+- **Next:** the owner types the text of every store date box (with
+  PP-OCRv6's read as a proposal), then the CRNN.
+
+Plan and every slice's record:
+[`docs/m3-date-reader.md`](docs/m3-date-reader.md).
 
 ---
 
 ## Lessons carried over from Scanify
 
-These were measured before this project started, and shape its design:
+These were measured before this project started, and shape its design.
+The first was corrected by M3:
 
-- **Cropping hurts off-the-shelf OCR.** RapidOCR read fewer dates from
-  perfect hand-drawn crops (25 of 44) than from the whole photo (31 of
-  44). A detector feeding crops to the same OCR won't beat Scanify; the
-  gain needs a reader trained on crops.
+- **Cropping hurts RapidOCR's full pipeline, not its recogniser.** In
+  Scanify, RapidOCR read fewer dates from hand-drawn crops (25 of 44)
+  than from the whole photo (31 of 44). M3 found why: the crops were
+  loose panels fed to the full pipeline, whose text detector blows small
+  images up far past the text sizes it learned. Given a tight box, the
+  recogniser alone reads 70 of 81 store expiries with none wrong (M3's
+  crop experiment, above). A detector feeding a recogniser can beat
+  Scanify, if it finds the dates.
 - **Heavy preprocessing hurts.** Adaptive thresholding made OCR worse;
   mild sharpening helped slightly. Models trained on natural photos want
   natural photos.
@@ -639,10 +782,14 @@ These were measured before this project started, and shape its design:
 
 | Subset | Size | Used for |
 |---|---|---|
-| Products-Real | 1,767 real photos (1,102 train / 665 test) | finding dates |
-| Products-Synth | 11,858 synthetic photos | finding dates, training only |
-| Date-Synth / Date-Real | 128,000 synthetic + a real test set | finding day / month / year inside a date |
-| Components-Synth / -Real | 450,000 synthetic + a real test set | reading the characters |
+| Products-Real | 1,767 real photos (1,102 train / 665 test) | finding dates; its date transcriptions train the reader |
+| Products-Synth | 11,858 synthetic photos | finding and reading dates, training only |
+| Date-Synth / Date-Real | 128,000 synthetic + a real test set | not used: labelled one part at a time (day, month, year), not as a printed line |
+| Components-Synth / -Real | 450,000 synthetic + a real test set | not used: single parts, where the readers read whole dates |
+
+Date-Real and Components-Real are also cut from ExpDate's real photos,
+possibly its test photos, so training on them could leak into ExpDate
+test.
 
 ExpDate is not redistributed here; `scripts/download_expdate.py` fetches
 it from the authors' release and checks it against recorded SHA-256
@@ -650,19 +797,27 @@ hashes.
 
 ### Store photos (private)
 
-99 photos taken in the retailer's stores (87 with the expiry in frame),
-labelled with the expiry, a tight box around every date, and a failure
-tag. **They are never committed and never published:** only aggregate
-numbers appear in this repository, never a photo, a photo's name or a
-picture drawn from one.
+Three sets of photos taken in the retailer's stores, each labelled with
+the expiry, a tight box around every date, and a failure tag. **They are
+never committed and never published:** only aggregate numbers appear in
+this repository, never a photo, a photo's name or a picture drawn from
+one.
 
-From M0 to M2 they were for testing only, frozen by their hash so they
-couldn't change between experiments, and every store number above was
-measured before any training on them. On 2026-10-28 the retailer's owner
-allowed them to be used for training and to be shown to AI tools for
-analysis; publishing them is still not allowed. Once a milestone trains
-on them, a new set of store photos, labelled and frozen before that
-training, becomes the test set.
+| Set | Photos | Used for |
+|---|---:|---|
+| v1 | 99 (87 with the expiry in frame) | the test set from M0 to M2; training and validation from M2b |
+| v3 | 15 | training and validation, from M2b |
+| v2 | 99 | the test set from M2b on: scored once per milestone, on the laptop only |
+
+From M0 to M2, v1 was for testing only, frozen by its hash so it couldn't
+change between experiments, and every store number from those
+milestones was measured before any training on store photos. On
+2026-10-28 the retailer's owner allowed the photos to be used for
+training and to be shown to AI tools for analysis; publishing them is
+still not allowed. So a new set, v2, became the test set: its photo list
+was frozen the same day, before any training on store photos, and its
+labels on 2026-11-03. v1 and v3 are split by pack design (80 photos
+train, 34 validate), so all of a design's photos fall on one side.
 
 ### For testing the readability checker
 
@@ -741,6 +896,13 @@ python experiments/m2-ablation/summarise.py   # and the other m2-* experiments
 python scripts/m2_report.py                   # writes results/m2_detector.md
 ```
 
+M2b and M3 run on the cluster too: their job scripts are
+`slurm/m2b_*.sbatch` and `slurm/m3_*.sbatch`, and their steps are in each
+plan. M3's crop experiment is summarised on the laptop by
+`experiments/m3-crop-reading/summarise.py`, once its run folder is
+copied from the cluster (its README has the steps). The readers need
+two more extras: `pip install -e ".[read,vlm]"`.
+
 Every script run writes a record (settings, git commit, seed, library
 versions, and for the baselines a hash of the reader's code) to
 `results/runs/`, so any number can be traced and reproduced. Runs on the
@@ -771,14 +933,16 @@ flowchart TD
     SLURM["slurm/<br/>cluster job scripts"] --> CLI["scripts/<br/>command-line<br/>entry points"]
     CLI --> lib
     subgraph lib["src/bestbefore/"]
-        DATA["Data<br/>expdate, yolo, derived,<br/>store, store_train"]
+        DATA["Data<br/>expdate, yolo, derived,<br/>store, store_train,<br/>store_text"]
         SYNTH["synth/<br/>spec, text, render,<br/>warp, compose,<br/>camera, make"]
         MODEL["Model and scoring<br/>detector,<br/>detection_eval,<br/>baselines/"]
-        RULES["Milestones<br/>m1, m2, m2b:<br/>arms, mixes,<br/>decision rules"]
+        READER["reader/<br/>crops, piles,<br/>shards, parse"]
+        RULES["Milestones<br/>m1, m2, m2b, m3:<br/>arms, mixes,<br/>decision rules"]
         INFRA["Infrastructure<br/>chain, slurm,<br/>runs, config"]
         DATA ~~~ RULES
         SYNTH ~~~ INFRA
         MODEL ~~~ INFRA
+        READER ~~~ RULES
     end
     lib --> REC[("results/runs/<br/>one record per run")]
     REC --> REP["results/<br/>reports, written<br/>from the records"]
@@ -808,6 +972,13 @@ flowchart TD
   plan: store fine-tuning, gen-v2, model size and every slice's record
 - [`results/store_designs.md`](results/store_designs.md): store pack
   designs and the v1 split, as counts only
+- [`results/store_test_set_v2.md`](results/store_test_set_v2.md) and
+  [`results/store_set_v3.md`](results/store_set_v3.md): what was frozen
+  for store sets v2 and v3, by hash and counts
+- [`docs/m3-date-reader.md`](docs/m3-date-reader.md): the M3 plan: three
+  readers, the crops they train on, and every slice's record
+- [`experiments/m3-crop-reading`](experiments/m3-crop-reading/README.md):
+  untrained readers on tight date boxes, and why Scanify's crops failed
 
 ---
 
