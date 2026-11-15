@@ -21,8 +21,24 @@ Suites, cut as the photo shows them (the orientation step is tested on them):
   synth-val-v2      M2b's 2,400: each one's target date
 And gen-sample, gen-v2-sample's 500 photos as the gen pile: the laptop's trial.
 
-Never ExpDate test (decision 20: it is cut once, at S13). No store pile
-yet: it waits for the owner's typed text (S4).
+The store's (S4), from the numbered store export ($STORE_TRAIN_DIR: its
+upright copies train_0 and val, their label files, manifest.json and S4's
+text.json, which must come from the frozen store text,
+store_text.TEXT_SHA256):
+  store           v1-train and v3-train: every date box and every
+                  shelf-life phrase (class-less), turned upright by the
+                  owner's turn
+  store-train     the same photos' dates, cut as they lie, the owner's turn
+                  in tags["upright"]: a memorisation check only
+  store-val       v1-val and v3-val: their dates, cut as they lie
+They show the retailer's photos: make_crops.py writes them owner-only
+(PRIVATE), and their crops are never visibility-filtered (S5's filter
+takes VISIBILITY_FILTERED only). A store crop's source is its numbered
+photo and line, never a photo's name; an expiry's or mfg's parts are its
+frozen value, never parsed; an other date's are None.
+
+Never ExpDate test (decision 20: it is cut once, at S13). Never store set
+v2: it isn't in the export.
 
 Where a text comes from: ExpDate's transcription; a generated token's own
 text from its sidecar. A date's parts: a generated date's from its sidecar,
@@ -39,17 +55,23 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import derived, expdate, m2, m2b, yolo
-from ..config import expdate_dir
+from .. import derived, expdate, m2, m2b, store, store_text, store_train, yolo
+from ..config import expdate_dir, store_train_dir
 from ..runs import read_json
 from . import parse
 
 MIN_CLASSLESS = 3       # decision 9: class-less tokens of at least 3 characters
 TRAINING = ("expdate-real", "expdate-synth", "gen")
 SUITES = ("real-val", "real-val-rot", "real-val-rot180", "synth-val", "synth-val-v2")
-JOB_PILES = TRAINING + SUITES       # what the cluster job makes
+JOB_PILES = TRAINING + SUITES       # what S3's cluster job made
+STORE_TRAINING = ("store",)
+STORE_SUITES = ("store-train", "store-val")
+STORE_PILES = STORE_TRAINING + STORE_SUITES     # S4's job
+PRIVATE = STORE_PILES               # show the retailer's photos: owner-only folders and files
+VISIBILITY_FILTERED = TRAINING      # S5's filter: never a suite, never the store's crops
 TRIAL = ("gen-sample",)             # the laptop's trial, beside real-val
-PILES = JOB_PILES + TRIAL
+PILES = JOB_PILES + STORE_PILES + TRIAL
+STORE_ROLE = {"expiry": "expiry", "mfg": "mfg", "other_date": "other"}
 
 XYXY = tuple[float, float, float, float]
 
@@ -226,6 +248,57 @@ def _generated(home, list_name: str, wanted, as_cut: bool, no_box: list[int]) ->
         raise ValueError(f"{list_name}: the sidecar has more lines than the list has photos")
 
 
+# --- The store (S4) -----------------------------------------------------------------------
+
+def store_text_path() -> Path:
+    return store_train_dir() / store_text.NAME
+
+
+def store_items(name: str, entry: dict, meta: dict, lines: list[XYXY], as_cut: bool) -> list[Item]:
+    """One numbered photo's crops: each date box (`lines`: its label file's
+    boxes, upright, in order) and, unless cut as they lie (a suite), each
+    shelf-life box. Training crops are turned upright by the owner's turn;
+    a suite's lie as the photo shows them, the turn in tags["upright"]."""
+    tags = {"design": meta["design"], "part": entry["part"], "tag": meta["tag"]}
+    items = []
+    for b in entry["boxes"]:
+        if meta["labels"][b["index"]] != b["label"]:
+            raise ValueError(f"{name}: line {b['index']} is {meta['labels'][b['index']]}, text.json says {b['label']}")
+        parts = None
+        if b["label"] in store_text.VALUE_LABELS and b["value"]:
+            d = store.parse_date(b["value"])
+            parts = (d.year, d.month, d.day)
+        items.append(Item(lines[b["index"]], b["text"], "date", f"{name}#{b['index']}", role=STORE_ROLE[b["label"]],
+                          parts=parts, turn=0 if as_cut else b["turn"],
+                          tags={**tags, "upright": b["turn"] if as_cut else 0,
+                                "parts_from": "frozen" if parts else "none"}))
+    if not as_cut:
+        for k, b in enumerate(entry["life"]):
+            items.append(Item(tuple(b["xyxy"]), b["text"], None, f"{name}#life{k}", turn=b["turn"],
+                              tags={**tags, "upright": 0, "kind": "shelf-life"}))
+    return items
+
+
+def _store(part: str, as_cut: bool) -> Iterator[Photo]:
+    """The export's photos of one part (train or val), in numbered order,
+    from its upright copies."""
+    folder = store_train_dir()
+    text = json.loads(store_text_path().read_text())
+    manifest = json.loads((folder / store_train.MANIFEST).read_text())
+    upright = next(f for f, q in store_train.FOLDERS[part].items() if q == 0)
+    for name in sorted(text["photos"]):
+        entry = text["photos"][name]
+        if entry["part"] != part:
+            continue
+        image = folder / "images" / upright / f"{name}.jpg"
+        lines = [b.xyxy for b in derived.read_boxes(image)]
+        if len(lines) != len(manifest["photos"][name]["labels"]):
+            raise ValueError(f"{name}: {len(lines)} label lines, the manifest lists "
+                             f"{len(manifest['photos'][name]['labels'])}")
+        if items := store_items(name, entry, manifest["photos"][name], lines, as_cut):
+            yield Photo(image, tuple(items))
+
+
 # --- The piles -----------------------------------------------------------------------
 
 def photos(pile: str, no_box: list[int] | None = None) -> Iterator[Photo]:
@@ -251,6 +324,12 @@ def photos(pile: str, no_box: list[int] | None = None) -> Iterator[Photo]:
         return _generated(m2b, "gen_v2", gen_wanted, False, no_box)
     if pile == "gen-sample":
         return _generated(m2b, "gen_v2_sample", gen_wanted, False, no_box)
+    if pile == "store":
+        return _store("train", as_cut=False)
+    if pile == "store-train":
+        return _store("train", as_cut=True)
+    if pile == "store-val":
+        return _store("val", as_cut=True)
     raise ValueError(f"unknown pile {pile!r}; one of {', '.join(PILES)}")
 
 
@@ -280,9 +359,28 @@ def missing(pile: str) -> str | None:
             if sha256_file(home.sidecar_path(name)) != record.get("sidecar_sha256"):
                 return f"{name}: its sidecar isn't the one manifests/{manifest}.json checked"
         return None
+    if pile in STORE_PILES:
+        return store_missing()
     if pile in PILES:
         return None if (expdate_dir() / "yolo" / "val.txt").exists() else "ExpDate's yolo/val.txt isn't there"
     raise ValueError(f"unknown pile {pile!r}")
+
+
+def store_missing() -> str | None:
+    """Why the store's piles can't be cut, or None: the export's text.json
+    must be S4's (version "text"), made from the frozen data/store/text.json
+    (store_text.TEXT_SHA256) for this very export (its manifest's hash)."""
+    path, manifest = store_text_path(), store_train_dir() / store_train.MANIFEST
+    if not path.exists() or not manifest.exists():
+        return f"{path} or the export's manifest isn't there"
+    text = json.loads(path.read_text())
+    if text.get("version") != "text":
+        return f"{path} is version {text.get('version')!r}, not S4's 'text'"
+    if store_text.TEXT_SHA256 is None or text.get("text_sha256") != store_text.TEXT_SHA256:
+        return f"{path} wasn't made from the frozen store text (store_text.TEXT_SHA256)"
+    if text.get("export_manifest_sha256") != sha256_file(manifest):
+        return f"{path} was made for another export (manifest hashes differ)"
+    return None
 
 
 def sources(pile: str) -> dict[str, Path]:
@@ -302,6 +400,9 @@ def sources(pile: str) -> dict[str, Path]:
         short = home.__name__.rsplit(".", 1)[-1]
         out[f"{short}/lists/{name}.txt"] = home.list_path(name)
         out[f"{short}/sidecars/{name}.jsonl"] = home.sidecar_path(name)
+    if pile in STORE_PILES:
+        out["store/manifest.json"] = store_train_dir() / store_train.MANIFEST
+        out["store/text.json"] = store_text_path()
     return out
 
 
@@ -316,6 +417,11 @@ def upstream(pile: str) -> dict:
         name = {"expdate-real": "real_rot", "expdate-synth": "synth_rot",
                 "real-val": "real_val_rot", "real-val-rot": "real_val_rot"}[pile]
         return {"date": sets[name]["dates"], "from": f"m2/manifests/derived.json, {name}"} if name in sets else {}
+    if pile in STORE_PILES:
+        part = "val" if pile == "store-val" else "train"
+        listed = json.loads((store_train_dir() / store_train.MANIFEST).read_text())["photos"].values()
+        return {"date": sum(label in store.BOX_LABELS for p in listed if p["part"] == part for label in p["labels"]),
+                "from": f"the store export's manifest.json, its {part} photos' date labels"}
     if pile == "real-val-rot180":
         sets = (read_json(m2b.manifest_path("derived")) or {}).get("sets", {})
         return ({"date": sets["real_val_rot180"]["dates"], "from": "m2b/manifests/derived.json, real_val_rot180"}

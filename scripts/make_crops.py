@@ -5,6 +5,7 @@ decision 4, "The data", S3), and check it.
     python scripts/make_crops.py --pile all --workers 24                         # the cluster's job
     python scripts/make_crops.py --check --pile all --workers 24
     python scripts/make_crops.py --pile all --limit 2000 --root DIR              # a smoke, elsewhere
+    python scripts/make_crops.py --pile store --pile store-train --pile store-val --root data/store/crops
 
 Each pile (reader/piles.py) goes into <root>/<pile>/ (default root
 $GENERATED_DIR/m3/crops): LMDB's data.mdb and manifest.json. Every photo is
@@ -32,6 +33,11 @@ the manifest, recounts the crops the sources call for and compares (records
 sources' own manifests say they hold. The result goes to check.json beside
 the manifest.
 
+The store's piles (piles.PRIVATE, S4) show the retailer's photos: they
+are made and checked under umask 077, their folders 700 and files 600, and
+a root inside this checkout must lie under data/store/ (gitignored, the
+laptop's private data); `all` never includes them.
+
 A run record (counts, timing, sizes: no images) goes to results/runs/.
 """
 from __future__ import annotations
@@ -48,14 +54,15 @@ from collections import Counter
 from multiprocessing import Pool
 from pathlib import Path
 
-from bestbefore import m3, runs, store_train
-from bestbefore.config import generated_dir
+from bestbefore import m3, runs, store, store_train
+from bestbefore.config import REPO_ROOT, generated_dir
 from bestbefore.images import load_upright
 from bestbefore.reader import crops, parse, piles, shards
 
 BATCH = 2000                    # photos handed to the pool at a time
 COUNTED_TAGS = ("split", "style", "kind", "orientation", "surface", "band", "stratum", "upright",
                 "photo_turn", "parts_from")
+STORE_TAGS = ("tag", "part")    # counted only where a crop has them (the store's), so S3's manifests still check
 
 
 def default_root() -> Path:
@@ -103,6 +110,9 @@ def tally(counts: dict[str, Counter], crop: shards.Crop) -> None:
     for name in COUNTED_TAGS:
         if name in crop.tags:
             counts[name][str(crop.tags[name])] += 1
+    for name in STORE_TAGS:
+        if name in crop.tags:
+            counts.setdefault(name, Counter())[str(crop.tags[name])] += 1
     counts["turn"][str(crop.turn)] += 1
     w, h = crop.box[2] - crop.box[0], crop.box[3] - crop.box[1]
     counts["shape"]["tall" if h > w else "wide"] += 1
@@ -156,7 +166,8 @@ def make(pile: str, root: Path, workers: int, limit: int | None, replace: bool, 
         n = writer.count
     seconds = time.time() - t0
     manifest = {
-        "pile": pile, "kind": "training" if pile in piles.TRAINING else "suite" if pile in piles.SUITES else "trial",
+        "pile": pile, "kind": "training" if pile in piles.TRAINING + piles.STORE_TRAINING
+        else "suite" if pile in piles.SUITES + piles.STORE_SUITES else "trial",
         "count": n, "photos": n_photos, "limit": limit, "planned": dict(planned), "skipped": dict(skipped),
         "wanted_without_box": no_box[0], "counts": plain(counts),
         "settings": {"margin": crops.MARGIN, "max_short": crops.MAX_SHORT, "max_side": store_train.MAX_SIDE,
@@ -182,9 +193,27 @@ def make(pile: str, root: Path, workers: int, limit: int | None, replace: bool, 
         shutil.rmtree(old)
     else:
         part.rename(final)
+    if pile in piles.PRIVATE:
+        owner_only(final)
     print(f"{pile}: {n} crops from {n_photos} photos in {seconds:.0f} s, "
           f"{manifest['bytes']['data.mdb'] / 2**20:.1f} MiB, skipped {dict(skipped)} -> {final}", file=sys.stderr)
     return {k: manifest[k] for k in ("count", "photos", "skipped", "wanted_without_box", "seconds", "bytes")}
+
+
+def private_root_problem(root: Path) -> str | None:
+    """Why the store's piles can't go under `root`, or None: inside this
+    checkout only under data/store/, which git ignores."""
+    root, repo, data = root.resolve(), REPO_ROOT.resolve(), store.DATA_DIR.resolve()
+    if root.is_relative_to(repo) and not root.is_relative_to(data):
+        return f"{root} is inside the checkout but not under {data}: the store's crops stay private"
+    return None
+
+
+def owner_only(folder: Path) -> None:
+    """A store pile's folder 700 and every file in it 600."""
+    os.chmod(folder, 0o700)
+    for path in folder.rglob("*"):
+        os.chmod(path, 0o700 if path.is_dir() else 0o600)
 
 
 # --- Checking a pile ------------------------------------------------------------------
@@ -261,6 +290,8 @@ def check(pile: str, root: Path, workers: int) -> dict:
               "seconds": {"read_back": round(t_read, 1), "recount_sources": round(time.time() - t0, 1)},
               "checked": time.strftime("%Y-%m-%d %H:%M:%S"), "host": socket.gethostname(), **runs.git_state()}
     runs.write_json(folder / "check.json", result)
+    if pile in piles.PRIVATE:
+        owner_only(folder)
     print(f"{pile}: {'ok' if result['ok'] else 'FAILED'}, {n} records read back in {t_read:.0f} s; "
           f"planned {dict(planned)}, skipped {manifest['skipped']}, upstream {up.get('date')} dates"
           + "".join(f"\n  {i}" for i in issues), file=sys.stderr)
@@ -270,7 +301,7 @@ def check(pile: str, root: Path, workers: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--pile", action="append", required=True,
-                        help=f"one of {', '.join(piles.PILES)}, or all (the job's: {', '.join(piles.JOB_PILES)})")
+                        help=f"one of {', '.join(piles.PILES)}, or all (S3's job: {', '.join(piles.JOB_PILES)})")
     parser.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", "4")))
     parser.add_argument("--root", type=Path, help="where piles go (default $GENERATED_DIR/m3/crops)")
     parser.add_argument("--limit", type=int, help="the first N photos of each pile (a smoke)")
@@ -283,6 +314,10 @@ def main() -> None:
     root = args.root or default_root()
     if args.limit and args.root is None and not args.check:
         sys.exit("a smoke (--limit) goes elsewhere: give --root")
+    if any(p in piles.PRIVATE for p in chosen):
+        if why := private_root_problem(root):
+            sys.exit(why)
+        os.umask(0o077)
     if args.check:
         results = [check(p, root, args.workers) for p in chosen]
         bad = [r["pile"] for r in results if not r["ok"]]

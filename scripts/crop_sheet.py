@@ -9,18 +9,23 @@ and, under it, its text and what it is: class or role, the turn it was
 given (t) and the turn still needed to stand it upright (u). The crops are
 drawn at random with a fixed seed, shown in key order. Sheets show ExpDate
 and generated crops: they go to $GENERATED_DIR/m3/crops/sheets/ by
-default, never into git.
+default, never into git. A store pile's sheet (piles.PRIVATE) shows the
+retailer's photos: it goes into the pile's own owner-only folder
+(<root>/<pile>/sheets/, mode 600), or under data/store/, nowhere else.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import random
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from bestbefore import store
 from bestbefore.config import generated_dir
-from bestbefore.reader import shards
+from bestbefore.reader import piles, shards
 from bestbefore.sheets import FONT, rows_of
 
 TILE_H = 80             # the crop's height on the sheet
@@ -57,6 +62,15 @@ def sheet(folder: Path, pile: str, n: int, seed: int) -> Image.Image:
     return rows_of(tiles, width=1800)
 
 
+def private_out_problem(out: Path, folder: Path) -> str | None:
+    """Why a store pile's sheet can't go to `out`, or None: only inside the
+    pile's folder or under data/store/."""
+    out = out.resolve()
+    if out.is_relative_to(folder.resolve()) or out.is_relative_to(store.DATA_DIR.resolve()):
+        return None
+    return f"{out}: a store pile's sheet goes into {folder} or under {store.DATA_DIR}, nowhere else"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--pile", required=True)
@@ -66,7 +80,13 @@ def main() -> None:
     parser.add_argument("--out", type=Path, help="the PNG (default <root>/sheets/<pile>.png)")
     args = parser.parse_args()
     root = args.root or generated_dir() / "m3" / "crops"
-    out = args.out or root / "sheets" / f"{args.pile}.png"
+    private = args.pile in piles.PRIVATE
+    out = args.out or (root / args.pile / "sheets" / f"{args.pile}-{args.seed}.png" if private
+                       else root / "sheets" / f"{args.pile}.png")
+    if private:
+        if why := private_out_problem(out, root / args.pile):
+            sys.exit(why)
+        os.umask(0o077)
     out.parent.mkdir(parents=True, exist_ok=True)
     sheet(root / args.pile, args.pile, args.n, args.seed).save(out)
     print(out)

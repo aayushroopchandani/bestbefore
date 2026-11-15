@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from bestbefore import derived, m2, m2b, m3, runs
+from bestbefore import derived, m2, m2b, m3, runs, store, store_text, store_train, yolo
+from bestbefore.config import REPO_ROOT
 from bestbefore.reader import piles, shards
 from bestbefore.samples import Box
 
@@ -254,3 +255,111 @@ def test_make_crops_never_overwrites_a_pile(make_crops, tmp_path, monkeypatch):
     (tmp_path / "crops" / "gen-sample").mkdir(parents=True)
     with pytest.raises(SystemExit):
         make_crops.make("gen-sample", tmp_path / "crops", 1, None, False, {}, tmp_path)
+
+
+# --- The store's piles (S4) ---------------------------------------------------------------
+
+def _fake_store_export(root: Path, monkeypatch) -> Path:
+    """A store export with two numbered photos: v1-0001 (train) with an
+    upright expiry, an mfg printed reading bottom to top, a keyword and a
+    shelf-life phrase; v1-0002 (val) with an expiry upside down. Every box
+    a notched bar drawn as it lies; text.json as S4 writes it."""
+    folder = root / "store-train"
+    monkeypatch.setenv("STORE_TRAIN_DIR", str(folder))
+    monkeypatch.setattr(store_text, "TEXT_SHA256", "f" * 64)
+    photos = {"v1-0001": ("train", "train_0", (400, 300), [("expiry", [50, 50, 200, 80], 0),
+                                                          ("mfg", [250, 40, 280, 190], 1),
+                                                          ("due", [10, 250, 60, 270], 0)],
+                          [([50, 200, 300, 225], 0)]),
+              "v1-0002": ("val", "val", (300, 400), [("expiry", [100, 100, 220, 130], 2)], [])}
+    manifest, text = {"photos": {}}, {}
+    for name, (part, sub, (w, h), boxes, life) in photos.items():
+        a = np.full((h, w, 3), 200, np.uint8)
+        for (x1, y1, x2, y2), q in [(b, q) for _, b, q in boxes] + life:
+            bw, bh = (x2 - x1, y2 - y1) if q % 2 == 0 else (y2 - y1, x2 - x1)
+            upright = np.full((bh, bw, 3), 20, np.uint8)
+            upright[:4, :4] = 255
+            a[y1:y2, x1:x2] = np.rot90(upright, q)
+        (folder / "images" / sub).mkdir(parents=True, exist_ok=True)
+        (folder / "labels" / sub).mkdir(parents=True, exist_ok=True)
+        Image.fromarray(a).save(folder / "images" / sub / f"{name}.jpg", quality=95)
+        (folder / "labels" / sub / f"{name}.txt").write_text("".join(
+            f"{yolo.LABEL_TO_CLASS[store_train.YOLO_LABEL[label]]} "
+            + " ".join(f"{v:.6f}" for v in yolo.to_yolo((x1 / w, y1 / h, x2 / w, y2 / h))) + "\n"
+            for label, (x1, y1, x2, y2), _ in boxes))
+        manifest["photos"][name] = {"design": "d01", "labels": [b[0] for b in boxes], "part": part, "tag": "clean"}
+        values = {"expiry": "2027-03-15", "mfg": "2025-03"}
+        texts = {"expiry": "15.03.27", "mfg": "MAR 2025"}
+        text[name] = {"part": part, "month": None,
+                      "boxes": [{"index": k, "label": label, "value": values[label], "text": texts[label],
+                                 "turn": (4 - q) % 4} for k, (label, _, q) in enumerate(boxes) if label != "due"],
+                      "life": [{"xyxy": [x1 / w, y1 / h, x2 / w, y2 / h], "text": "Best before 18 months from Mfg.",
+                                "turn": (4 - q) % 4} for (x1, y1, x2, y2), q in life]}
+    (folder / "manifest.json").write_text(json.dumps(manifest))
+    (folder / "text.json").write_text(json.dumps({
+        "version": "text", "text_sha256": "f" * 64, "photos": text,
+        "export_manifest_sha256": hashlib.sha256((folder / "manifest.json").read_bytes()).hexdigest()}))
+    return folder
+
+
+def test_the_store_pile_stands_crops_upright_with_parts_from_the_frozen_values(tmp_path, monkeypatch):
+    _fake_store_export(tmp_path, monkeypatch)
+    assert piles.missing("store") is None
+    [photo] = piles.photos("store")
+    assert photo.image.parent.name == "train_0"
+    expiry, mfg, life = photo.items
+    assert [i.source for i in photo.items] == ["v1-0001#0", "v1-0001#1", "v1-0001#life0"]   # numbers, no name
+    assert [i.turn for i in photo.items] == [0, 3, 0] and all(i.tags["upright"] == 0 for i in photo.items)
+    assert expiry.parts == (2027, 3, 15) and piles.expdate_parts("15.03.27") == (2015, 3, 27)   # never parsed
+    assert mfg.parts == (2025, 3, None) and mfg.role == "mfg" and expiry.tags["parts_from"] == "frozen"
+    assert (life.cls, life.role, life.parts, life.tags["kind"]) == (None, None, None, "shelf-life")
+    assert {k: expiry.tags[k] for k in ("design", "part", "tag")} == {"design": "d01", "part": "train", "tag": "clean"}
+    assert piles.upstream("store") == {"date": 2, "from": "the store export's manifest.json, its train photos' date labels"}
+
+
+def test_the_store_suites_lie_as_cut_with_the_owners_turn_as_truth(tmp_path, monkeypatch):
+    _fake_store_export(tmp_path, monkeypatch)
+    [train] = piles.photos("store-train")
+    assert [(i.turn, i.tags["upright"]) for i in train.items] == [(0, 0), (0, 3)]     # no shelf-life phrase
+    [val] = piles.photos("store-val")
+    assert val.image.parent.name == "val" and [(i.turn, i.tags["upright"]) for i in val.items] == [(0, 2)]
+
+
+def test_the_store_piles_wait_for_the_frozen_text_of_this_export(tmp_path, monkeypatch):
+    folder = _fake_store_export(tmp_path, monkeypatch)
+    monkeypatch.setattr(store_text, "TEXT_SHA256", "e" * 64)
+    assert "frozen store text" in piles.missing("store-val")
+    monkeypatch.setattr(store_text, "TEXT_SHA256", "f" * 64)
+    (folder / "manifest.json").write_text((folder / "manifest.json").read_text() + " ")
+    assert "another export" in piles.missing("store")
+    text = json.loads((folder / "text.json").read_text())
+    (folder / "text.json").write_text(json.dumps({**text, "version": "values"}))
+    assert "not S4's" in piles.missing("store")
+    assert "store" not in piles.JOB_PILES and set(piles.VISIBILITY_FILTERED).isdisjoint(piles.STORE_PILES)
+
+
+def test_make_crops_keeps_the_store_piles_owner_only_and_upright(make_crops, tmp_path, monkeypatch):
+    _fake_store_export(tmp_path, monkeypatch)
+    root = tmp_path / "crops"
+    record = runs.start_run("m3-crops-test", {})
+    made = make_crops.make("store", root, 1, None, False, make_crops.recipe_in_use(), record)
+    assert made["count"] == 3 and made["skipped"] == {}
+    folder = root / "store"
+    assert folder.stat().st_mode & 0o777 == 0o700
+    assert {p.name: p.stat().st_mode & 0o777 for p in folder.iterdir()} == {"data.mdb": 0o600, "manifest.json": 0o600}
+    manifest = json.loads((folder / "manifest.json").read_text())
+    assert manifest["kind"] == "training" and manifest["counts"]["tag"] == {"clean": 3}
+    assert set(manifest["sources"]) == {"store/manifest.json", "store/text.json"}
+    env = shards.open_pile(folder)
+    for crop in shards.records(env, "store"):
+        x1, y1 = round(crop.box[0]), round(crop.box[1])
+        assert np.asarray(crop.image().convert("L"))[y1 + 1, x1 + 1] > 200, crop.text     # the notch: upright
+    env.close()
+    assert make_crops.check("store", root, 1)["ok"]
+    assert (folder / "check.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_make_crops_puts_the_store_piles_nowhere_in_the_checkout_but_data_store(make_crops, tmp_path):
+    assert make_crops.private_root_problem(store.DATA_DIR / "crops") is None
+    assert make_crops.private_root_problem(tmp_path / "crops") is None           # outside the checkout
+    assert "not under" in make_crops.private_root_problem(REPO_ROOT / "results" / "crops")
