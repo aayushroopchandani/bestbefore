@@ -1,13 +1,17 @@
 """Write `text.json` beside the store export: each numbered photo's date
 boxes, by their line in its label file, with their values and the photo's
-month (docs/m3-date-reader.md, S2 and "Store text").
+month (docs/m3-date-reader.md, S2 and "Store text"); with --text, also each
+box's printed text and turn and each shelf-life box (S4).
 
-    python scripts/export_store_text.py --values
+    python scripts/export_store_text.py --values   # S2's values-only version
+    python scripts/export_store_text.py --text     # S4's, from the frozen data/store/text.json
 
 Reads only the frozen files the export was made from (store_train.
 export_inputs: v1's and v3's labels, keywords, designs and splits, each
 checked against its hash), and the laptop's export in $STORE_TRAIN_DIR,
-whose manifest it is tied to. Store set v2 is never opened. Writes
+whose manifest it is tied to. --text reads data/store/text.json only once its hash is TEXT_SHA256, and
+its values, months and boxes must equal what --values works out from the
+frozen files. Store set v2 is never opened. Writes
 $STORE_TRAIN_DIR/text.json with mode 600; copy it to the cluster's export
 by CLAUDE.md's owner-only rules. Prints counts only.
 """
@@ -28,9 +32,10 @@ from bestbefore.runs import code_sha256, git_state
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--values", action="store_true", required=True,
-                        help="the values-only version (S2); S4's typed text comes later")
-    parser.parse_args()
+    which = parser.add_mutually_exclusive_group(required=True)
+    which.add_argument("--values", action="store_true", help="the values-only version (S2)")
+    which.add_argument("--text", action="store_true", help="with the typed text and turns (S4)")
+    args = parser.parse_args()
 
     folder, root = store_train_dir(), store_photos_dir()
     manifest_bytes = (folder / store_train.MANIFEST).read_bytes()
@@ -55,9 +60,24 @@ def main() -> None:
         for b in boxes:
             counts[(p.part, b["label"], "value" if b["value"] else "no value")] += 1
 
-    text = store_text.values_file(
-        photos, manifest_sha256, sources, date.today().isoformat(),
-        {**git_state(), "code_sha256": code_sha256(store_text, store_train, store)})
+    provenance = {**git_state(), "code_sha256": code_sha256(store_text, store_train, store)}
+    text = store_text.values_file(photos, manifest_sha256, sources, date.today().isoformat(), provenance)
+    if args.text:
+        typed = store_text.read_text()
+        numbered = store_text.numbered_file(typed, store_text.TEXT_SHA256, manifest_sha256,
+                                            date.today().isoformat(), provenance)
+        if typed["sources"] != sources:
+            sys.exit("data/store/text.json was made from other frozen files than the export's; nothing written")
+        for name, entry in photos.items():
+            got = numbered["photos"].get(name, {})
+            if (got.get("part"), got.get("month")) != (entry["part"], entry["month"]) or \
+                    [{k: b[k] for k in ("index", "label", "value")} for b in got.get("boxes", [])] != entry["boxes"]:
+                sys.exit(f"{name}: data/store/text.json disagrees with the frozen files; nothing written")
+        for name, entry in numbered["photos"].items():
+            for b in entry["boxes"]:
+                counts[(entry["part"], "turn", str(b["turn"]))] += 1
+            counts[(entry["part"], "life boxes")] += len(entry["life"])
+        text = numbered
     if problems := store_text.check(text, manifest, manifest_sha256):
         sys.exit("text.json fails its own check:\n  " + "\n  ".join(problems))
     path = folder / store_text.NAME

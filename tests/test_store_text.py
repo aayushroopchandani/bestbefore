@@ -72,3 +72,101 @@ def test_written_for_its_owner_only(tmp_path):
     digest = store_text.write_private(path, {"a": 1})
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert len(digest) == 64 and json.loads(path.read_text()) == {"a": 1}
+
+
+# --- S4: turns, the frozen file and its numbered copy ------------------------------------
+
+import numpy as np
+import pytest
+
+from bestbefore.reader import crops
+
+START, TOPS = 255, 128      # the line's first character; the tops of its characters
+
+
+def _upright() -> np.ndarray:
+    """A made-up line of print, 20 x 60: its first character at the left,
+    its characters' tops along the top edge."""
+    a = np.zeros((20, 60), np.uint8)
+    a[:, :6] = START
+    a[:3, :] = TOPS
+    return a
+
+
+def _as_printed(choice: str) -> np.ndarray:
+    """The same line as a photo shows it, drawn by hand from the words of
+    each choice, not by turning: 'reads bottom to top' starts at the bottom
+    with its tops to the left (tilt your head left to read it)."""
+    if choice == "upright":
+        return _upright()
+    if choice == "reads bottom to top":
+        a = np.zeros((60, 20), np.uint8)
+        a[-6:, :] = START
+        a[:, :3] = TOPS
+    elif choice == "reads top to bottom":
+        a = np.zeros((60, 20), np.uint8)
+        a[:6, :] = START
+        a[:, -3:] = TOPS
+    else:                                   # upside down: starts at the right, tops at the bottom
+        a = np.zeros((20, 60), np.uint8)
+        a[:, -6:] = START
+        a[-3:, :] = TOPS
+    return a
+
+
+@pytest.mark.parametrize("choice", list(store_text.TURNS))
+def test_each_choice_maps_to_the_quarter_turns_that_stand_it_upright(choice):
+    k = store_text.TURNS[choice]
+    printed = _as_printed(choice)
+    assert np.array_equal(np.rot90(printed, k), _upright())                     # np.rot90's k
+    im = Image.fromarray(printed)
+    turned = im.transpose(crops._TRANSPOSE[k]) if k else im                     # PIL's ROTATE_90 ...
+    assert np.array_equal(np.asarray(turned), _upright())
+    cut, box = crops.cut(im, (0, 0, im.width, im.height), turn=k, margin=0)     # what a crop record holds
+    assert np.array_equal(np.asarray(cut), _upright()) and box == (0, 0, 60, 20)
+
+
+def test_no_choice_is_backwards():
+    """The two sideways choices are each other's inverse, never the same turn."""
+    assert sorted(store_text.TURNS.values()) == [0, 1, 2, 3]
+    assert (store_text.TURNS["reads bottom to top"] + store_text.TURNS["reads top to bottom"]) % 4 == 0
+
+
+TEXT = {"version": "text", "reviewed": "2026-11-15", "sources": {"v1": {"labels": "x"}}, "review": {},
+        "photos": {"samples1/x.jpg": {
+            "name": "v1-0001", "part": "train", "month": "2026-08",
+            "boxes": [{"index": 0, "label": "expiry", "xyxy": [0.1, 0.1, 0.2, 0.2], "value": "2027-03-15",
+                       "text": "15/03/2027", "turn": 0},
+                      {"index": 1, "label": "mfg", "xyxy": [0.1, 0.1, 0.2, 0.2], "value": "2025-03-15",
+                       "text": "MFG 15/03/2025", "turn": 3}],
+            "life": [{"xyxy": [0.3, 0.3, 0.6, 0.35], "text": "24 months from Mfg.", "turn": 0}]}}}
+
+
+def test_numbered_file_names_no_photo_and_passes_the_check():
+    numbered = store_text.numbered_file(TEXT, "f" * 64, "abc", "2026-11-15", {})
+    assert "samples1" not in json.dumps(numbered) and numbered["text_sha256"] == "f" * 64
+    entry = numbered["photos"]["v1-0001"]
+    assert entry["boxes"][1] == {"index": 1, "label": "mfg", "value": "2025-03-15", "text": "MFG 15/03/2025", "turn": 3}
+    assert entry["life"] == [{"xyxy": [0.3, 0.3, 0.6, 0.35], "text": "24 months from Mfg.", "turn": 0}]
+    manifest = {"photos": {"v1-0001": {"part": "train", "labels": ["expiry", "mfg", "due"]}}}
+    assert store_text.check(numbered, manifest, "abc") == []
+
+
+def test_check_finds_a_box_without_its_text_or_turn():
+    numbered = store_text.numbered_file(TEXT, "f" * 64, "abc", "2026-11-15", {})
+    manifest = {"photos": {"v1-0001": {"part": "train", "labels": ["expiry", "mfg"]}}}
+    bad = json.loads(json.dumps(numbered))
+    bad["photos"]["v1-0001"]["boxes"][0]["text"] = " "
+    bad["photos"]["v1-0001"]["boxes"][1]["turn"] = 4
+    bad["photos"]["v1-0001"]["life"][0]["xyxy"] = [0.5, 0.3, 0.4, 0.35]
+    found = store_text.check(bad, manifest, "abc")
+    assert len(found) == 3 and any("no text" in p for p in found) and any("turn is 4" in p for p in found)
+
+
+def test_read_text_refuses_a_changed_file(tmp_path):
+    path = tmp_path / "text.json"
+    digest = store_text.write_private(path, TEXT)
+    assert store_text.read_text(path, digest) == TEXT
+    path.write_text(path.read_text().replace("15/03/2027", "16/03/2027"))
+    with pytest.raises(RuntimeError, match="changed"):
+        store_text.read_text(path, digest)

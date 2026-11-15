@@ -10,11 +10,18 @@ numbered photo and the box's line in its label file: never a photo's name.
 S2 writes the values-only version (`scripts/export_store_text.py
 --values`): each date box's label (expiry, mfg, other_date) and, for an
 expiry or mfg box, its photo's frozen value; and each photo's month, from
-its EXIF capture date, for the plausibility check (decision 13). S4 adds
-the printed text and each box's turn, typed by the owner.
+its EXIF capture date, for the plausibility check (decision 13).
+
+S4 adds the printed text and each box's turn, checked by the owner in
+Label Studio (store_text_review.py), and a `life` box round each
+shelf-life phrase. scripts/import_store_text.py writes them, by photo
+name, into data/store/text.json (TEXT_PATH, laptop only), frozen with
+TEXT_SHA256 here; `scripts/export_store_text.py --text` writes its
+numbered version (version "text") beside the export for the cluster.
 
 Kept out of store.py and store_train.py, which M2b's running job imports:
-a new file changes none of its code.
+a new file changes none of its code. TEXT_SHA256 lives here for the same
+reason (the plan put it in store.py).
 """
 from __future__ import annotations
 
@@ -31,6 +38,23 @@ from .store_train import ExportPhoto
 NAME = "text.json"
 VALUE_LABELS = ("expiry", "mfg")
 _EXIF_IFD, _TAKEN, _DATETIME = 0x8769, 0x9003, 0x0132
+
+# --- S4: the printed text and each box's turn ------------------------------------------
+
+TEXT_PATH = store.DATA_DIR / "text.json"     # by photo name: laptop only, never committed
+REVIEW_DIR = store.DATA_DIR / "text"         # proposals, tasks, the project, its export, settled
+# SHA-256 of data/store/text.json, pasted in when it was frozen (S4, 2026-11-15).
+TEXT_SHA256: str | None = "b8d872f5308ddeeeeb26dc17d233796cb85301c2963c757c4b527d4c0721e08e"
+
+# Which way a box's print reads, as the owner picks it in Label Studio,
+# and the quarter turns anticlockwise that stand it upright: the crop
+# record's convention (np.rot90's k, PIL's Transpose.ROTATE_90, crops.cut's
+# `turn`, tags["upright"] in reader/shards.py). Print reading bottom to top
+# has its letters' tops to the left (tilt your head left to read it): one
+# quarter clockwise, three anticlockwise, stands it up. Tested on a
+# made-up crop in tests/test_store_text.py.
+TURNS = {"upright": 0, "reads top to bottom": 1, "upside down": 2, "reads bottom to top": 3}
+LIFE = "life"                                # a shelf-life phrase's box label
 
 
 def photo_month(path: Path) -> str | None:
@@ -79,7 +103,7 @@ def check(text: dict, manifest: dict, manifest_sha256: str) -> list[str]:
     """Problems with a text.json against the export it says it belongs to:
     the same manifest, every exported photo once, each box's line holding a
     date of that label in the manifest, and a value on every expiry and mfg
-    box that parses."""
+    box that parses; for version "text", text_problems() too."""
     problems = []
     if text.get("export_manifest_sha256") != manifest_sha256:
         problems.append("text.json was made for another export (manifest hashes differ)")
@@ -102,4 +126,60 @@ def check(text: dict, manifest: dict, manifest_sha256: str) -> list[str]:
                     store.parse_date(b["value"])
                 except ValueError:
                     problems.append(f"{name}: line {b['index']}'s value {b['value']!r} isn't a date")
+    if text.get("version") == "text":
+        problems += text_problems(text)
+    return problems
+
+
+# --- S4's file, and its numbered copy -------------------------------------------------
+
+def read_text(path: Path = TEXT_PATH, expected: str | None = None) -> dict:
+    """data/store/text.json, once it is shown to be the frozen one."""
+    expected = expected or TEXT_SHA256
+    if expected is None:
+        raise RuntimeError("the store text isn't frozen yet: TEXT_SHA256 is unset in store_text.py "
+                           "(scripts/import_store_text.py writes the file and prints its hash)")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise RuntimeError(f"{path} has changed since it was frozen; a change is a new version (M3 S4)")
+    return json.loads(data)
+
+
+def numbered_file(text: dict, text_sha256: str, manifest_sha256: str, made: str,
+                  provenance: dict) -> dict:
+    """The cluster's text.json (version "text"), from the frozen
+    data/store/text.json: every photo by its number only, each date box by
+    its label file's line with its label, value, printed text and turn,
+    each shelf-life box with its 0..1 xyxy (of the upright photo), text and
+    turn; and the frozen file's hash, so a copy names what it came from."""
+    photos = {}
+    for entry in text["photos"].values():
+        photos[entry["name"]] = {
+            "part": entry["part"], "month": entry["month"],
+            "boxes": [{k: b[k] for k in ("index", "label", "value", "text", "turn")} for b in entry["boxes"]],
+            "life": [{k: b[k] for k in ("xyxy", "text", "turn")} for b in entry["life"]]}
+    return {"version": "text", "made": made, **provenance, "text_sha256": text_sha256,
+            "export_manifest_sha256": manifest_sha256, "sources": text["sources"],
+            "photos": dict(sorted(photos.items()))}
+
+
+def text_problems(text: dict) -> list[str]:
+    """Problems with a version "text" file's text and turns, beyond
+    check()'s: every date box and every shelf-life box has its text and a
+    turn of 0 to 3, and a shelf-life box lies inside its photo with an area."""
+    problems = []
+    for name, entry in sorted(text.get("photos", {}).items()):
+        for b in entry["boxes"]:
+            if not str(b.get("text") or "").strip():
+                problems.append(f"{name}: line {b['index']} has no text")
+            if b.get("turn") not in (0, 1, 2, 3):
+                problems.append(f"{name}: line {b['index']}'s turn is {b.get('turn')!r}")
+        for k, b in enumerate(entry.get("life", [])):
+            x1, y1, x2, y2 = b["xyxy"]
+            if not (0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1):
+                problems.append(f"{name}: shelf-life box {k} outside the photo or without area")
+            if not str(b.get("text") or "").strip():
+                problems.append(f"{name}: shelf-life box {k} has no text")
+            if b.get("turn") not in (0, 1, 2, 3):
+                problems.append(f"{name}: shelf-life box {k}'s turn is {b.get('turn')!r}")
     return problems
