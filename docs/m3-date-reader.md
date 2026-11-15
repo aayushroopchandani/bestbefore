@@ -496,7 +496,7 @@ inside it, its text is non-empty, and the counts match the source.
 ### Store text (S4)
 
 `data/store/text.json` (not committed; names photos), frozen with
-`TEXT_SHA256` in `store.py`:
+`TEXT_SHA256` in `store_text.py` (S4: not `store.py`, which M2b's job imports):
 
 ```
 photo → {"month": "2026-08",                  # from EXIF, for decision 13
@@ -1414,6 +1414,118 @@ was left; the task remakes it.
 **Check:** every box has text and a turn; every expiry and mfg text parses
 to its frozen value, or is listed and settled with the owner. **Commits:**
 `feat: store date text, typed and frozen`, `docs: m3 plan, S4's text`
+
+**Record (2026-11-15, laptop; the cluster part waits).** Done at home,
+where the cluster can't be reached: everything up to the cluster's copy
+and job.
+
+Departures, each the owner's call or forced by M2b's running job:
+
+- **`TEXT_SHA256` lives in `store_text.py`**, not `store.py` as
+  [Store text](#store-text-s4) said: M2b's job imports `store.py`, and S2
+  kept text.json's code out of it for that reason.
+- **New files the layout didn't name:** `store_text_review.py` (the
+  project's tasks and every import check, tested), and the scripts
+  `propose_store_text.py`, `draft_store_text.py` and
+  `import_store_text.py`; `export_store_text.py --text` writes the
+  numbered copy.
+- **The project was made through Label Studio's own API views,
+  in-process** (the server stopped, the database backed up, every other
+  project fingerprinted unchanged), not through the browser as in M2b: its
+  tasks file (310 KB) is too big for the page. Label Studio strips a
+  `data:` picture from the instructions, so the turn picture is a CSS
+  background in an allowed `<style>`.
+- **Turns are chosen by which way the print reads** ("upright", "reads
+  bottom to top", "reads top to bottom", "upside down"), never as degrees,
+  with a picture of each; `store_text.TURNS` maps them to anticlockwise
+  quarter turns, tested on a made-up crop with `np.rot90`, PIL's transposes
+  and `crops.cut`.
+- **Claude drafted every text, the owner checked, Claude submitted** (the
+  owner's requests): Claude read all 232 boxes cut from the full-size
+  photos, turned by OCR's turn, and fixed 27 texts and 2 turns; the draft
+  was loaded as a second prediction the tasks open with. The owner went
+  through the photos and changed 3 tasks: two shelf-life boxes made a
+  little bigger (one took in a last letter Claude's box had cut), and an
+  mfg box relabelled `other_date`. Labels are frozen and the import refuses
+  a relabel, and that pack prints `MFG DATE` beside the date, so it was
+  submitted as `mfg`, told to the owner. Claude then read all 242 boxes
+  again on sheets and submitted the 114 tasks, at the owner's word, as
+  the owner's account.
+- **A shelf-life box on a photo that isn't derived:** decision 6 says
+  every photo that prints a shelf life; the slice said each derived photo.
+  The owner found one: an other-face photo of a jar showing only "Best
+  Before 1 Year from Mfg. Dt." on a red band. It is boxed. Nothing to
+  check it against (no frozen expiry); it trains the reader on the phrase.
+
+What was found:
+
+- **OCR's proposals** (PP-OCRv6 small's recogniser alone, pad 0, turned;
+  S2's reads for the 198 expiry and mfg boxes, 34 others read fresh on
+  the laptop): text exactly right on 205 of 232 boxes (expiry 87 of 93,
+  mfg 90 of 105, other 28 of 34), turn right on 230. Its misses: slashes
+  read as other characters (`28/07126`, `10/03V2027`), `FE8`/`FER` for
+  FEB, `MAP` for MAR, `Aprii`, missing spaces (`MAR2025`), an 8 read as 9
+  in dot-matrix, a red pen stroke read as a 9, an ink blob as a full stop;
+  and 2 turns it called upside down on clear jar bottoms, where the print
+  shows through the jar and reads upright.
+- **Turns** over the 242 boxes: upright 183, reads bottom to top 36, reads
+  top to bottom 19, upside down 4.
+- **Boxes that hold a keyword:** 6 boxes on 3 photos of one hand-stamped
+  pack take in `EXP.` and `MFG:` (M0's rule was the date alone). The boxes
+  are frozen (M2b's detector trained on them; the import refuses a moved
+  box), so the text follows the box: `EXP.FEB 2027`. A reader must learn
+  to read what its crop shows; the parser finds the date inside.
+- **Shelf-life phrases, 10 boxes:** every one of the 9 derived photos (24
+  months 4, one year 2, 18 months 2, 24 months from packaging 1), plus the
+  other-face jar. Mfg plus the printed shelf life gives the frozen expiry
+  on all 9. Looked for on every photo: OCR's whole-photo lines from M2b's
+  keyword review (1,000 px) found phrases on only 4 of the 10, missing
+  every one printed on a coloured band, as Scanify found; so each of the
+  123 `due` keywords M2b boxed (on 107 photos) was looked at with its
+  line, and the 7 photos with none were looked at whole. Not boxed: "after
+  opening, use within 3 months" (not a shelf life from manufacture) and
+  "Best Before: as printed on pack".
+- **Partly hidden print:** on 4 photos of clear lids and jars, the treats
+  behind the plastic hide some dot-matrix digits. The full printed date
+  was typed (it matches the frozen value), not `#`.
+- **The import** (`import_store_text.py`): all 114 photos reviewed, every
+  box upright and inside its photo, every date box unchanged and none
+  added, every box with one text and one turn; **0 mismatches** with the
+  frozen values (S2's DD.MM.YY trap never occurs on the store's texts), so
+  `settled.json` was never needed. Notes: the 2 turns other than OCR's.
+  `text.json` written twice, byte-identical; frozen
+  (`TEXT_SHA256 = b8d872f5…`). Its numbered copy (`--text`, version
+  "text", no photo name) is checked against the frozen values, months and
+  labels of the export.
+- **The store's piles** (`reader/piles.py`, cut from the export's upright
+  copies, `train_0` and `val`): `store` 178 crops on 77 photos (dates:
+  expiry 64, mfg 74, other 31; and 9 shelf-life phrases, class-less),
+  turned upright by the owner's turns; suites `store-train` 169 and
+  `store-val` 63 (expiry 29, mfg 31, other 3), cut as they lie with the
+  turn in `tags["upright"]`. The plan's 167 and 62 are the frozen boxes:
+  one slip's mfg box isn't exported, and M2b's 4 added dates come on top
+  (3 training, 1 validation). Parts come from the frozen values
+  (`parts_from: frozen`); other dates carry none. Suites hold dates only,
+  so the one validation shelf-life box is in no pile. `missing()` refuses
+  a text.json that isn't the frozen text's copy for this export.
+  `VISIBILITY_FILTERED` names the piles S5 may filter: never the store's.
+- **Owner-only:** `make_crops.py` makes and checks the store piles under
+  umask 077 (folders 700, files 600) and refuses a root inside the
+  checkout that isn't under `data/store/`; `crop_sheet.py` keeps their
+  sheets inside the pile's folder or under `data/store/`. `all` never
+  includes them.
+- **The laptop trial:** the three piles in 1.3 s, `--check` passed (records
+  + skipped = planned; dates = the export manifest's count); the label
+  files' boxes match text.json's to 5e-7; 0 files open to others. On the
+  sheets every one of the 178 `store` crops stands upright on its print,
+  and the 63 `store-val` crops lie as the photos show them.
+
+**Not checked:** the cluster part, which waits for campus: M2b's job,
+pulling the code, copying the numbered text.json owner-only, the CPU job
+for the three piles, and reading them back there; the whole test suite (only the
+files touching this code: 77 tests); a shelf-life phrase with no `due`
+keyword boxed beside it and missed by OCR, on a photo that has a keyword
+elsewhere.
 
 ### S5. The CRNN · laptop, then a CPU smoke
 
