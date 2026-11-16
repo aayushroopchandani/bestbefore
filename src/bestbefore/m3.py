@@ -120,6 +120,12 @@ BUDGET = {"crnn": 10_000_000, "ppocrv6": 2_000_000}     # crops seen per run
 EVALS = 20                     # checkpoints scored per run (every 5%), decision 17
 CHECKPOINT_SUITES = ("real-val", "synth-val-v2")        # decision 17: pooled exact text
 # S5: training crops (piles.VISIBILITY_FILTERED) whose visibility
-# (reader/data.py) is under this are never drawn. Set by eye on sheets
-# sorted by the measure, before any training; None refuses to train.
-VISIBLE_MIN: float | None = None
+# (reader/data.py) is under this are never drawn. Set by eye with the owner
+# on 2026-11-16, before any training, on the sheets of job 73966 (commit
+# a15ee90): gen-bands, expdate-synth-bands and expdate-real-bands, then
+# scripts/visibility.py check --cut 3.0 (gen-dropped-3, gen-kept-above-3), all
+# in $GENERATED_DIR/m3/crops/sheets/visibility/. Under 3, nearly every crop
+# is empty (noise, flat, black); above it, nearly every one is readable.
+# It drops gen 1,168 of 676,218 (0.17%), expdate-synth 28 of 16,652 (0.17%),
+# expdate-real none. None would refuse to train.
+VISIBLE_MIN: float | None = 3.0
