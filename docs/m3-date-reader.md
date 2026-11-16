@@ -8,8 +8,11 @@ models fetched and hashed; llama.cpp built; the CPU check passed on
 `cn1`, its AMX variant set aside); S2 done 2026-11-13 (the crop
 experiment, job `73956`: pad 0, turning kept by the owner's departure from
 R1); S3 done 2026-11-13 (the crop shards, job `73958`: 698,988 crops in
-8 piles, 4.7 GiB, every record checked). Next: S4. M2b is still in
-progress (S10 next there); every slice here that needs one of M2b's
+8 piles, 4.7 GiB, every record checked); S4 done 2026-11-16 (the store
+text frozen: 232 date boxes and 10 shelf-life phrases; the store's
+piles, job `73965`: 410 crops, owner-only). Next: S5. M2b is still in
+progress (S11 next there: job B `73832` ended 2026-11-14 with nothing
+left for a GPU job); every slice here that needs one of M2b's
 outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
 
@@ -1415,9 +1418,9 @@ was left; the task remakes it.
 to its frozen value, or is listed and settled with the owner. **Commits:**
 `feat: store date text, typed and frozen`, `docs: m3 plan, S4's text`
 
-**Record (2026-11-15, laptop; the cluster part waits).** Done at home,
-where the cluster can't be reached: everything up to the cluster's copy
-and job.
+**Record (2026-11-15, laptop; 2026-11-16, the cluster).** Done at home,
+where the cluster can't be reached, up to the cluster's copy and job;
+those the next day, from campus.
 
 Departures, each the owner's call or forced by M2b's running job:
 
@@ -1519,13 +1522,48 @@ What was found:
   files' boxes match text.json's to 5e-7; 0 files open to others. On the
   sheets every one of the 178 `store` crops stands upright on its print,
   and the 63 `store-val` crops lie as the photos show them.
+- **The cluster (2026-11-16):**
+  - **M2b's job had ended:** job B (`73832`) ran 2026-11-13 09:09 to
+    11-14 05:53 on `cn5` and logged "nothing left that a GPU job could
+    do"; `73906` (A's replacement) and M3's `73946` and `73947` stay
+    held. None of the pull's 14 files is among the 23 modules that M2b's
+    chain and the scripts it starts import (traced through their
+    imports), so the cluster was pulled to `c26e306`, its tree clean.
+  - **text.json:** the cluster held S2's values-only copy, moved to
+    `~/bestbefore-data/backups/` (700, the file 600). The numbered copy
+    was written over `ssh` under umask 077, and its SHA-256 (`52879c53…`)
+    checked before it took the old one's place. The export's manifest
+    hashes alike on both machines. `missing()` passed for the three
+    piles on the login node.
+  - **A task for the job:** `slurm/m3_cpu.sbatch store-crops` (`554a69f`,
+    a commit the slice didn't name) makes the three piles, checks them
+    (`--check`), draws a sheet each inside its own folder, and prints the
+    size and the entries open to others. Submitted by Claude at the
+    owner's word: job **`73965`**, `short`, 4 CPUs, 8 GB, 30 minutes. It
+    waited 25 s (showing `Nodes required for job are DOWN…` meanwhile)
+    and ran 11 s on `cn1` (TotalCPU 8 s; `sacct` sampled no MaxRSS).
+  - **Read back:** `--check` passed on all three (178, 169 and 63, the
+    laptop trial's counts). A separate read-back of every record against
+    text.json (text, class, role, parts from the frozen value, turn,
+    `upright`, each box once) found 0 problems. **All 410 crops are
+    byte-identical to the laptop trial's**, JPEGs and records alike,
+    where generated photos match only about 90% (M2b S9): cutting and
+    PIL's BOX shrink don't drift between the machines. 3.9 MB with the
+    sheets. Folders 700, files 600, 0 entries open to others under the
+    piles, the export and the backup; the run record
+    (`results/runs/…-m3-crops`, counts only) names no photo. Quota
+    197 GB of 950.
+  - **The whole test suite** at `554a69f` on the login node, niced: 953
+    passed, 2 skipped, in 3 minutes. The first try died when the laptop's
+    `ssh` link dropped (`Broken pipe`); run again under `nohup`, it
+    finished.
 
-**Not checked:** the cluster part, which waits for campus: M2b's job,
-pulling the code, copying the numbered text.json owner-only, the CPU job
-for the three piles, and reading them back there; the whole test suite (only the
-files touching this code: 77 tests); a shelf-life phrase with no `due`
-keyword boxed beside it and missed by OCR, on a photo that has a keyword
-elsewhere.
+**Not checked:** which 2 tests skipped on the cluster (the run didn't
+print reasons; several tests skip by marker without the laptop's fonts,
+builds or samples), and the suite on the laptop; the cluster's sheets by eye (its crops are
+byte-identical to the laptop's, whose sheets were looked at); a
+shelf-life phrase with no `due` keyword boxed beside it and missed by
+OCR, on a photo that has a keyword elsewhere.
 
 ### S5. The CRNN · laptop, then a CPU smoke
 
