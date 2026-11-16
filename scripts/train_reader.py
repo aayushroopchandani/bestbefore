@@ -162,8 +162,11 @@ def main() -> None:
         report = e.args[0]
         runs.update_run(run_dir, failed={"non_finite": report}, seconds=round(time.perf_counter() - t0, 1))
         print(f"FAILED: not finite at step {report['step']}: loss {report['loss']}, grad norm {report['grad_norm']}; "
-              f"weights not finite {report['weights_not_finite']}; {report['infinite_losses']} infinite crop losses; "
-              f"crops at fault: {report['at_fault']}", flush=True)
+              f"weights not finite {report['weights_not_finite']}; gradients not finite in "
+              f"{len(report['grads_not_finite'])} tensors, first {report['grads_not_finite'][:3]}, last "
+              f"{report['grads_not_finite'][-3:]}; replays {report['replays']}; "
+              f"{report['infinite_losses']} infinite crop losses; crops at fault: {report['at_fault']}; "
+              f"batch and weights kept in {report['kept']}", flush=True)
         sys.exit(1)
     summary["seconds"] = round(time.perf_counter() - t0, 1)
     runs.update_run(run_dir, result=summary)

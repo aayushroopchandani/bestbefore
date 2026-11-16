@@ -101,12 +101,43 @@ class NonFinite(RuntimeError):
     update would spoil the weights. `args[0]` holds diagnose()'s report."""
 
 
+def _replay(model: torch.nn.Module, batch: dict, device: str, amp: bool, onednn: bool) -> dict:
+    """The same step again from the same weights (no update): its loss and
+    the layers whose gradients aren't finite, with bf16 on or off and
+    oneDNN (PyTorch's Intel kernels for convolutions and LSTMs) on or off."""
+    was = model.amp
+    model.amp = amp
+    try:
+        with torch.backends.mkldnn.flags(enabled=onednn):
+            model.zero_grad(set_to_none=True)
+            loss, _ = ctc_loss(model, batch, device, torch.nn.CTCLoss(blank=0, reduction="mean", zero_infinity=True))
+            loss.backward()
+    finally:
+        model.amp = was
+    return {"loss": loss.item(), "grads_not_finite": [n for n, p in model.named_parameters()
+                                                     if p.grad is not None and not torch.isfinite(p.grad).all()]}
+
+
 def diagnose(model: torch.nn.Module, batch: dict, device: str, step: int, loss: float, norm: float,
-             names: list[str]) -> dict:
-    """What a non-finite step's batch held, crop by crop: its pile and record
-    number, width, text length, own frames, whether its input and logits are
-    finite, and its own CTC loss (no infinities zeroed). The crops at fault
-    are those whose input, logits or loss isn't finite."""
+             names: list[str], keep: Path | None = None) -> dict:
+    """What a non-finite step held. First, from the step itself, the layers
+    whose gradients aren't finite (a NaN flows down the network, so the
+    highest of them is where it began). Then the same step replayed from the
+    same weights: twice as run (is it reproducible?), in float32, and with
+    oneDNN off. The batch and weights go to `keep` for study offline. Last,
+    crop by crop: pile and record number, width, text length, own frames,
+    whether its input and logits are finite, and its own CTC loss (no
+    infinities zeroed); the crops at fault are those whose input, logits or
+    loss isn't finite, or, when every loss is finite, whose own loss alone
+    gives non-finite gradients."""
+    layers = [n for n, p in model.named_parameters() if p.grad is not None and not torch.isfinite(p.grad).all()]
+    if keep is not None:
+        torch.save({"step": step, "batch": {k: v.cpu() for k, v in batch.items()}, "model": model.state_dict(),
+                    "amp": model.amp}, keep)
+    replays = {"as_run_1": _replay(model, batch, device, model.amp, True),
+               "as_run_2": _replay(model, batch, device, model.amp, True),
+               "float32": _replay(model, batch, device, False, True),
+               "no_onednn": _replay(model, batch, device, model.amp, False)}
     x = batch["x"].to(device)
     with torch.no_grad():
         logits = model(x).float()
@@ -136,6 +167,7 @@ def diagnose(model: torch.nn.Module, batch: dict, device: str, step: int, loss: 
             if not math.isfinite(g):
                 at_fault.append(c | {"own_grad_norm": g})
     return {"step": step, "loss": loss, "grad_norm": norm, "weights_not_finite": weights,
+            "grads_not_finite": layers, "replays": replays, "kept": str(keep) if keep else None,
             "padded_width": int(x.shape[3]), "crops": len(crops), "at_fault": at_fault,
             "infinite_losses": sum(math.isinf(c["loss"]) for c in crops)}
 
@@ -207,7 +239,8 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
             norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip))
             value = loss.item()
             if not (math.isfinite(value) and math.isfinite(norm)):
-                raise NonFinite(diagnose(model, batch, device, step + 1, value, norm, mix.names))
+                raise NonFinite(diagnose(model, batch, device, step + 1, value, norm, mix.names,
+                                         keep=checkpoints / "non-finite-step.pt"))
             optimiser.step()
             schedule.step()
             t2 = time.perf_counter()

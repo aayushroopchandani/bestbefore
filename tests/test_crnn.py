@@ -237,3 +237,19 @@ def test_a_non_finite_step_stops_the_run_and_names_its_crops(fake_piles, tmp_pat
 def m3_piles():
     from bestbefore import m3
     return m3.ARMS["all"]
+
+
+def test_a_non_finite_report_names_layers_replays_and_keeps_the_step(fake_piles, tmp_path, monkeypatch):
+    model = _Spoiled(bad_call=3, gradient=True)
+    monkeypatch.setattr(train, "build", lambda cfg: model)
+    cfg = train.Config(arm="all", budget=80, batch=8, evals=2, workers=0, device="cpu", amp=False,
+                       visible_min=0.0, log_every=2, eval_batch=16)
+    with pytest.raises(train.NonFinite) as stopped:
+        train.run(cfg, fake_piles, tmp_path / "ckpt", say=lambda s: None)
+    report = stopped.value.args[0]
+    # the NaN enters at the logits, above the head: it flows down through every layer
+    assert {"head.weight", "rnn.weight_hh_l0", "cnn.0.weight"} <= set(report["grads_not_finite"])
+    assert set(report["replays"]) == {"as_run_1", "as_run_2", "float32", "no_onednn"}
+    assert all(r["grads_not_finite"] for r in report["replays"].values())    # this fault is in every replay
+    kept = torch.load(report["kept"], weights_only=True)
+    assert kept["step"] == 3 and len(kept["batch"]["lengths"]) == 8 and "head.weight" in kept["model"]

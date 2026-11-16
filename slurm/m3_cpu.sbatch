@@ -40,6 +40,9 @@
 #         will run it (16 workers, batch 256: the GPU estimate's base) with
 #         LMDB's random reads; then 2,000 steps at batch 64 on `all`, the
 #         ONNX export and its parity (scripts/train_reader.py --smoke).
+#         `smoke-crnn fp32` trains in float32 throughout. A step whose loss or
+#         gradients aren't finite stops the smoke with a report in its run.json
+#         and the batch and weights in its checkpoint folder (owner-only).
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #   cd ~/bestbefore && sbatch --cpus-per-task=4 --mem=8G --time=00:30:00 slurm/m3_cpu.sbatch store-crops
@@ -132,7 +135,10 @@ smoke-crnn)
     umask 077                   # it reads the store pile; its checkpoint has seen store crops
     THREADS=$((SLURM_CPUS_PER_TASK - 2))        # 2 loader workers beside the model
     AMP=""
-    if ! $MAIN -c "
+    if [ "${2:-}" = fp32 ]; then
+        echo "float32 asked for: the smoke trains without bf16"
+        AMP=--no-amp
+    elif ! $MAIN -c "
 import torch
 c, x = torch.nn.Conv2d(3, 8, 3), torch.randn(2, 3, 48, 64)
 with torch.autocast('cpu', dtype=torch.bfloat16):
