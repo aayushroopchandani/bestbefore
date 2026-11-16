@@ -23,8 +23,14 @@
 #         checked against the sources (--check), a sheet of 64 crops a pile,
 #         and the size on disk. ExpDate and generated crops only: the store
 #         pile waits for S4's text. Sized from crops-smoke.
+#   store-crops
+#         S4: the store's piles (store, store-train, store-val) beside S3's,
+#         from the export's text.json (the frozen store text): made, checked
+#         (--check), a sheet each inside its own folder, the size, and the
+#         count of entries open to others (0: they show the retailer's photos).
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
+#   cd ~/bestbefore && sbatch --cpus-per-task=4 --mem=8G --time=00:30:00 slurm/m3_cpu.sbatch store-crops
 #SBATCH --job-name=m3-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -87,8 +93,21 @@ crops)
     done
     du -sh "$ROOT"/*
     ;;
+store-crops)
+    umask 077                   # store crops: the owner's only (CLAUDE.md)
+    ROOT="$($MAIN -c 'from bestbefore.config import generated_dir; print(generated_dir())')/m3/crops"
+    STORE=(--pile store --pile store-train --pile store-val)
+    $MAIN scripts/make_crops.py "${STORE[@]}" --workers "$SLURM_CPUS_PER_TASK"
+    $MAIN scripts/make_crops.py --check "${STORE[@]}" --workers "$SLURM_CPUS_PER_TASK"
+    for pile in store store-train store-val; do
+        $MAIN scripts/crop_sheet.py --pile "$pile"
+    done
+    du -sh "$ROOT"/store*
+    open=$(find "$ROOT"/store* -perm /077 | wc -l)
+    echo "entries open to others in the store's piles: $open"
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops"
+    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops"
     exit 2
     ;;
 esac
