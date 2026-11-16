@@ -28,9 +28,23 @@
 #         from the export's text.json (the frozen store text): made, checked
 #         (--check), a sheet each inside its own folder, the size, and the
 #         count of entries open to others (0: they show the retailer's photos).
+#   visibility
+#         S5: how visible each crop's print is (reader/data.py), measured on
+#         every pile, the store's owner-only, beside each LMDB
+#         (scripts/visibility.py measure); then the sheets sorted by it for
+#         gen, expdate-real and expdate-synth, which the cut-off is chosen on.
+#   smoke-crnn
+#         S5: the CRNN's smoke, once m3.VISIBLE_MIN is set. First a bf16
+#         convolution on this CPU (if it fails, the smoke trains in float32,
+#         said here); then the training stream timed alone, as the GPU job
+#         will run it (16 workers, batch 256: the GPU estimate's base) with
+#         LMDB's random reads; then 2,000 steps at batch 64 on `all`, the
+#         ONNX export and its parity (scripts/train_reader.py --smoke).
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #   cd ~/bestbefore && sbatch --cpus-per-task=4 --mem=8G --time=00:30:00 slurm/m3_cpu.sbatch store-crops
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=16G --time=00:30:00 slurm/m3_cpu.sbatch visibility
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=02:00:00 slurm/m3_cpu.sbatch smoke-crnn
 #SBATCH --job-name=m3-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -106,8 +120,33 @@ store-crops)
     open=$(find "$ROOT"/store* -perm /077 | wc -l)
     echo "entries open to others in the store's piles: $open"
     ;;
+visibility)
+    umask 077                   # the store's piles are measured too: owner-only (CLAUDE.md)
+    ROOT="$($MAIN -c 'from bestbefore.config import generated_dir; print(generated_dir())')/m3/crops"
+    $MAIN scripts/visibility.py measure --pile all --workers "$SLURM_CPUS_PER_TASK"
+    $MAIN scripts/visibility.py sheets --pile gen --pile expdate-real --pile expdate-synth
+    open=$(find "$ROOT"/store* -perm /077 | wc -l)
+    echo "entries open to others in the store's piles: $open"
+    ;;
+smoke-crnn)
+    umask 077                   # it reads the store pile; its checkpoint has seen store crops
+    THREADS=$((SLURM_CPUS_PER_TASK - 2))        # 2 loader workers beside the model
+    AMP=""
+    if ! $MAIN -c "
+import torch
+c, x = torch.nn.Conv2d(3, 8, 3), torch.randn(2, 3, 48, 64)
+with torch.autocast('cpu', dtype=torch.bfloat16):
+    y = c(x)
+y.float().sum().backward()
+print('a bf16 convolution runs on this cpu:', y.dtype)"; then
+        echo "a bf16 convolution failed on this node: the smoke trains in float32"
+        AMP=--no-amp
+    fi
+    $MAIN scripts/train_reader.py --loader-only --arm all --workers 16 --batch 256 --batches 300
+    $MAIN scripts/train_reader.py --reader crnn --arm all --seed 0 --smoke --device cpu --threads "$THREADS" $AMP
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops"
+    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn"
     exit 2
     ;;
 esac

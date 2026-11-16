@@ -105,3 +105,76 @@ def fake_slurm(tmp_path, monkeypatch):
         path.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return bin_dir
+
+
+# --- M3 S5: made-up crop piles --------------------------------------------------------
+
+def render_crop(text: str, rng, size: int = 28, back=(200, 200, 200), ink=None, noise: float = 4.0):
+    """A made-up stored crop: `text` printed on a plain surface with
+    Gaussian noise, cut as scripts/make_crops.py cuts (crops.cut: half the
+    box's short side of margin). Returns the crop (PIL) and the box in it."""
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+    from bestbefore.reader import crops
+    font = ImageFont.load_default(size=size)
+    ink = ink or tuple(max(0, c - 150) for c in back)
+    l, t, r, b = font.getbbox(text)
+    w, h = r - l + 2 * size, b - t + 2 * size
+    image = Image.new("RGB", (w, h), back)
+    ImageDraw.Draw(image).text((size - l, size - t), text, font=font, fill=ink)
+    noisy = np.asarray(image).astype(np.float32) + rng.normal(0, noise, (h, w, 3))
+    image = Image.fromarray(np.clip(noisy, 0, 255).astype(np.uint8))
+    return crops.cut(image, (size, size, size + r - l, size + b - t))
+
+
+def fake_text(rng) -> str:
+    d, m, y = int(rng.integers(1, 29)), int(rng.integers(1, 13)), int(rng.integers(24, 32))
+    return [f"{d:02d}/{m:02d}/20{y}", f"{m:02d}/20{y}", f"EXP {d:02d}.{m:02d}.{y}", f"L{d}{m}{y}"][int(rng.integers(4))]
+
+
+# pile: (crops, designs or None). The store's designs hold 8, 3 and 1 crops.
+FAKE_PILES = {"expdate-real": 10, "expdate-synth": 10, "gen": 20, "store": 12, "real-val": 8, "synth-val-v2": 8}
+FAKE_DESIGNS = ("d01",) * 8 + ("d02",) * 3 + ("d03",)
+
+
+def write_measure(folder: Path, values) -> None:
+    """A pile's visibility as scripts/visibility.py writes it, with given values."""
+    import json
+    import numpy as np
+    from bestbefore.reader import data, piles
+    np.save(folder / data.VISIBILITY_FILE, np.asarray(values, np.float32))
+    (folder / data.VISIBILITY_RECORD).write_text(json.dumps({
+        "count": len(values), "code": data.visibility_code(),
+        "manifest_sha256": piles.sha256_file(folder / "manifest.json")}))
+
+
+def build_fake_piles(root: Path, seed: int = 0, sizes: dict | None = None) -> Path:
+    """Made-up piles under root (each an LMDB with a manifest), training
+    piles measured by data.visibility; returns root."""
+    import json
+    import numpy as np
+    from bestbefore.reader import data, piles, shards
+    rng = np.random.default_rng(seed)
+    for pile, n in (sizes or FAKE_PILES).items():
+        folder = root / pile
+        values = []
+        with shards.Writer(folder, pile) as w:
+            for i in range(n):
+                text = fake_text(rng)
+                crop, box = render_crop(text, rng)
+                tags = {"upright": 0}
+                if pile == "store":
+                    tags |= {"design": FAKE_DESIGNS[i % len(FAKE_DESIGNS)], "part": "train", "tag": "clean"}
+                w.add(jpeg=shards.encode_jpeg(crop), box=box, text=text, cls="date", source=f"{pile}#{i}",
+                      tags=tags)
+                values.append(data.visibility(np.asarray(crop), box))
+        (folder / "manifest.json").write_text(json.dumps({"pile": pile, "count": n}))
+        if pile in piles.VISIBILITY_FILTERED:
+            write_measure(folder, values)
+    return root
+
+
+@pytest.fixture(scope="session")
+def fake_piles(tmp_path_factory) -> Path:
+    """Made-up crop piles for M3's training stream, shared by a session's tests (read only)."""
+    return build_fake_piles(tmp_path_factory.mktemp("piles"))

@@ -100,7 +100,26 @@ def crop_recipe_used(decisions: dict) -> dict:
 # --- S3, the crop shards ------------------------------------------------------------
 
 # The loader's jitter (docs/m3-date-reader.md, "Augmentation"): each box
-# edge moved by up to this share of the box's height round the recipe's
-# padding. Crops are cut once with crops.MARGIN of the box's short side, so
-# make_crops.py refuses to cut if the recipe's padding plus this won't fit.
+# edge moved by up to this share of the box's short side (its print height)
+# round the recipe's padding. Crops are cut once with crops.MARGIN of the
+# box's short side, so make_crops.py refuses to cut if the recipe's padding
+# plus this won't fit.
 EDGE_JITTER = 0.10
+
+
+# --- S5, the training stream ----------------------------------------------------------
+
+SEEDS = (0, 1, 2)
+# Each sample picks a pile by weight, normalised over its arm's piles, then
+# a record; the store pile picks a pack design first (docs/m3-date-reader.md, "The mix").
+PILE_WEIGHT = {"expdate-real": 10.0, "expdate-synth": 20.0, "gen": 69.5, "store": 0.5}
+ARMS = {"exp": ("expdate-real", "expdate-synth"),
+        "exp+gen": ("expdate-real", "expdate-synth", "gen"),
+        "all": ("expdate-real", "expdate-synth", "gen", "store")}
+BUDGET = {"crnn": 10_000_000, "ppocrv6": 2_000_000}     # crops seen per run
+EVALS = 20                     # checkpoints scored per run (every 5%), decision 17
+CHECKPOINT_SUITES = ("real-val", "synth-val-v2")        # decision 17: pooled exact text
+# S5: training crops (piles.VISIBILITY_FILTERED) whose visibility
+# (reader/data.py) is under this are never drawn. Set by eye on sheets
+# sorted by the measure, before any training; None refuses to train.
+VISIBLE_MIN: float | None = None

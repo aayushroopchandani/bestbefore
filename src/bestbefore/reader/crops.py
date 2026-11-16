@@ -95,3 +95,20 @@ def cut(image: Image.Image, box: XYXY, turn: int = 0, margin: float = MARGIN,
         inside = turn_box(inside, crop.size, q)
         crop = crop.transpose(_TRANSPOSE[q])
     return crop, inside
+
+
+def view_rect(box: XYXY, size: tuple[int, int], pad: float,
+              jitter: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)) -> tuple[int, int, int, int]:
+    """What a reader sees of a stored crop of `size` (S5): its box grown by
+    `pad` x the box's short side on every side (S2's padding), each edge
+    then moved outwards by its jitter (left, top, right, bottom) x the
+    short side (negative: inwards), rounded out to whole pixels and clipped
+    to the crop. The crop's margin (MARGIN) holds any pad + jitter up to
+    it; m3.EDGE_JITTER is the loader's largest jitter."""
+    x1, y1, x2, y2 = box
+    s = min(x2 - x1, y2 - y1)
+    jl, jt, jr, jb = jitter
+    w, h = size
+    left, top = max(0, math.floor(x1 - (pad + jl) * s)), max(0, math.floor(y1 - (pad + jt) * s))
+    right, bottom = min(w, math.ceil(x2 + (pad + jr) * s)), min(h, math.ceil(y2 + (pad + jb) * s))
+    return left, top, max(right, left + 1), max(bottom, top + 1)
