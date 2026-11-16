@@ -1917,10 +1917,21 @@ expdate-real by eye beyond its bands (it loses nothing at 3.0).
 - `m3.py`'s rules, `scripts/m3_chain.py`, `slurm/m3_chain.sh`,
   `pull_cluster_results.sh` (m3 runs: JSON and logs, never crops or
   weights). gen-v2's pile, if S3 left it.
+- **A CRNN run stopped by a non-finite step is run again once in float32**
+  (added 2026-11-16, after S5, at the owner's word). bf16 gave NaN on
+  `cn1`'s CPU, in oneDNN's convolution weight gradient (S5's record).
+  The H100 uses CUDA's kernels, not oneDNN, so bf16 stays, but it is
+  untested there. If the stop fires, the chain doesn't wait days for
+  another GPU job. It reads `failed.non_finite` in the run's record and
+  starts the same arm and seed with `--no-amp`; both runs stay recorded,
+  and the second names the first. A float32 run that stops too is left for
+  the owner, never retried. The cost is at most one run's time (about
+  0.6 h).
 - **Tests:** `tests/test_m3_rules.py` on made-up records (a tie goes to
   `all`, then the faster reader; the band at least 3; R4 per set; R5 and
   R6 on made-up rows); readiness waits for each crop pile, the store text
-  and the code.
+  and the code. A run stopped as non-finite is retried once with
+  `--no-amp`, and a stopped float32 run is not retried.
 - Dry runs on both machines; owner: `scontrol release <job>`.
 
 **Commits:** `feat: m3 chain and its decision rules`
