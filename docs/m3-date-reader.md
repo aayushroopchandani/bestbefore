@@ -1623,6 +1623,78 @@ frozen text, its export and the store job again (see Later).
 `feat: ctc greedy decoder and character error rate`,
 `feat: ctc readers exported to onnx, one pre and post`
 
+**Added 2026-11-16, before S5's code** (the owner's go-ahead; no rule,
+weight, budget, setting or share of the plan changes):
+
+- **Four feat commits, not three**, in this order:
+  `feat: ctc greedy decoder and character error rate` (with
+  `reader/charset.py`, which the decoder needs);
+  `feat: ctc readers exported to onnx, one pre and post`
+  (`reader/onnx_run.py`: the one preprocessing, width batches, the
+  post-processing, ONNX Runtime sessions at the job's threads, the export
+  of any CTC module); `feat: crnn reader with ctc, the training stream`
+  (the CRNN, `reader/data.py` with the visibility measure,
+  `reader/train.py`, the scripts, the CPU job's tasks); then, after the
+  measure's job and the sheets, `feat: m3 visible cut-off, set by eye on
+  the sheets` (`m3.VISIBLE_MIN` alone). The cluster runs committed code,
+  so the measure is committed before the cut-off can be chosen, and the
+  cut-off can't ride in the CRNN's commit. Docs commits as every slice's:
+  this one, the record, CLAUDE.md's cluster facts.
+- **New files:** `scripts/visibility.py` (the measure over piles, the
+  sheets sorted by it, the cut-off's check), `tests/test_onnx_run.py`. The
+  measure is kept beside each pile's `data.mdb`: `visibility.npy`, one
+  float a record in key order, and `visibility.json` (the measure's code
+  hash, the pile's manifest hash, its quantiles).
+- **Measured on every pile**, the suites and the store's included (those
+  under umask 077), so S10 can split any suite by it; only
+  `piles.VISIBILITY_FILTERED` is filtered.
+- **The measure**, prototyped on the laptop's gen-sample (1,701 crops) and
+  real-val (187) and chosen on their sheets: the crop shrunk so its box's
+  short side is 12 px (strokes about 1.5 px, the scale print is read at);
+  the box's colours, slow shading taken out, projected on their main
+  colour axis, so print that differs in colour only counts; their 5th to
+  95th percentile spread, over 3.29 times the crop's own noise at that
+  scale (a robust Laplacian estimate over the whole crop, at least 1 grey
+  level). White noise alone scores about 1. On gen-sample: its two
+  pure-noise crops 2.6 and 2.7 (their noise is blotchy, which the estimate
+  undercounts), noisy but readable print 3.3, faint readable 4 to 9, clear
+  print 8 to 70; real-val's lowest is 5.3, and readable. Rejected on their
+  sheets: a median background (bold print scores as empty), noise taken
+  from the crop's margins (neighbouring lines and band edges make clear
+  crops score as empty), noise after smoothing worked out on paper
+  (blotchy noise breaks it). **Its known limit:** ink nearly the colour of
+  a textured surface (gold, olive) scores 5 to 6, above some faint
+  readable print, so such crops mostly stay in.
+- **The smoke also times the loader alone** (16 workers, no model: the
+  GPU job's loader) and LMDB's random reads, and trains in bf16 on the CPU
+  as the GPU run will, falling back to fp32, said in its log, if a bf16
+  convolution fails on the node (llama.cpp's AMX path died on `cn1`, S1).
+
+Choices the plan left open, fixed now:
+
+- Case folds to upper (`Jan`, `JAN` → `JAN`); a character outside the 46
+  becomes `?`, in training targets and in every score (`charset.fold`).
+  S2's `crop_scores.fold` stays as it was (it scored dates, not text).
+- A decoded character's probability is the highest over the frames it
+  spans.
+- A batch's right padding is 0 after normalising (mid-grey, as PP-OCR
+  pads), and the frames over it are neither trained on (CTC's input
+  lengths are each crop's own frames) nor decoded. A crop resizes to at
+  least 8 px wide.
+- The edge jitter is ±10% of the box's **short side** (its print height;
+  `m3.EDGE_JITTER`'s margin check assumes it).
+- Augmentation's open numbers: the turn about the box's centre, the
+  margin filling the corners; brightness a gain of 0.7 to 1.3, contrast
+  0.7 to 1.3 about the mean, a colour cast a gain of 0.9 to 1.1 a channel.
+- Width buckets: each loader worker draws 16 batches' worth of crops,
+  sorts them by width, cuts them into batches and hands them out in random
+  order.
+- Checkpoints are scored in fp32, as ONNX runs, with the orientation step
+  (decision 14) on exact text after folding.
+- The laptop gets `onnx 1.23.2` (the `read` extra's pin; the exporter needs
+  it) and `ml_dtypes 0.6.0`, nothing else moved; its onnxruntime stays at
+  1.31.0 (1.31.1 pinned), as baseline A runs on it.
+
 ### S6. PP-OCRv6: the route and the fine-tune · laptop, then CPU checks
 
 - `reader/ppocr.py`; the route check in `m3_cpu.sbatch ppocr-route` (the
