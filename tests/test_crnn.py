@@ -1,5 +1,7 @@
 """The CRNN, its training loop and its export (reader/crnn.py, reader/train.py,
 docs/m3-date-reader.md "CRNN + CTC", S5)."""
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -175,3 +177,63 @@ def test_the_loader_alone_is_timed(load_script, monkeypatch, tmp_path, fake_pile
     (run,) = (tmp_path / "runs").iterdir()
     loader = json.loads((run / "run.json").read_text())["loader"]
     assert loader["crops_per_second"] > 0 and loader["lmdb"]["pile"] == "gen" and loader["lmdb"]["reads"] == 5000
+
+
+class _NanGradient(torch.autograd.Function):
+    """Passes logits through; sends a NaN gradient back into one crop."""
+
+    @staticmethod
+    def forward(ctx, logits, crop):
+        ctx.crop = crop
+        return logits.view_as(logits)
+
+    @staticmethod
+    def backward(ctx, grad):
+        grad = grad.clone()
+        if grad[ctx.crop].abs().sum() > 0:      # only where this crop's own loss reaches it
+            grad[ctx.crop] = float("nan")
+        return grad, None
+
+
+class _Spoiled(crnn.CRNN):
+    """A narrow CRNN that goes wrong on its `bad_call`-th forward: NaN logits,
+    or (gradient=True) a NaN gradient into crop 1 with finite logits."""
+
+    def __init__(self, bad_call: int, gradient: bool):
+        super().__init__(channels=(8, 16, 24, 32), hidden=16)
+        self.calls, self.bad_call, self.gradient = 0, bad_call, gradient
+
+    def forward(self, x):
+        out = super().forward(x)
+        if self.training:
+            self.calls += 1
+        if self.training and self.calls >= self.bad_call:
+            if self.gradient:
+                return _NanGradient.apply(out, 1)
+            out = out.clone()
+            out[2] = float("nan")
+        return out
+
+
+@pytest.mark.parametrize("gradient", [False, True])
+def test_a_non_finite_step_stops_the_run_and_names_its_crops(fake_piles, tmp_path, monkeypatch, gradient):
+    model = _Spoiled(bad_call=3, gradient=gradient)
+    monkeypatch.setattr(train, "build", lambda cfg: model)
+    cfg = train.Config(arm="all", budget=80, batch=8, evals=2, workers=0, device="cpu", amp=False,
+                       visible_min=0.0, log_every=2, eval_batch=16)
+    with pytest.raises(train.NonFinite) as stopped:
+        train.run(cfg, fake_piles, tmp_path / "ckpt", say=lambda s: None)
+    report = stopped.value.args[0]
+    assert report["step"] == 3 and report["weights_not_finite"] == []      # stopped before the update
+    (crop,) = report["at_fault"]
+    assert crop["pile"] in m3_piles() and crop["record"] >= 0 and crop["width"] > 0
+    if gradient:
+        assert math.isfinite(report["loss"]) and not math.isfinite(report["grad_norm"])
+        assert crop["logits_finite"] and not math.isfinite(crop["own_grad_norm"])
+    else:
+        assert not crop["logits_finite"] and math.isnan(report["loss"])
+
+
+def m3_piles():
+    from bestbefore import m3
+    return m3.ARMS["all"]

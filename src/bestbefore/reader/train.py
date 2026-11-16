@@ -96,6 +96,50 @@ def ctc_loss(model: torch.nn.Module, batch: dict, device: str, loss_fn) -> tuple
     return loss, infeasible
 
 
+class NonFinite(RuntimeError):
+    """A step's loss or gradients weren't finite: the run stops before the
+    update would spoil the weights. `args[0]` holds diagnose()'s report."""
+
+
+def diagnose(model: torch.nn.Module, batch: dict, device: str, step: int, loss: float, norm: float,
+             names: list[str]) -> dict:
+    """What a non-finite step's batch held, crop by crop: its pile and record
+    number, width, text length, own frames, whether its input and logits are
+    finite, and its own CTC loss (no infinities zeroed). The crops at fault
+    are those whose input, logits or loss isn't finite."""
+    x = batch["x"].to(device)
+    with torch.no_grad():
+        logits = model(x).float()
+        log_probs = logits.log_softmax(-1).permute(1, 0, 2)
+        frames = onnx_run.own_frames(logits.shape[1], batch["widths"].tolist(), x.shape[3])
+        each = torch.nn.CTCLoss(blank=0, reduction="none", zero_infinity=False)(
+            log_probs, batch["targets"].to(device), torch.tensor(frames, device=device), batch["lengths"].to(device))
+    records = batch["records"].tolist() if "records" in batch else [None] * len(frames)
+    crops = [{"pile": names[p], "record": r, "width": w, "length": n, "frames": f,
+              "input_finite": bool(torch.isfinite(x[i]).all()), "logits_finite": bool(torch.isfinite(logits[i]).all()),
+              "loss": float(each[i])}
+             for i, (p, r, w, n, f) in enumerate(zip(batch["piles"].tolist(), records, batch["widths"].tolist(),
+                                                     batch["lengths"].tolist(), frames))]
+    weights = [n for n, p in model.named_parameters() if not torch.isfinite(p).all()]
+    at_fault = [c for c in crops if not (c["input_finite"] and c["logits_finite"]) or math.isnan(c["loss"])]
+    if not at_fault and not weights:
+        # the losses are finite, the gradients aren't: each crop's own loss back-propagated
+        # through the same batch (BatchNorm keeps the batch's statistics), as the step did
+        logits = model(x).float()
+        each = torch.nn.CTCLoss(blank=0, reduction="none", zero_infinity=True)(
+            logits.log_softmax(-1).permute(1, 0, 2), batch["targets"].to(device),
+            torch.tensor(frames, device=device), batch["lengths"].to(device))
+        for i, c in enumerate(crops):
+            model.zero_grad(set_to_none=True)
+            each[i].backward(retain_graph=i + 1 < len(crops))
+            g = math.sqrt(sum(float(p.grad.float().pow(2).sum()) for p in model.parameters() if p.grad is not None))
+            if not math.isfinite(g):
+                at_fault.append(c | {"own_grad_norm": g})
+    return {"step": step, "loss": loss, "grad_norm": norm, "weights_not_finite": weights,
+            "padded_width": int(x.shape[3]), "crops": len(crops), "at_fault": at_fault,
+            "infinite_losses": sum(math.isinf(c["loss"]) for c in crops)}
+
+
 def evaluate(model: torch.nn.Module, suites: dict[str, tuple[list, list[str]]], device: str, batch: int) -> dict:
     """Exact text and mean character error rate per suite, read as scoring
     reads (fp32, the orientation step); `pooled`: exact over all crops."""
@@ -152,47 +196,53 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
         f"draws {mix.describe()}")
     batches = iter(loader)
     model.train()
-    for step in range(cfg.steps):
-        t0 = time.perf_counter()
-        batch = next(batches)
-        t1 = time.perf_counter()
-        loss, infeasible = ctc_loss(model, batch, device, loss_fn)
-        optimiser.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip)
-        optimiser.step()
-        schedule.step()
-        value = loss.item()
-        t2 = time.perf_counter()
-        log.wait_seconds += t1 - t0
-        log.train_seconds += t2 - t1
-        log.crops += len(batch["lengths"])
-        log.infeasible += infeasible
-        log.drawn.update(mix.names[p] for p in batch["piles"].tolist())
-        window.append(value)
-        if (step + 1) % cfg.log_every == 0 or step + 1 == cfg.steps:
-            seconds = log.train_seconds + log.wait_seconds
-            entry = {"step": step + 1, "loss": float(np.mean(window)), "lr": schedule.get_last_lr()[0],
-                     "crops_per_second": log.crops / seconds, "waiting": log.wait_seconds / seconds}
-            log.history.append(entry)
-            say(f"step {step + 1}: loss {entry['loss']:.3f}, lr {entry['lr']:.2e}, "
-                f"{entry['crops_per_second']:.0f} crops/s, {entry['waiting']:.0%} waiting for the loader")
-            window = []
-        if (step + 1) % every == 0 or step + 1 == cfg.steps:
-            t3 = time.perf_counter()
-            scores = evaluate(model, suites, device, cfg.eval_batch)
-            log.eval_seconds += time.perf_counter() - t3
-            scores["step"] = step + 1
-            log.evals.append(scores)
-            say(f"eval at step {step + 1}: exact pooled {scores['pooled']:.3f}, "
-                + ", ".join(f"{n} {scores[n]['exact']:.3f} (cer {scores[n]['cer']:.3f})" for n in cfg.suites))
-            if best is None or scores["pooled"] > best["pooled"]:
-                best = scores
-                save(model, cfg, step + 1, scores, checkpoints / "best.pt")
-            model.train()
-    save(model, cfg, cfg.steps, log.evals[-1], checkpoints / "last.pt")
-    if cfg.workers:
-        del batches, loader             # the workers end
+    try:
+        for step in range(cfg.steps):
+            t0 = time.perf_counter()
+            batch = next(batches)
+            t1 = time.perf_counter()
+            loss, infeasible = ctc_loss(model, batch, device, loss_fn)
+            optimiser.zero_grad(set_to_none=True)
+            loss.backward()
+            norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip))
+            value = loss.item()
+            if not (math.isfinite(value) and math.isfinite(norm)):
+                raise NonFinite(diagnose(model, batch, device, step + 1, value, norm, mix.names))
+            optimiser.step()
+            schedule.step()
+            t2 = time.perf_counter()
+            log.wait_seconds += t1 - t0
+            log.train_seconds += t2 - t1
+            log.crops += len(batch["lengths"])
+            log.infeasible += infeasible
+            log.drawn.update(mix.names[p] for p in batch["piles"].tolist())
+            window.append(value)
+            if (step + 1) % cfg.log_every == 0 or step + 1 == cfg.steps:
+                seconds = log.train_seconds + log.wait_seconds
+                entry = {"step": step + 1, "loss": float(np.mean(window)), "lr": schedule.get_last_lr()[0],
+                         "crops_per_second": log.crops / seconds, "waiting": log.wait_seconds / seconds}
+                log.history.append(entry)
+                say(f"step {step + 1}: loss {entry['loss']:.3f}, lr {entry['lr']:.2e}, "
+                    f"{entry['crops_per_second']:.0f} crops/s, {entry['waiting']:.0%} waiting for the loader")
+                window = []
+            if (step + 1) % every == 0 or step + 1 == cfg.steps:
+                t3 = time.perf_counter()
+                scores = evaluate(model, suites, device, cfg.eval_batch)
+                log.eval_seconds += time.perf_counter() - t3
+                scores["step"] = step + 1
+                log.evals.append(scores)
+                say(f"eval at step {step + 1}: exact pooled {scores['pooled']:.3f}, "
+                    + ", ".join(f"{n} {scores[n]['exact']:.3f} (cer {scores[n]['cer']:.3f})" for n in cfg.suites))
+                if best is None or scores["pooled"] > best["pooled"]:
+                    best = scores
+                    save(model, cfg, step + 1, scores, checkpoints / "best.pt")
+                model.train()
+        save(model, cfg, cfg.steps, log.evals[-1], checkpoints / "last.pt")
+    finally:
+        # the loader's last references (persistent workers keep its iterator): its workers
+        # end, or its in-process stream closes its LMDB files (LMDB refuses a file already
+        # open in the process, as a stopped run's would be)
+        del batches, loader
     return {"steps": cfg.steps, "crops": log.crops, "infeasible": log.infeasible,
             "crops_per_second": log.crops / (log.train_seconds + log.wait_seconds),
             "crops_per_second_training": log.crops / log.train_seconds,

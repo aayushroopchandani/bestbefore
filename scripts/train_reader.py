@@ -156,7 +156,15 @@ def main() -> None:
     runs.update_run(run_dir, checkpoints=str(checkpoints))
     print(f"run {run_dir}", flush=True)
     t0 = time.perf_counter()
-    summary = train.run(cfg, root, checkpoints, say=lambda s: print(s, flush=True))
+    try:
+        summary = train.run(cfg, root, checkpoints, say=lambda s: print(s, flush=True))
+    except train.NonFinite as e:
+        report = e.args[0]
+        runs.update_run(run_dir, failed={"non_finite": report}, seconds=round(time.perf_counter() - t0, 1))
+        print(f"FAILED: not finite at step {report['step']}: loss {report['loss']}, grad norm {report['grad_norm']}; "
+              f"weights not finite {report['weights_not_finite']}; {report['infinite_losses']} infinite crop losses; "
+              f"crops at fault: {report['at_fault']}", flush=True)
+        sys.exit(1)
     summary["seconds"] = round(time.perf_counter() - t0, 1)
     runs.update_run(run_dir, result=summary)
     threads = cfg.threads or torch.get_num_threads()

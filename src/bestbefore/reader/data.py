@@ -289,12 +289,17 @@ def width_buckets(views: list[np.ndarray], batch: int, rng: np.random.Generator)
 POOL = 16               # batches' worth of views a worker sorts by width at a time
 
 
-def collate(views: list[np.ndarray], texts: list[str], piles_drawn: list[int]) -> dict[str, torch.Tensor]:
+def collate(views: list[np.ndarray], texts: list[str], piles_drawn: list[int],
+            records: list[int] | None = None) -> dict[str, torch.Tensor]:
+    """A batch: the images, each crop's own width, the texts as classes
+    (concatenated) with their lengths, and each crop's pile (its number in
+    the mix) and record number, so a bad step can name its crops."""
     x, widths = onnx_run.preprocess(views)
     encoded = [charset.encode(t) for t in texts]
     return {"x": torch.from_numpy(x), "widths": torch.tensor(widths),
             "targets": torch.tensor([k for e in encoded for k in e], dtype=torch.long),
-            "lengths": torch.tensor([len(e) for e in encoded]), "piles": torch.tensor(piles_drawn)}
+            "lengths": torch.tensor([len(e) for e in encoded]), "piles": torch.tensor(piles_drawn),
+            "records": torch.tensor(records if records is not None else [-1] * len(views))}
 
 
 class Stream(torch.utils.data.IterableDataset):
@@ -316,12 +321,13 @@ class Stream(torch.utils.data.IterableDataset):
                 drawn = [self._sample(rng, envs) for _ in range(self.batch * self.pool)]
                 views = [d[0] for d in drawn]
                 for b in width_buckets(views, self.batch, rng):
-                    yield collate([views[i] for i in b], [drawn[i][1] for i in b], [drawn[i][2] for i in b])
+                    yield collate([views[i] for i in b], [drawn[i][1] for i in b], [drawn[i][2] for i in b],
+                                  [drawn[i][3] for i in b])
         finally:
             for env in envs.values():
                 env.close()
 
-    def _sample(self, rng: np.random.Generator, envs: dict) -> tuple[np.ndarray, str, int]:
+    def _sample(self, rng: np.random.Generator, envs: dict) -> tuple[np.ndarray, str, int, int]:
         p, i = self.mix.draw(rng)
         name = self.mix.names[p]
         if name not in envs:
@@ -330,7 +336,7 @@ class Stream(torch.utils.data.IterableDataset):
         rgb = np.asarray(crop.image())
         view = (augmented_view(rgb, crop.box, self.pad, rng, self.augment) if self.augment
                 else plain_view(rgb, crop.box, self.pad))
-        return view, crop.text, p
+        return view, crop.text, p, i
 
 
 def worker_init(_: int) -> None:
