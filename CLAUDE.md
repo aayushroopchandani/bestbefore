@@ -333,7 +333,9 @@ this repo.
   the JPEG quality drawn after the noise), never a block's size. A photo
   that drifts draws its later blocks its own way, so a crash can be met on
   the cluster only: S9's first job crashed on a photo the laptop draws
-  fine. A gen-v2 worker peaked at 1.8 GB there, twice the laptop's
+  fine. Cutting crops doesn't drift: the store's 410 crops (`make_crops.py`,
+  PIL's BOX shrink, JPEG 95) matched the laptop's byte for byte, JPEGs
+  and records (M3 S4, job 73965). A gen-v2 worker peaked at 1.8 GB there, twice the laptop's
   measure, so its 24 workers asked 48 GB. A busy 24-CPU job ran the generator about 1.6 times slower per
   photo than the laptop's cores. The laptop (8 GB of RAM) can't train at
   1,280 px: a batch of 16 keeps 13 to 55 GiB for the backward pass
@@ -363,7 +365,10 @@ this repo.
   freeze --exclude-editable > constraints.txt`, then `pip install -c
   constraints.txt ...` (`--dry-run --report r.json` first shows what would
   come); M3 S1 added 28 packages that way and changed none. The whole test
-  suite (737 tests) takes 3 to 5 minutes on the login node, niced.
+  suite (737 tests) takes 3 to 5 minutes on the login node, niced (955 in
+  3 minutes, M3 S4). An `ssh` link can drop mid-run and take the run
+  with it (`Broken pipe`, M3 S4): start anything longer than a minute
+  under `nohup`, its output to an owner-only file.
 - **Building code** on the login node: it is shared, so a few threads
   (`-j 4`), niced. The default compiler is OpenHPC's gcc 12.3.0 (module
   `gnu12`, loaded), with the system's binutils 2.30 (RHEL 8.8), which
