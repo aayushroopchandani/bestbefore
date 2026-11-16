@@ -1563,7 +1563,12 @@ print reasons; several tests skip by marker without the laptop's fonts,
 builds or samples), and the suite on the laptop; the cluster's sheets by eye (its crops are
 byte-identical to the laptop's, whose sheets were looked at); a
 shelf-life phrase with no `due` keyword boxed beside it and missed by
-OCR, on a photo that has a keyword elsewhere.
+OCR, on a photo that has a keyword elsewhere. **Left on purpose:** every
+photo whose expiry depends on its phrase (the 9 derived) has it boxed and
+checked, so a missed one could only be on a photo that prints its expiry
+too, and would cost the reader one training example of a phrase (it has
+9), never a value or a score. Finding one means a new version of the
+frozen text, its export and the store job again (see Later).
 
 ### S5. The CRNN · laptop, then a CPU smoke
 
@@ -1862,3 +1867,7 @@ results/           m3_reader.md (committed; runs/ is not)
   and blur. S5's visibility filter handles it for M3's crops.
 - **Piles copied to a node's own disk** for training, if reading LMDB on
   Lustre holds S5's loader back (S5 measures the loader's pace first).
+- **More shelf-life phrases from the store**, if S8 or S12 shows the
+  reader failing on them: every training photo read whole for a phrase
+  S4's search could miss (none beside a boxed `due` keyword, missed by
+  OCR), as a new version of the store text (S4's record).
