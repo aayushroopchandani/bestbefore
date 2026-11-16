@@ -10,7 +10,10 @@ experiment, job `73956`: pad 0, turning kept by the owner's departure from
 R1); S3 done 2026-11-13 (the crop shards, job `73958`: 698,988 crops in
 8 piles, 4.7 GiB, every record checked); S4 done 2026-11-16 (the store
 text frozen: 232 date boxes and 10 shelf-life phrases; the store's
-piles, job `73965`: 410 crops, owner-only). Next: S5. M2b is still in
+piles, job `73965`: 410 crops, owner-only); S5 done 2026-11-16 (the
+CTC decoder and CER, ONNX parity 1.0, the visibility cut-off 3.0 set by
+eye on job `73966`'s sheets, the CRNN smoke passed in float32, job
+`73971`; bf16 training on the CPU gives NaN, oneDNN's). Next: S6. M2b is still in
 progress (S11 next there: job B `73832` ended 2026-11-14 with nothing
 left for a GPU job); every slice here that needs one of M2b's
 outputs says so. The learnings
@@ -1695,6 +1698,174 @@ Choices the plan left open, fixed now:
   it) and `ml_dtypes 0.6.0`, nothing else moved; its onnxruntime stays at
   1.31.0 (1.31.1 pinned), as baseline A runs on it.
 
+**Record (2026-11-16, laptop and cluster).** Jobs `73966` (the measure),
+`73967`, `73969`, `73970` and `73971` (smokes), `73968` (a one-off
+diagnosis). Commits beyond the departures above, each the owner's word:
+`fix: m3 training stops at a non-finite step and names its crops` and
+`fix: m3's non-finite report names the layers, replays the step and keeps
+it`, both forced by the smoke (below); `smoke-crnn fp32`, a second argument
+to the CPU task.
+
+Before the code:
+
+- **The cluster:** reachable from campus; at 15:34 `squeue --me` showed
+  M3's `73946`, `73947` and M2b's `73906` held, nothing running, so no
+  M2b chain could be touched; its tree clean at `554a69f`. Every pull's
+  diff was read first: M3 files, `m3.py`, `reader/crops.py`,
+  `m3_cpu.sbatch` and docs; none is imported by `m2b_chain.py`, `m2b.py`
+  or `chain.py`.
+- **The laptop's venv** lacked `onnx`, which torch 2.11's legacy exporter
+  (`dynamo=False`) imports; its default exporter needs `onnxscript`, which
+  neither machine has. `onnx 1.23.2` and `ml_dtypes 0.6.0` were installed
+  against a freeze of everything else, which didn't move.
+- **An ONNX trap, found before the code:** `torch.onnx.export` puts the
+  module it is given back in that module's own mode, and a wrapper made
+  fresh starts in training mode, so exporting `Wrapper(model)` left the
+  CRNN's BatchNorm on batch statistics (its convolutions' output off by as
+  much as itself; first read as ONNX disagreeing). `onnx_run.export` puts
+  the wrapper in eval mode; a test keeps BatchNorm statistics unlike any
+  batch's so the trap would show.
+
+The decoder and CER (walked through with the owner):
+
+- Tests first (`test_ctc.py`, `test_reader_metrics.py`,
+  `test_reader_charset.py`: 40), then the code; the owner predicted before
+  each ran. `0 0 - 8 / / 2 - 2 0 2 7 7`: the owner said `08/2027`, the
+  decoder `08/22027` (the blank between the two 2s keeps both). CER of an
+  empty read and of a read said twice: the owner said 1 and 8/7, right.
+
+The CRNN and the stream:
+
+- **The CRNN** as the plan's table: 4,552,048 parameters; 80 frames for a
+  320 px crop. On the laptop (Apple M2, 4 threads, float32) a training step
+  at batch 16 and 256 px took about 0.5 s. bf16 runs on both CPUs; the
+  laptop's is far slower than its float32, so nothing bf16 is timed there.
+- **A narrow CRNN overfits 50 crops** (`(8, 16, 24, 32)`, hidden 32, lr
+  5e-3): 377 steps, 39 s, 50 of 50 read exactly. CTC's plateau is plain in
+  it: about 150 steps at a loss near 2.7, the reader answering mostly
+  blanks, before it breaks.
+- **Tests:** the mix's shares (40,000 draws within a point of the weights;
+  `exp` a third and two thirds), seeding per run and worker, the store's
+  design first (8, 3 and 1 crops each drawn a third of the time),
+  padding and jitter inside the margin (300 random boxes, S2's three pads),
+  width buckets under half the random batches' padding, a crop under the
+  cut-off never drawn, the measure on made-up crops, ONNX parity for the
+  CRNN, a run end to end, the smoke script end to end.
+
+The visibility measure:
+
+- **Prototyped on the laptop's gen-sample and real-val** (6 variants, each
+  on a sheet of its lowest crops, rejected as the departures say). The one
+  kept, on made-up print under noise of 6 grey levels: contrast 96, 48,
+  24, 12, 6, 0 gives 15.0, 8.6, 4.9, 2.9, 1.9, 1.2; red on green of one
+  luma 12.8, its grey copy 2.1. 0.5 ms a crop on the laptop.
+- **A second known limit, from the sheets:** heavy defocus. Blur takes the
+  noise away with the print's detail, so a smudge where print was still
+  stands out (gen-sample #743, `15.03.2030` blurred past reading: 16.3).
+- **Job `73966`** (`short`, `cn1`, 24 CPUs, 16 GB; started at once): 1 min
+  49 s for 699,398 crops in 11 piles; gen's 676,218 in 72 s. The store's
+  three piles measured owner-only, 0 entries open.
+
+  | Pile | Crops | 0.5% | 1% | 2% | 5% | 50% | Lowest |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | gen | 676,218 | 3.79 | 4.47 | 5.38 | 7.14 | 22.8 | 0.00 |
+  | expdate-synth | 16,652 | 4.86 | 5.97 | 7.22 | 9.40 | 30.5 | 0.00 |
+  | expdate-real | 1,057 | 7.08 | 7.81 | 9.11 | 11.97 | 39.5 | 5.32 |
+  | real-val | 187 | 6.32 | 8.85 | 11.14 | 13.75 | 39.9 | 5.34 |
+  | synth-val | 2,100 | 5.91 | 6.46 | 7.73 | 10.37 | 32.8 | 2.42 |
+  | synth-val-v2 | 2,400 | 6.47 | 7.69 | 9.13 | 11.73 | 33.5 | 3.91 |
+  | store | 178 | 7.60 | 7.77 | 8.09 | 9.14 | 29.4 | |
+  | store-val | 63 | 9.17 | 9.39 | 9.90 | 10.69 | 33.2 | |
+
+  Real print never scores low: no real-val or ExpDate real crop under 5.3,
+  no store crop under about 7.5.
+- **The cut-off, 3.0, set by eye with the owner** on gen's, expdate-synth's
+  and expdate-real's band sheets, then the check at 3.0 (on the login node,
+  niced, seconds): gen drops 1,168 (0.17%), expdate-synth 28 (0.17%, its
+  black photos), expdate-real none. Under 2 every crop is empty (black,
+  flat, noise); 2 to 3 nearly all; 3 to 3.5 about half readable once
+  stretched; above, readable outnumbers empty. Of 64 dropped gen crops
+  about 55 are empty, the rest print seen only stretched through heavy
+  noise; of the kept just above (3.0 to 5.5) about one in six is empty, of
+  the kinds the measure can't see. At 2.5 gen would lose 429 (0.06%), at
+  3.5 2,424 (0.36%), as mixed. Sheets in
+  `$GENERATED_DIR/m3/crops/sheets/visibility/` (and the laptop's
+  `data/generated/m3/crops-cluster/`).
+- **S3's "4 or 5 of 64" isn't borne out:** the measure drops 0.17% of gen,
+  not about 7%. Whether the eye overcounted or the rest are the textured
+  and blurred kinds the measure can't see wasn't looked into.
+
+The smoke (`m3_cpu.sbatch smoke-crnn`, `short`, 24 CPUs, 32 GB, 2 h; each
+started at once):
+
+- **bf16 training on the CPU gave NaN, three times out of three, all on
+  `cn1`.** `73967` (`2b3223b`): the loss NaN in the first 50 steps;
+  cancelled at 2 min 43 s. The job's pre-check (one bf16 convolution,
+  forward and backward) had passed, so its float32 fallback never came in.
+  `73969` (`2b5e25a`, with the new stop): stopped at step 202, the loss
+  finite (3.19), the gradient norm NaN, no crop's loss infinite. `73970`
+  (`679849a`, with the replays): stopped at step 34. Replayed in that
+  process from the same weights, the step gave a NaN in **one tensor's
+  gradient, `cnn.18.weight`** (block 4's second convolution, 384 to 384),
+  twice alike; in float32 and with oneDNN off (bf16 kept, PyTorch's own
+  kernels) every gradient was finite. In the step itself all 39 gradients
+  were NaN only because clipping multiplies each by a factor worked out
+  from the NaN norm. So the fault is **oneDNN's bf16 convolution weight
+  gradient**, not the data or the code. It isn't fixed to the batch: the
+  kept step (batch and weights, owner-only in its checkpoint folder)
+  replayed in a fresh process on the login node `mn1`, same CPU model, 22
+  threads, gave finite gradients at every ISA oneDNN was allowed (default,
+  `AVX512_CORE_AMX`, `AVX512_CORE_BF16`, `AVX512_CORE`). The process's own
+  history decides it (oneDNN reusing memory after many batch shapes,
+  likely), or the node; not looked into further.
+- **The one-off diagnosis** (`73968`, `cn1`, 4 min 12 s;
+  `~/bestbefore-data/env/m3-s5/diag/`, not in the repo): the `all` stream
+  read in-process, 150 steps each in float32, bf16, and bf16 with oneDNN
+  kept off AMX (`ONEDNN_MAX_CPU_ISA=AVX512_CORE_BF16`): all finite, the
+  three runs' losses alike to 4 digits (3.1538, 3.1539, 3.1541 at step
+  150); on one batch bf16's loss matched float32's (21.7147, 21.7146).
+- **The stop it led to (both fixes):** a step whose loss or gradient norm
+  isn't finite now stops the run before its update, and the run's record
+  gets the step, the layers whose gradients aren't finite, the four
+  replays, each crop's pile, record number, width, text length and own
+  loss, and the batch and weights kept beside the checkpoints. Ten
+  million crops of NaN can't happen silently in the GPU chain.
+- **The float32 smoke passed** (`73971`, `smoke-crnn fp32`, `cn4`, 18 min 2
+  s): the loss fell from 8.06 (steps 1 to 50) to 1.26 (1,951 to 2,000);
+  CTC's plateau held about 3.0 to 3.3 from step 100 to 600 with no exact
+  read until step 1,000, then broke (pooled exact 0.07 at 1,100, 0.43 at
+  1,300). The best checkpoint, step 1,800: pooled 0.581, real-val 0.813,
+  synth-val-v2 0.563; at step 2,000 real-val 0.818 (CER 0.056),
+  synth-val-v2 0.558 (CER 0.172). **ONNX parity 1.0**: 374 of 374 reads
+  (real-val, both turns) alike, 8.4 ms a read through ONNX Runtime on 22
+  threads. 161 crops a second training (fp32, 22 threads, 2 workers),
+  waiting for the loader 1% of the time; 20 evaluations took 231 s
+  (11.5 s each for 5,174 reads). Drawn: expdate-real 12,716 (9.9%),
+  expdate-synth 25,536 (20.0%), gen 89,117 (69.6%), store 631 (0.49%), as
+  weighted. 302 of 128,000 crops (0.24%) had a text longer than their
+  frames could hold: CTC can't lay them out, and their loss is dropped.
+- **The loader alone** (16 workers, batch 256, the GPU job's): on `cn4`,
+  which had never read gen, 14,094 crops a second (881 a worker), LMDB's
+  random reads 0.82 ms each, a decode 0.14 ms; on `cn1`, gen in its file
+  cache from earlier jobs, 20,984 to 22,203 (0.02 ms a read), and 15,508
+  (0.68 ms) three and a half hours after its last read. 4.9 KB a record.
+  **For the GPU estimate:** at 14,000 crops a second, a run's 10 million
+  crops need at least 12 minutes of loading; the GPU's own pace is
+  unmeasured, so whether the loader limits it waits for the first GPU
+  run.
+- **Each commit's tests alone**, in a worktree with absolute `.env` paths,
+  nothing skipped: `1ae2da8` 88, `272f1de` 105, `a15ee90` the whole suite
+  (1,050), `2b3223b` 78, `2b5e25a` 80; **the whole suite at `679849a`,
+  S5's last code: 1,053 passed** in 3 min 43 s on the laptop.
+
+**Not checked:** bf16 on a CPU node other than `cn1`, and float32 on
+`cn1`, as whole runs; which oneDNN kernel or state gives the NaN; bf16 on
+the GPU (CUDA kernels, not oneDNN: the plan's bf16 stays for the GPU,
+guarded by the stop); the loader on a GPU node (`cn5`, `cn6`); the
+whole suite on the cluster at S5's last commit; `sacct`'s TotalCPU and
+MaxRSS, which these jobs left empty; the measure's sheets for
+expdate-real by eye beyond its bands (it loses nothing at 3.0).
+
 ### S6. PP-OCRv6: the route and the fine-tune · laptop, then CPU checks
 
 - `reader/ppocr.py`; the route check in `m3_cpu.sbatch ppocr-route` (the
@@ -1835,7 +2006,7 @@ and S13 wait for M2b's detector.
 |---|---|
 | S2 crop experiment, about 7,000 reads | minutes |
 | S3 crops, about 700,000 | under an hour (took 6 minutes) |
-| S5 visibility measure, about 694,000 training crops | minutes |
+| S5 visibility measure, about 694,000 training crops | minutes (every pile's 699,398: 1 min 49 s) |
 | S7 VLM set (25,000 images) and GGUF checks | under an hour |
 | S11 VLM validation through GGUF, 199 photos | about 30 minutes |
 | S12 end to end, 199 photos, every reader | under an hour |
@@ -1938,7 +2109,11 @@ results/           m3_reader.md (committed; runs/ is not)
   S3 found blocks that pass the check and are then buried by camera noise
   and blur. S5's visibility filter handles it for M3's crops.
 - **Piles copied to a node's own disk** for training, if reading LMDB on
-  Lustre holds S5's loader back (S5 measures the loader's pace first).
+  Lustre holds S5's loader back (S5: 14,000 crops a second cold on
+  `cn4`, 16 workers: no need yet).
+- **bf16 training on CPU nodes**: which oneDNN kernel or process state
+  gives S5's NaN (`cnn.18.weight`'s gradient on `cn1`), only if CPU training
+  in bf16 is ever wanted; meanwhile CPU smokes run as `smoke-crnn fp32`.
 - **More shelf-life phrases from the store**, if S8 or S12 shows the
   reader failing on them: every training photo read whole for a phrase
   S4's search could miss (none beside a boxed `due` keyword, missed by
