@@ -249,6 +249,21 @@ this repo.
   `rapidocr_onnxruntime.utils.SessionOptions` before building it
   (`scripts/crop_experiment.py`). PaddleOCR 3.7 runs on Paddle, not ONNX
   Runtime, and takes `cpu_threads` (M3 S2).
+- **Don't train in bf16 on the CPU nodes** (M3 S5): the CRNN's bf16
+  training gave NaN 3 times in 3 on `cn1` (jobs 73967, 73969, 73970, at
+  steps under 50, 202 and 34), though a one-convolution bf16 check
+  passed. Replayed in the job's process, the NaN was in one
+  convolution's weight gradient, gone in float32 and with oneDNN off
+  (`torch.backends.mkldnn.flags(enabled=False)`); the same step replayed
+  in a fresh process on `mn1` was finite at every oneDNN ISA, AMX
+  included. Float32 passed (job 73971, `cn4`): CPU smokes run as
+  `m3_cpu.sbatch smoke-crnn fp32`. The CRNN (4.55M parameters) trains
+  at 161 crops a second there in float32 on 22 threads; ONNX Runtime
+  reads a crop in 8.4 ms on 22 threads. `torch.onnx.export` in torch
+  2.11 needs the `onnx` package even with `dynamo=False`, and puts the
+  module it is given back in that module's own mode: export a wrapper
+  already in eval mode (a fresh one is in training mode, which leaves
+  BatchNorm on batch statistics).
 - **OCR on CPU nodes is slower than the laptop** (M3 S2, job 73956, `cn1`,
   8 CPUs): a crop took 27 to 40 ms through RapidOCR's recogniser, 87 to
   102 ms through PP-OCRv6 small's and 1.2 to 1.5 s through PaddleOCR's
@@ -284,7 +299,13 @@ this repo.
   (2026-11-13, M3 S3, job 73958). **LMDB on Lustre** works with one
   writer and `lock=False` (no lock file): 4.5 GB written in 5 minutes,
   read back by 24 processes in 5 s. Each record fills whole 4 KiB pages,
-  so 5.2 KB crops take 7 KB (16 KiB pages on the laptop: 60% more).
+  so 5.2 KB crops take 7 KB (16 KiB pages on the laptop: 60% more). A
+  training loader of 16 workers reading LMDB at random (M3 S5, batch
+  256, decoding and augmenting) gave 14,094 crops a second on `cn4`,
+  never having read the pile (0.82 ms a random record read), and
+  about 21,000 on `cn1` with the pile in its file cache (0.02 ms); a
+  JPEG crop decodes in 0.14 ms. A measure over every one of 699,398
+  crops took 1 min 49 s on 24 CPUs (job 73966).
 - **Internet:** the login node has it; **compute nodes don't** (`curl`
   exits with code 7, "couldn't connect"). Download data, pip packages and
   model weights on the login node before submitting a job. From there,
