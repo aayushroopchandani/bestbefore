@@ -31,8 +31,10 @@ all of stage 2, S12's GPU work included; S11 done 2026-11-17 (the noise
 band 0.1414, R1 passes, R2 `ft`; fine-tuning far above the control;
 gen-v2 helps its own strata only); S12 done 2026-11-17 (R3 `n1280-ft`:
 `n1280-ft-s0` at 0.1641; `m1280-ft` better on every seed, inside a band too
-coarse to separate fine-tuned arms; kept by the rule, owner's call). Next:
-S13.
+coarse to separate fine-tuned arms; kept by the rule, owner's call); S13
+done 2026-11-17 (R4 adopts nothing, nor does the what-if at 0.03: the M2b
+detector is `n1280-ft-s0` alone at 0.1641; on the laptop's CPU `n` takes
+175 ms a photo, `m` 4.7 times that). Next: S14.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -3371,6 +3373,136 @@ threshold or share changes, and none will after a number is seen):
   tests, as S11 and S12); `docs: m2b inference add-ons`
   (`experiments/m2b-inference` and this record).
 
+**Done 2026-11-17.** The plan's note `722938b`; the code `c46bc1f` (our
+AP, `score_suite.py --sets`), `927b4f4` (R4), `e38ae84` (`ensemble.py`,
+`scripts/m2b_inference.py`, the job script, the pin), three fixes found
+while measuring (`4f1e220`, `6ddb9ce`, `58a2ed0`, below) and `b022ad5`
+(the tables); then `experiments/m2b-inference` and this record. 1,091
+tests pass, none skipped (1,070 before: 21 new), and each code commit
+passes alone, in a worktree with the laptop's data and nothing skipped
+(1,075, 1,078, 1,087, 1,088, 1,088, 1,088 and 1,091; 3 min 39 s to 3 min
+57 s each). What was found:
+
+- **The read-only checks** (2026-11-17 22:15): M3's `73946` and `73947`
+  held, nothing of ours running; the cluster's checkout `679849a`, clean;
+  `m2b-decisions.json` still `66b8411c…` and equal to `m2b.decisions()` on
+  the laptop; all 75 M2b JSON records and all 29 `results.csv` on the
+  cluster byte for byte the laptop's, the newest checkpoint folder from
+  2026-11-14. The three `n1280-ft` `last.pt` match S12's SHA-256.
+  S11's and S12's commits were already on GitHub (`94ef9e2`), though the
+  session's brief said not.
+- **ensemble-boxes 1.0.9**, as the note says: read before installing (its
+  WBF is plain numpy, no alias numpy 2 removed), tested in a throwaway venv
+  with numpy 2.4.6, then added to the laptop's venv by the constraints
+  method; `pip freeze` before and after differs by the four packages only.
+- **The cluster** (the owner's OK): `94ef9e2..e38ae84` pushed to GitHub;
+  the cluster pulled `679849a` to `e38ae84` after the diff showed no M3
+  code changed (only `docs/m3-date-reader.md`; M3's code imports `m2b` in
+  `reader/piles.py` alone, and S11 to S13 only add to it), with M3's jobs
+  held. Job **`73981`** (`short`, `cn4`, 24 CPUs, 16 GB): 22:34:38 to
+  22:41:05, `COMPLETED`, 3,960 passes on real-val in 5.1 minutes (54 ms a
+  pass at 1,280 px, 79 at 1,536), TotalCPU 34 minutes, `sacct`'s sampled
+  MaxRSS 0.86 GB. Its run folder (`run.json`, `passes.json.gz`, ExpDate's
+  boxes) copied back into `results/runs/`, its log into `slurm/logs/`.
+  The commits after `e38ae84` are on the laptop only, not pushed.
+- **Weights**, `weights/last.pt` only (57 MB), into
+  `data/checkpoints/m2b/<run>/weights/`: all four match their SHA-256
+  (`m2b.last_pt`). No mosaic or other file was copied.
+- **The device check passes**: `n1280-ft-s0` on v1-val on the laptop's CPU
+  (`score_suite.py --sets v1-val --out <run>/device-check-cpu`, 30 s) finds
+  what the GPU did, count for count, tag by tag (60/63 dates, 29/29
+  expiries, 63/63 boxed at any confidence; Ultralytics' mAP 0.9514 both).
+  Its own F2 threshold is 0.1665 against the GPU's 0.1641, which stays the
+  run's; the GPU's `suite-m2b.json` is byte for byte as before.
+- **The AP check passes**: our AP on real-val is within 0.0005 of
+  Ultralytics' mAP for each of the three seeds (0.9949, 0.9949, 0.9944
+  against 0.9950, 0.9949, 0.9939). Given the same matched boxes ours is
+  Ultralytics' `ap_per_class` exactly (500 random curves, and a test), so
+  the two differ only by the matching and `rect`. On v1-val ours runs 0.8
+  to 1.5 points higher (seed 0: 0.9596 against 0.9514), more than 0.01 for
+  seeds 1 and 2; not the check's set, and why wasn't looked into beyond
+  that (63 dates, two ways of matching). R4 compares ours with ours.
+- **R4, as written, adopts nothing**: on top of the detector alone, the
+  ensemble gains 0.0141 on v1-val, rotation 0.0143 and 1,536 px 0.0256,
+  against a band of 0.1414. **The M2b detector is `n1280-ft-s0` alone, at
+  `threshold_store` 0.1641.** **The what-if (0.03) adopts nothing
+  either**: 1,536 px is 0.0044 short, about a quarter of one date, so
+  nothing goes to Later from it. Every add-on passes the real-val guard
+  (rotation and 1,536 px −0.0021, the ensemble +0.0001). `summarise.py`
+  works both walks out again from the record and agrees, and the chain's
+  whole record is unchanged.
+- **The side readings** (`experiments/m2b-inference`): every configuration
+  boxes all 63 dates at some confidence, so the add-ons make the detector
+  surer, not able to see more. At its own F2 threshold the detector alone
+  finds 60/63 with 17 false boxes (precision 0.779), 1,536 px 62/63 with 5
+  (0.925), rotation 63/63 with 14, the ensemble 61/63 with 9 but 27/29
+  expiries (a sideways and a small-print one lost to its higher threshold).
+  On the laptop's CPU the detector alone costs 167 ms a photo, 1,536 px
+  1.6 times that, the ensemble 3.1, rotation 4.1, all three 19.6; no
+  combination beats 1,536 px alone on AP by more than 0.0004.
+- **The timing**: on the laptop's CPU (Apple M2, 7 torch threads, v1-val's
+  34 photos, 1,600 px long), `n1280-ft-s0` takes 175 ms a photo (median),
+  279 at 1,536 px, and `m1280-ft-s0` 819 ms, **4.7 times `n`**. That backs
+  "`n` is the fastest" (S12). The third repeat ran slower for the two
+  larger loads (372 and 989 ms against about 283 and 835 to 890), likely
+  heat; no temperature was read.
+- **Ultralytics sets torch's threads itself** (found here): importing it
+  sets `OMP_NUM_THREADS=1` when unset, and its first prediction on a CPU
+  sets torch to `min(8, CPUs − 1)` threads (`select_device`), whatever
+  `OMP_NUM_THREADS` says: 7 on the laptop, and by that rule 8 in a 24-CPU
+  job on a 48-CPU node. The pass records read the count before that
+  (v1-val's says 1, real-val's 24); the script now reads it after the
+  warm-up and records `torch_threads_used` (`4f1e220`, `58a2ed0`, with a
+  test that fails on the old script). v1-val's record gained
+  `torch_threads_used: 7` and a note (measured the same way after it was
+  made); real-val's stays as it is on both machines, its 8 by the rule, not
+  measured there. By the same rule S10's CPU smoke scored on 8 threads of
+  its 24 (a reading, not checked).
+- **The first fusion loads ensemble-boxes and numba**, about 0.3 s, which
+  had put 9.8 ms a photo on the ensemble's fusion; `score` now loads it
+  first (`6ddb9ce`), and was run again: the same APs and counts, the
+  ensemble's fusion 1.8 ms. The first record (`…-224245-m2b-inference`)
+  stays beside the second (`…-224343-`), which the experiment reads.
+- **Zero-area boxes**: Ultralytics returns a few boxes clipped to nothing
+  at a photo's edge. WBF skips them (67 over v1-val's fusions, 184 over
+  real-val's); a single pass keeps them. Taking them out of the single
+  passes changes no AP to 5 decimals: they are mostly keyword classes, and
+  the few dates among them under 0.01.
+- **Details fixed while writing**: `m2b.last_pt` finds and checks a run's
+  final weights on either machine; a `predict --limit` smoke is named
+  apart so `score` never takes it; `score` refuses pass records missing a
+  pass or a photo; a configuration of one pass is its raw boxes. Eight
+  deliberate bugs, one at a time, were each caught by the new tests (the
+  boxes turned back by the wrong quarter, store boxes written into
+  `results/`, an add-on at the band's edge adopted, a threshold chosen
+  again when nothing is adopted, Ultralytics' older curve end, the what-if
+  band used for R4, false boxes miscounted, the device check's tolerance
+  per count), each file put back and compared by SHA-256.
+- **Privacy**: v2 was never opened, scored or copied; no store photo was
+  read on the cluster; v1-val's per-photo boxes are only in
+  `data/store/runs/<id>-m2b-inference-passes-v1-val/`. Searched: this
+  slice's 1,917 added lines (from `94ef9e2`: the code, tests, the job
+  script, the README, `summarise.py` and this plan's changes) against
+  every v1, v2 and v3 photo name and v3's HEIC names (228; v2's from S4's
+  `designs.json`, no v2 file opened), the 132 stems of 5 characters or
+  more, all 92 design ids and their 123 words of 4 characters or more, the
+  cluster's user name and the owner's email: no name and no id; 6 common
+  words of design ids match, each inside plain English (`black`, `white`,
+  `maxi`, `pack`, `pads`, `training`, in "black block", "white photo",
+  "maximum", "package", "pads photos" and "training").
+- **Not checked:** times on a phone browser or a GPU server (M5's and
+  M3's); torch's threads in job `73981` (the rule's 8, not measured); why
+  the third timing repeat ran slower; why our AP and Ultralytics' differ by
+  more on v1-val than on real-val; `m1280-ft` with add-ons (out of scope);
+  v2 and ExpDate test (S14's); the learnings guide (not written).
+- **For S14:** score `n1280-ft-s0` alone at 0.1641, one pass at 1,280 px,
+  no add-on configuration (S14's "a configuration with add-ons" isn't
+  needed). Its three seeds' weights are on the laptop and checked;
+  every other M2b run S14 scores on v2 (the control's are M2's, already
+  here; `s1280`, `m1280`, `n1280-ft2`, `-ft-gen50k`, `s1280-ft` and
+  `m1280-ft` s1 and s2, 17 runs) needs its `last.pt` hashed read-only on
+  the cluster, recorded, copied and checked first, as S12 and S13 did.
+
 ### S14. Store set v2 and ExpDate test, once · laptop
 
 **Goal:** every planned run scored once on v2, and the M2b detector on
@@ -3576,6 +3708,8 @@ results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed
   fine-tuned arms' own seed spread** (1.0 to 1.5 points on v1-val) for
   choosing between fine-tuned arms, written before it is used. M3's
   results by failure show whether the detector is what holds it back.
+  **(S13)** Its cost: on the laptop's CPU `m1280-ft-s0` takes 819 ms a
+  photo against `n1280-ft-s0`'s 175 (4.7 times; `experiments/m2b-inference`).
 - **The pack's own orientation**: a whole photo turned (EXIF missing)
   against print turned on an upright pack; the gallery can't yet tell
   which the 15 sideways expiries are.
