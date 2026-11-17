@@ -136,7 +136,9 @@ def predict(name: str, device: str | None, limit: int | None = None) -> Path:
             print(f"{k + 1}/{len(samples)} photos, {(time.time() - started) / 60:.1f} min", flush=True)
     data = gzip.compress(json.dumps({"set": name, "passes": boxes}).encode())
     (folder / "passes.json.gz").write_bytes(data)
-    runs.update_run(record, status="finished", boxes=str(folder / "passes.json.gz"),
+    import torch
+    runs.update_run(record, status="finished", torch_threads_used=torch.get_num_threads(),
+                    boxes=str(folder / "passes.json.gz"),
                     boxes_sha256=hashlib.sha256(data).hexdigest(),
                     seconds={name: seconds(values) for name, values in taken.items()},
                     minutes=round((time.time() - started) / 60, 2))
@@ -254,7 +256,8 @@ def score() -> Path:
                               "git_commit": record["git_commit"], "git_dirty": record["git_dirty"],
                               **{k: record["config"][k] for k in ("device", "torch_threads", "processor",
                                                                    "platform", "photos")},
-                              # a record made before b345960 read the threads too early; its note says
+                              # what it predicted with: None in a record made before 4f1e220 that
+                              # no one noted (its config's count was read too early)
                               "torch_threads_used": record.get("torch_threads_used")}
                        for name, (run_dir, record, _) in loaded.items()},
            "wbf": {"iou_thr": ensemble.WBF_IOU, "conf_type": ensemble.WBF_CONF,

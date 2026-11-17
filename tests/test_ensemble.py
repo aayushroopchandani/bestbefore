@@ -239,4 +239,5 @@ def test_torchs_threads_are_read_after_ultralytics_sets_them(inference, monkeypa
     finally:
         torch.set_num_threads(before)
     assert json.loads((record / "run.json").read_text())["config"]["torch_threads"] == 3
+    assert json.loads((record / "run.json").read_text())["torch_threads_used"] == 3
     assert json.loads((timing / "timing.json").read_text())["config"]["torch_threads"] == 3
