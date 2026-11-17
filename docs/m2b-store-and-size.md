@@ -3041,6 +3041,10 @@ found:
   R1 shown again), R3's reading with a band of 14.1 points, and whether
   `73906` is still needed (its chain has nothing left to run, so released
   it would end at once).
+- **`CLAUDE.md`** gained, with the owner's OK: a `git pull` on the cluster
+  reaches a running job's next task; step 2's training speeds and the M2b
+  suite's time on an H100; and the harmless data loader `AssertionError`
+  in a job's log.
 
 ### S12. Step 2 on `s` (and `m` by R1) · cluster, then laptop
 

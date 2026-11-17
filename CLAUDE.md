@@ -208,7 +208,9 @@ this repo.
   yolo11s validating every epoch (M1) and 16.3 GB without, and 30.8 GB for
   yolo11m (M2b step 1; S2 had estimated 44). At 1,280 px one H100 trains
   208 images a second with yolo11n, 181 with yolo11s and 107 with yolo11m
-  (M2, M2b step 1).
+  (M2, M2b step 1), and fine-tunes at 204, 190 and 110 (M2b step 2);
+  freezing yolo11n's backbone doesn't make it faster. The M2b suite (5,070
+  photos, 7 sets) scores a run in about 2 minutes there (12 on 24 CPUs).
 - **Job limits** (checked 2026-10-22): QOS `limit_gpu_qos` is the
   account's only QOS, so it covers **every** job on every partition,
   CPU-only ones and other projects' too: **2 running** and **5 submitted**
@@ -238,6 +240,15 @@ this repo.
   same id and runs its script again from the top (`JobRequeue=1`).
   `squeue --me` lists only our own jobs. While 2 of our jobs run, a waiting
   one shows reason `QOSMaxJobsPerUserLimit` (seen 2026-10-23).
+  **A `git pull` on the cluster reaches a running job's next task**: a
+  chain starts each task as a new process, so M2b's job B, pulled under
+  for M3, ran its tasks at three commits (M2b S11). Pull only what can't
+  change a running job's code, or check the diff between the commits its
+  records name. `Exception ignored in:
+  _MultiProcessingDataLoaderIter.__del__ ... AssertionError: can only test
+  a child process` in a job's log is harmless: a freshly forked loader
+  worker cleaning up its copy of an earlier loader. Python ignores it and
+  the validation goes on (M2b S11).
   `sacct`'s `MaxRSS` is sampled, so it can be far under the true peak
   (4.7 GB reported for 24 workers that each peaked near 0.9 GB, M2 S6),
   and it can overcount too: 27.5 GB for a job limited to 16 GB that wasn't
