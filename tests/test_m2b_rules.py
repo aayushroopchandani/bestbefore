@@ -977,3 +977,58 @@ def test_the_m2b_suite_scores_the_control_first(load_script, step2):
     assert script.CHAIN.pick(ready, 72 * 3600).name == "suite-m2b-n1280-s0"   # scoring first, the control first
     banded = script.CHAIN.states({"noise_store": {"band": 0.03}}, claims, set())
     assert {t.name: s.status for t, s in banded.items()}["suite-m2b-s1280-s0"] == "ready"
+
+
+# --- R4: the inference add-ons (S13) ------------------------------------------------------
+
+def aps(v1, real=0.99):
+    return {"v1-val": v1, "real-val": real}
+
+
+def test_r4_adopts_only_a_gain_above_the_band_without_forgetting_real_val():
+    before = aps(0.90)
+    assert m2b.adopt(before, aps(0.95), band=0.03)
+    assert not m2b.adopt(before, aps(0.92), band=0.03)
+    assert not m2b.adopt(aps(0.5), aps(0.75), band=0.25)          # exactly the band: within it, stays out
+    assert m2b.adopt(aps(0.5), aps(0.7500001), band=0.25)
+    assert not m2b.adopt(before, aps(0.99, real=0.979), band=0.03)  # real-val down by more than NOISE
+    assert m2b.adopt(before, aps(0.99, real=0.98), band=0.03)       # down by exactly NOISE: allowed
+    assert m2b.WHAT_IF_BAND == m2b.NOISE_STORE_MIN == 0.03
+
+
+def test_configurations_are_named_in_r4s_order():
+    assert m2b.ADDONS == ("ensemble", "rotation", "imgsz-1536")
+    assert m2b.configuration([]) == "none"
+    assert m2b.configuration(["imgsz-1536", "ensemble"]) == "ensemble+imgsz-1536"
+    with pytest.raises(ValueError, match="tta"):
+        m2b.configuration(["tta"])
+
+
+def every_configuration(v1: dict, real: float = 0.99) -> dict:
+    """Each of the 8 configurations' APs: v1-val's from `v1`, by name, and
+    the same real-val AP for all."""
+    from itertools import combinations
+    names = [m2b.configuration(c) for k in range(4) for c in combinations(m2b.ADDONS, k)]
+    return {name: aps(v1[name], real) for name in names}
+
+
+def test_r4_walks_the_add_ons_in_order_on_top_of_what_it_kept():
+    v1 = {"none": 0.94, "ensemble": 0.98, "rotation": 0.99, "imgsz-1536": 0.93,
+          "ensemble+rotation": 0.99, "ensemble+imgsz-1536": 0.95, "rotation+imgsz-1536": 0.97,
+          "ensemble+rotation+imgsz-1536": 0.96}
+    scores = every_configuration(v1)
+    walk = m2b.decide_addons(scores, band=0.03)
+    # ensemble: +0.04 kept; rotation then measured on the ensemble, +0.01, out
+    # (though alone it would add 0.05); 1,536 px on the ensemble, -0.03, out.
+    assert walk["adopted"] == ["ensemble"] and walk["configuration"] == "ensemble"
+    assert [(s["against"], s["tried"], s["adopted"]) for s in walk["steps"]] == [
+        ("none", "ensemble", True), ("ensemble", "ensemble+rotation", False),
+        ("ensemble", "ensemble+imgsz-1536", False)]
+    assert walk["steps"][1]["v1_val_gain"] == pytest.approx(0.01)
+    # The band S12 found, 0.1414, keeps nothing from 0.94: 0.06 is all there is to 1.
+    wide = m2b.decide_addons(scores, band=0.1414)
+    assert wide["adopted"] == [] and wide["configuration"] == "none"
+    assert [s["tried"] for s in wide["steps"]] == list(m2b.ADDONS)
+    # An add-on that forgets real-val stays out, however much it adds on v1-val.
+    scores["ensemble"] = aps(0.99, real=0.97)
+    assert m2b.decide_addons(scores, band=0.03)["adopted"] == ["rotation"]

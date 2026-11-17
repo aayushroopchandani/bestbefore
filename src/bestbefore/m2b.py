@@ -548,6 +548,56 @@ def decide_detector(suites: Mapping[str, Sequence[dict | None]], band: float,
     return next(c for c in ok if m2.at_least(v1_val_map50(suites[c]), best - band))
 
 
+# --- R4: the inference add-ons (S13) --------------------------------------------------
+
+ADDONS = ("ensemble", "rotation", "imgsz-1536")    # tried in this order
+R4_SETS = (STORE_SET, "real-val")   # each configuration's AP@0.5 for dates, ours, on these
+# S13's "what if" (the owner's call, fixed before any add-on was measured):
+# R4's own steps with only the band changed, to the plan's floor. It decides
+# nothing; whatever it would keep goes to the plan's Later.
+WHAT_IF_BAND = NOISE_STORE_MIN
+
+
+def adopt(before: Mapping[str, float], after: Mapping[str, float], band: float) -> bool:
+    """R4, on the laptop. An add-on stays if it raises v1-val AP@0.5 for
+    dates (our own, detection_eval.average_precision) by more than `band`
+    over what is adopted so far, and real-val AP doesn't fall by more than
+    NOISE. The threshold is chosen again (F2 on v1-val) for what is
+    adopted. `before` holds what is adopted so far and `after` that with
+    the add-on, each set's AP by name (R4_SETS). "By more than" is strict:
+    a gain of exactly `band` is within it, as R2 and R3 count the edge."""
+    within = m2.at_least(before[STORE_SET] + band, after[STORE_SET])
+    return not within and m2.at_least(after["real-val"], before["real-val"] - NOISE)
+
+
+def configuration(addons: Sequence[str]) -> str:
+    """A configuration's name: its add-ons in ADDONS' order joined by "+",
+    or "none" for the detector alone."""
+    if unknown := set(addons) - set(ADDONS):
+        raise ValueError(f"not an add-on: {', '.join(sorted(unknown))}")
+    return "+".join(a for a in ADDONS if a in addons) or "none"
+
+
+def decide_addons(scores: Mapping[str, Mapping[str, float]], band: float) -> dict:
+    """R4's walk: each add-on in ADDONS' order, measured on top of what is
+    adopted so far and kept by adopt(). `scores` holds each configuration's
+    AP per set, by configuration(). Returns the band, the add-ons kept, the
+    configuration they make, and every step: the configuration tried, the
+    one it was measured against, its gains, and whether it stayed."""
+    adopted: list[str] = []
+    steps = []
+    for addon in ADDONS:
+        against, tried = configuration(adopted), configuration([*adopted, addon])
+        before, after = scores[against], scores[tried]
+        kept = adopt(before, after, band)
+        steps.append({"addon": addon, "against": against, "tried": tried,
+                      "v1_val_gain": after[STORE_SET] - before[STORE_SET],
+                      "real_val_change": after["real-val"] - before["real-val"], "adopted": kept})
+        if kept:
+            adopted.append(addon)
+    return {"band": band, "adopted": adopted, "configuration": configuration(adopted), "steps": steps}
+
+
 def candidate_runs(recipe: str, with_m: bool) -> dict[str, str]:
     """R3's candidates and the arm each stands for: "-ft" is R2's recipe;
     m1280 and m1280-ft take part only once R1 has given m its seeds."""
