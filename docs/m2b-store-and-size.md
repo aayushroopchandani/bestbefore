@@ -3250,6 +3250,10 @@ alone, in a worktree with the laptop's data and nothing skipped
   keeps only v2's one-time pass on the laptop and sends other scoring to
   `short` jobs; the device check's point is the laptop's CPU, as v2 is
   scored there. S13 decides where each runs before its code.
+- **`CLAUDE.md`** gained, with the owner's OK: step 2's GPU memory by size
+  and the frozen backbone's half; and step 1's training speeds by one
+  measure, epochs 2 to the last but one (211, 185 to 186, 108 to 110),
+  with the whole-run figures beside them, where it had mixed the two.
 
 ### S13. Inference add-ons · laptop
 

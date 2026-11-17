@@ -206,11 +206,17 @@ this repo.
   job is plenty for every model here: at batch 16 and 1,280 px,
   Ultralytics' `GPU_mem` peaked at 10.1 GB for yolo11n (M2), 21.1 GB for
   yolo11s validating every epoch (M1) and 16.3 GB without, and 30.8 GB for
-  yolo11m (M2b step 1; S2 had estimated 44). At 1,280 px one H100 trains
-  208 images a second with yolo11n, 181 with yolo11s and 107 with yolo11m
-  (M2, M2b step 1), and fine-tunes at 204, 190 and 110 (M2b step 2);
-  freezing yolo11n's backbone doesn't make it faster. The M2b suite (5,070
-  photos, 7 sets) scores a run in about 2 minutes there (12 on 24 CPUs).
+  yolo11m (M2b step 1; S2 had estimated 44). Fine-tuning takes the same
+  for each size (10.0, 16.2 and 30.7 GB, M2b step 2), and yolo11n with its
+  backbone frozen half, 5.0 GB (M2b S12). At 1,280 px one H100 trains 211
+  images a second with yolo11n, 185 to 186 with yolo11s and 108 to 110
+  with yolo11m (M2, M2b step 1), and fine-tunes at 204, 190 and 110 (M2b
+  step 2): epochs 2 to the last but one, as the results tables measure.
+  Over a whole run, setup and validation included, step 1 is 207 to 210,
+  177 to 184 and 107 to 109 (M2b S12; this line first mixed the two
+  measures). Freezing yolo11n's backbone doesn't make it faster. The M2b
+  suite (5,070 photos, 7 sets) scores a run in about 2 minutes there (12 on
+  24 CPUs).
 - **Job limits** (checked 2026-10-22): QOS `limit_gpu_qos` is the
   account's only QOS, so it covers **every** job on every partition,
   CPU-only ones and other projects' too: **2 running** and **5 submitted**
