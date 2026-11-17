@@ -170,5 +170,36 @@ def best_threshold(m: Matches, beta: float = 1.0) -> tuple[float, float]:
     return float(conf[i]), float(f[i])
 
 
+def average_precision(m: Matches) -> float | None:
+    """AP for dates at the matches' IoU level (AP@0.5 for evaluate's
+    default), our own, so it can score what Ultralytics' validation can't:
+    fused boxes from several models or turns (docs/m2b-store-and-size.md,
+    R4). None for a set with no labelled date.
+
+    The curve is Ultralytics 8.4.177's (`ap_per_class`, `compute_ap`):
+    predictions by falling confidence, precision and recall after each, a
+    last point at the final recall with precision 0, the precision envelope
+    (the best precision at that recall or beyond), then the area under it
+    at 101 recall points (COCO's interpolation). Only the matching differs:
+    ours takes predictions by confidence (match_photo), Ultralytics' by IoU,
+    and its validation pads photos less (rect=True, M2 S3), so the two agree
+    closely, not exactly (S13 checks within 0.01).
+    """
+    if not m.truth_conf:
+        return None
+    if not m.pred_conf:
+        return 0.0
+    order = np.argsort(-np.array(m.pred_conf), kind="stable")
+    tp = np.array(m.pred_tp, bool)[order]
+    tpc, fpc = np.cumsum(tp), np.cumsum(~tp)
+    recall = tpc / len(m.truth_conf)
+    precision = tpc / (tpc + fpc)
+    mrec = np.concatenate(([0.0], recall, [recall[-1]], [1.0]))
+    mpre = np.concatenate(([1.0], precision, [0.0], [0.0]))
+    mpre = np.flip(np.maximum.accumulate(np.flip(mpre)))
+    x = np.linspace(0, 1, 101)
+    return float(np.trapezoid(np.interp(x, mrec, mpre), x))
+
+
 def _ratio(a, b) -> float | None:
     return round(float(a) / float(b), 4) if b else None

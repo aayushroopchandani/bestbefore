@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from bestbefore.detection_eval import (Prediction, best_threshold, evaluate,
-                                       iou, match_photo, pooled, summary)
+import numpy as np
+
+from bestbefore.detection_eval import (Matches, Prediction, average_precision, best_threshold,
+                                       evaluate, iou, match_photo, pooled, summary)
 from bestbefore.samples import Box, Sample
 
 DATE = (0.10, 0.40, 0.30, 0.45)        # a labelled date
@@ -124,3 +126,39 @@ def test_pooled_matches_are_the_sets_scored_together():
     assert summary(pool, 0.5) == summary(together, 0.5)
     with pytest.raises(ValueError, match="IoU"):
         pooled([evaluate([a], preds, 0.5), evaluate([b], preds, 0.3)])
+
+
+# --- Average precision (M2b S13) ---------------------------------------------------
+
+def test_average_precision_tops_out_where_ultralytics_does():
+    # Every date found by the surest boxes: 0.995, Ultralytics' ceiling, as
+    # the curve drops to precision 0 at the last recall point (x = 1.0).
+    dates = [(0.1, y, 0.2, y + 0.05) for y in (0.1, 0.3, 0.5)]
+    s = photo("a", *(("date", d) for d in dates))
+    m = evaluate([s], {"a": [pred(d, 0.9 - k / 10) for k, d in enumerate(dates)]})
+    assert average_precision(m) == pytest.approx(0.995)
+    # A false box surer than every date lowers it; one less sure than all
+    # of them doesn't, as the precision envelope takes the best beyond.
+    worse = evaluate([s], {"a": [pred((0.6, 0.6, 0.7, 0.65), 0.95)] + [pred(d, 0.9) for d in dates]})
+    assert average_precision(worse) < 0.995
+    later = evaluate([s], {"a": [pred(d, 0.9) for d in dates] + [pred((0.6, 0.6, 0.7, 0.65), 0.1)]})
+    assert average_precision(later) == pytest.approx(0.995)
+
+
+def test_average_precision_without_dates_or_boxes():
+    assert average_precision(evaluate([photo("a")], {"a": [pred(DATE, 0.9)]})) is None
+    assert average_precision(evaluate([photo("a", ("date", DATE))], {})) == 0.0
+
+
+def test_average_precision_is_ultralytics_curve_on_the_same_matching():
+    """Given the same matched boxes, ours is Ultralytics' ap_per_class at
+    IoU 0.5 (8.4.177): only the matching may differ between the two."""
+    metrics = pytest.importorskip("ultralytics.utils.metrics")
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        n_pred, n_dates = int(rng.integers(1, 60)), int(rng.integers(1, 40))
+        conf, tp = rng.random(n_pred), rng.random(n_pred) < rng.random()
+        tp[np.cumsum(tp) > n_dates] = False              # no more right boxes than dates
+        m = Matches(0.5, pred_conf=list(conf), pred_tp=list(tp), truth_conf=[0.0] * n_dates)
+        theirs = metrics.ap_per_class(tp[:, None].astype(float), conf, np.zeros(n_pred), np.zeros(n_dates))[5]
+        assert average_precision(m) == pytest.approx(float(theirs[0, 0]), abs=1e-12)

@@ -36,6 +36,15 @@ the store photos and ExpDate test are cut at (S8). It then prints the two
 side by side. The weights are the ones run.json names where that path
 exists (the cluster); otherwise the copy scripts/eval_detector.py reads,
 $CHECKPOINT_DIR/m2/<run>/weights/last.pt (the laptop).
+
+--sets, with --out and the M2b suite only, scores just the sets named
+(M2b S13's device check on the laptop, v1-val's 34 photos rather than the
+suite's 5,070). A threshold whose sets aren't scored is then the run's own
+record's: v1-val alone gives threshold_store, and M2's threshold comes from
+suite-m2b.json. The comparison shows the sets scored.
+
+    python scripts/score_suite.py --milestone m2b --suite m2b --run n1280-ft-s0 --device cpu \
+        --sets v1-val --out results/runs/<id>-m2b-n1280-ft-s0/device-check-cpu
 """
 from __future__ import annotations
 
@@ -70,11 +79,11 @@ def table(suite: dict) -> str:
     return tables.markdown_table(rows, left=("set",))
 
 
-def table_m2b(suite: dict) -> str:
-    """One row per M2b suite set: found at its threshold (threshold_store)
-    and at M2's (IoU 0.5), and the rest at its threshold."""
+def table_m2b(suite: dict, names=m2b.SUITE) -> str:
+    """One row per M2b suite set scored: found at its threshold
+    (threshold_store) and at M2's (IoU 0.5), and the rest at its threshold."""
     rows = []
-    for name in m2b.SUITE:
+    for name in names:
         s = suite[name]
         at5, at_m2, anyc = s["iou0.5"], s["at_threshold_m2"]["iou0.5"], s["any_conf"]
         rows.append({"set": name, "photos": str(at5["photos"]),
@@ -149,9 +158,13 @@ def main() -> None:
     parser.add_argument("--device", default=None, help="e.g. 0 or cpu; default: auto")
     parser.add_argument("--out", type=Path, default=None,
                         help="write suite.json here, not in the run's folder (S8's device check)")
+    parser.add_argument("--sets", nargs="+", choices=m2b.SUITE, default=None,
+                        help="with --out and --suite m2b: score only these sets (M2b S13's device check)")
     args = parser.parse_args()
     if args.suite == "m2b" and args.milestone != "m2b":
         parser.error("--suite m2b scores M2b runs: add --milestone m2b")
+    if args.sets and (args.out is None or args.suite != "m2b"):
+        parser.error("--sets needs --out and --suite m2b: a run's own record is always the whole suite")
 
     file = m2b.SUITE_FILE if args.suite == "m2b" else "suite.json"
     run_dir = (m2b if args.milestone == "m2b" else m2).finished_run(args.run)
@@ -165,7 +178,13 @@ def main() -> None:
     checkpoint = weights(run_dir, record, args.milestone)
     started = time.time()
     score = detector.score_suite_m2b if args.suite == "m2b" else detector.score_suite
-    suite = score(checkpoint, record["config"]["imgsz"], out_dir, args.device)
+    extra = {}
+    if args.sets:
+        own = m2.read_json(run_dir / file)
+        if own is None:
+            raise SystemExit(f"--sets compares with the run's own {file}, and {run_dir.name} has none")
+        extra = {"sets": args.sets, "record": own}
+    suite = score(checkpoint, record["config"]["imgsz"], out_dir, args.device, **extra)
     suite["scored"] = {"device": args.device, **git_state(),
                        "date": datetime.now().isoformat(timespec="seconds"),
                        "minutes": round((time.time() - started) / 60, 1)}
@@ -177,7 +196,7 @@ def main() -> None:
         print(f"M2's threshold {suite['threshold_m2']:.4f} ({suite['threshold_m2_rule']}, "
               f"F2 {suite['f2_at_threshold_m2']})")
     print()
-    print(table_m2b(suite) if args.suite == "m2b" else table(suite))
+    print(table_m2b(suite, suite.get("sets", m2b.SUITE)) if args.suite == "m2b" else table(suite))
     for name, why in suite["missing"].items():
         print(f"\nmissing: {name}: {why}")
     print(f"\n-> {out_dir / file}")
@@ -185,7 +204,7 @@ def main() -> None:
     if args.out is not None and own is not None:
         print(f"\nThe run's own {file} ({own['scored'].get('device') or 'auto'} device, "
               f"{own['scored']['date']}) beside this one, each at its own threshold:\n")
-        print(compare(own, suite, m2b.SUITE if args.suite == "m2b" else tuple(m2.SUITE)))
+        print(compare(own, suite, tuple(suite.get("sets", m2b.SUITE)) if args.suite == "m2b" else tuple(m2.SUITE)))
 
 
 if __name__ == "__main__":

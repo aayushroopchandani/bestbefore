@@ -261,3 +261,71 @@ def test_score_suite_m2b_scores_every_set_at_two_thresholds(monkeypatch, tmp_pat
     monkeypatch.setattr(m2b, "suite_missing", lambda name: "not made yet" if name == "synth-val-v2" else None)
     with pytest.raises(FileNotFoundError, match="synth-val-v2 not made yet"):
         detector.score_suite_m2b(Path("/m2/last.pt"), 1280, out_dir)
+
+
+# --- The device check on v1-val alone (docs/m2b-store-and-size.md, S13) ---------------
+
+def test_sets_score_only_v1_val_and_take_m2s_threshold_from_the_record(load_script, control, monkeypatch,
+                                                                        capsys):
+    script = load_script("score_suite")
+    run_dir, laptop = control
+    record = _suite_m2b(0.21, 180) | {"scored": {"device": None, "date": "2026-11-13"}}
+    (run_dir / "suite-m2b.json").write_text(json.dumps(record))
+    asked = {}
+
+    def score_suite_m2b(checkpoint, imgsz, out_dir, device, sets=None, record=None):
+        asked.update(sets=sets, record=record)
+        here = _suite_m2b(0.2, 179)
+        return {k: v for k, v in here.items() if k not in m2b.SUITE or k in sets} | {"sets": list(sets)}
+
+    monkeypatch.setattr(detector, "score_suite_m2b", score_suite_m2b)
+    out = run_dir / "device-check-cpu"
+    monkeypatch.setattr(sys, "argv", ["score_suite.py", "--milestone", "m2b", "--suite", "m2b", "--run",
+                                      "n1280-s0", "--sets", "v1-val", "--out", str(out)])
+    script.main()
+    assert asked["sets"] == ["v1-val"] and asked["record"]["threshold"] == 0.21
+    printed = capsys.readouterr().out
+    assert "| v1-val | dates found | 180/187 | 179/187 | -1 |" in printed
+    assert "| real-val |" not in printed                          # only the set scored is compared
+    assert json.loads((run_dir / "suite-m2b.json").read_text()) == record      # the record stays
+    # --sets is only for a device check on the M2b suite.
+    for argv in (["--milestone", "m2b", "--suite", "m2b", "--run", "n1280-s0", "--sets", "v1-val"],
+                 ["--milestone", "m2b", "--run", "n1280-s0", "--sets", "v1-val", "--out", str(out)]):
+        monkeypatch.setattr(sys, "argv", ["score_suite.py", *argv])
+        with pytest.raises(SystemExit):
+            script.main()
+
+
+def test_score_suite_m2b_on_v1_val_alone(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from bestbefore import sets
+    from bestbefore.detection_eval import Prediction
+    from bestbefore.samples import Box, Sample
+
+    monkeypatch.setenv("EXPDATE_DIR", str(tmp_path / "expdate"))
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: "a model"))
+    date = (0.1, 0.1, 0.3, 0.14)
+    sample = Sample("v1-0004.jpg", Path("/v.jpg"), 1000, 800, (Box("expiry", date),), tag="clean")
+    loaded = []
+    (tmp_path / "v1-val.txt").write_text("./x.jpg\n")
+    monkeypatch.setattr(m2b, "suite_missing", lambda name: None)
+    monkeypatch.setattr(m2b, "suite_list", lambda name: tmp_path / f"{name}.txt")
+    monkeypatch.setattr(sets, "load_set", lambda name: loaded.append(name) or [sample])
+    monkeypatch.setattr(detector, "predict_samples",
+                        lambda model, given, imgsz, device: {s.id: [Prediction("date", date, 0.6)] for s in given})
+    monkeypatch.setattr(detector, "_val_metrics", lambda *a: {"map50": {"date": 0.9}})
+    record = {"threshold": 0.5, "threshold_m2": 0.7, "f2_at_threshold_m2": 0.95}
+    out_dir = tmp_path / "check"
+    suite = detector.score_suite_m2b(Path("/w.pt"), 1280, out_dir, sets=("v1-val",), record=record)
+    assert loaded == ["v1-val"] and suite["sets"] == ["v1-val"]
+    assert suite["threshold"] == pytest.approx(0.6) and suite["threshold_rule"].startswith("best F2")
+    assert (suite["threshold_m2"], suite["f2_at_threshold_m2"]) == (0.7, 0.95)
+    assert "own suite-m2b.json" in suite["threshold_m2_rule"]
+    assert suite["v1-val"]["iou0.5"]["dates_found"] == 1
+    assert suite["v1-val"]["at_threshold_m2"]["iou0.5"]["dates_found"] == 0      # 0.6 under M2's 0.7
+    assert not any(name in suite for name in m2b.SUITE if name != "v1-val")
+    with pytest.raises(ValueError, match="own record"):
+        detector.score_suite_m2b(Path("/w.pt"), 1280, out_dir, sets=("v1-val",))
+    with pytest.raises(ValueError, match="not in the M2b suite"):
+        detector.score_suite_m2b(Path("/w.pt"), 1280, out_dir, sets=("v2",), record=record)

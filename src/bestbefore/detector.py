@@ -9,6 +9,7 @@ $CHECKPOINT_DIR/pretrained/ beforehand, on the login node.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -280,7 +281,8 @@ def score_suite(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dic
     return out
 
 
-def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dict:
+def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None,
+                    sets: Sequence[str] | None = None, record: dict | None = None) -> dict:
     """Score a run on the M2b suite (docs/m2b-store-and-size.md, "The
     validation suite, M2b"): M2's four sets, real-val-rot180, synth-val-v2
     and v1-val, every one needed.
@@ -295,31 +297,51 @@ def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None) ->
     a photo is kept. Each set's dataset file and Ultralytics' (empty)
     validation folders go under out_dir/suite-m2b/, never beside weights
     another run owns (the control's are M2's).
+
+    `sets` scores only those sets (S13's device check, on v1-val alone);
+    a threshold whose sets aren't among them is then `record`'s, the run's
+    own suite-m2b.json, and says so in its rule.
     """
     from ultralytics import YOLO
 
-    from . import m2, m2b, sets
+    from . import m2, m2b
+    from . import sets as sets_module
 
-    if lacking := m2.missing({name: m2b.suite_missing(name) for name in m2b.SUITE}):
+    names = tuple(n for n in m2b.SUITE if sets is None or n in sets)
+    if sets is not None and (unknown := set(sets) - set(names)):
+        raise ValueError(f"not in the M2b suite: {', '.join(sorted(unknown))}")
+    store, real = m2b.STORE_SET in names, set(m2.THRESHOLD_SETS) <= set(names)
+    if not (store and real) and record is None:
+        raise ValueError("a threshold whose sets aren't scored needs the run's own record")
+    if lacking := m2.missing({name: m2b.suite_missing(name) for name in names}):
         raise FileNotFoundError(f"the M2b suite needs every set: {lacking}")
+    from_record = "from the run's own suite-m2b.json (its sets not scored here)"
     model = YOLO(str(checkpoint))
     matched = {}
-    for name in m2b.SUITE:
-        samples = sets.load_set(name)
+    for name in names:
+        samples = sets_module.load_set(name)
         preds = predict_samples(model, samples, imgsz, device)
         matched[name] = samples, evaluate(samples, preds, 0.5), evaluate(samples, preds, 0.3)
     beta = m2.THRESHOLD_BETA
-    conf, f_store = best_threshold(matched[m2b.STORE_SET][1], beta=beta)
-    conf_m2, f_m2 = best_threshold(pooled([matched[n][1] for n in m2.THRESHOLD_SETS]), beta=beta)
+    if store:
+        conf, f_store = best_threshold(matched[m2b.STORE_SET][1], beta=beta)
+        rule, f_store = f"best F{beta:g} for dates on {m2b.STORE_SET}", round(f_store, 4)
+    else:
+        conf, rule, f_store = record["threshold"], from_record, record.get("f2_at_threshold")
+    if real:
+        conf_m2, f_m2 = best_threshold(pooled([matched[n][1] for n in m2.THRESHOLD_SETS]), beta=beta)
+        rule_m2, f_m2 = f"best F{beta:g} for dates on {' + '.join(m2.THRESHOLD_SETS)}, pooled", round(f_m2, 4)
+    else:
+        conf_m2, rule_m2, f_m2 = record["threshold_m2"], from_record, record.get("f2_at_threshold_m2")
     out = {"checkpoint": str(checkpoint), "imgsz": imgsz, "suite": "m2b",
-           "threshold": conf, "threshold_rule": f"best F{beta:g} for dates on {m2b.STORE_SET}",
-           "f2_at_threshold": round(f_store, 4),
-           "threshold_m2": conf_m2,
-           "threshold_m2_rule": f"best F{beta:g} for dates on {' + '.join(m2.THRESHOLD_SETS)}, pooled",
-           "f2_at_threshold_m2": round(f_m2, 4), "missing": {}}
+           "threshold": conf, "threshold_rule": rule, "f2_at_threshold": f_store,
+           "threshold_m2": conf_m2, "threshold_m2_rule": rule_m2, "f2_at_threshold_m2": f_m2,
+           "missing": {}}
+    if sets is not None:
+        out["sets"] = list(names)
     folder = out_dir / "suite-m2b"
     folder.mkdir(parents=True, exist_ok=True)
-    for name in m2b.SUITE:
+    for name in names:
         samples, at_05, at_03 = matched[name]
         out[name] = _two_thresholds(at_05, at_03, conf, conf_m2)
         tags = [t for t in dict.fromkeys(s.tag for s in samples) if t]
