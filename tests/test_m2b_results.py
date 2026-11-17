@@ -1,12 +1,14 @@
-"""M2b's results tables (docs/m2b-store-and-size.md, S11 and S12), on
+"""M2b's results tables (docs/m2b-store-and-size.md, S11 to S13), on
 made-up run records: the rules as summarise.py works them out again and
 checks them against the chain's record, R3 read back, every table, ft2's
-frozen layers, compute, and records not in yet shown as "not yet"."""
+frozen layers, compute, the inference add-ons with R4 and the what-if
+worked out again, and records not in yet shown as "not yet"."""
 import json
+from itertools import combinations
 
 import pytest
 
-from bestbefore import m2, m2b, runs
+from bestbefore import ensemble, m2, m2b, runs
 from bestbefore import m2_results as m2r
 from bestbefore import m2b_results as r
 
@@ -107,7 +109,8 @@ def test_nothing_in_yet_is_not_yet_everywhere(records):
     assert r.record_check() == "" and r.early_read_check() == "" and r.control_compute_line() == ""
     assert cells(r.r2_table(), "n1280-ft")["guard"] == "not yet"
     assert cells(r.r3_table(), "m1280-ft")["R3"] == "not yet"
-    for block in (r.fine_tune_block(), r.gen_v2_block(), r.model_size_block()):   # every table builds on nothing
+    for block in (r.fine_tune_block(), r.gen_v2_block(), r.model_size_block(),   # every table builds on nothing
+                  r.inference_block()):
         assert "not yet" in block and "**Warning:**" not in block
 
 
@@ -364,3 +367,121 @@ def test_m2s_chain_check_still_names_m2s_record(records):
     assert m2r.chain_check("pilot") == ""
     m2b.decisions_path().write_text(json.dumps({"noise_store": {"band": 0.03}}))
     assert "**Warning:** the chain has decided this" in r.chain_check("noise_store")
+
+
+# --- S13: the inference add-ons ------------------------------------------------------------
+
+def r3_decided():
+    """The chain's record with R3 at n1280-ft (band 0.10, threshold 0.2), as
+    in test_r3_names_the_cheapest_candidate_within_the_band."""
+    arm("n1280", (0.70, 0.80, 0.75))
+    arm("s1280", (0.76, 0.78, 0.80))
+    arm("m1280", (0.85, 0.83, 0.84))
+    arm("n1280-ft", (0.90, 0.91, 0.92))
+    arm("n1280-ft2", (0.89, 0.89, 0.89))
+    arm("s1280-ft", (0.93, 0.94, 0.95))
+    arm("m1280-ft", (0.97, 0.98, 0.99))
+    chain_writes()
+
+
+def inference(v1_aps: dict, real=0.99, worst=0.0005):
+    """scripts/m2b_inference.py's inference.json: every configuration with
+    its v1-val AP from `v1_aps`, R4 and the what-if walked as the script
+    walks them."""
+    configs = {}
+    for k in range(len(m2b.ADDONS) + 1):
+        for addons in combinations(m2b.ADDONS, k):
+            name, used = m2b.configuration(addons), ensemble.passes(addons)
+            v1 = m2b_suite(v1_aps[name])["v1-val"]
+            v1["iou0.5"]["boxes_kept"] = 56
+            configs[name] = {"addons": list(addons), "passes": [p.name for p in used], "threshold": 0.3,
+                             "v1-val": v1, "real-val": entry(real), "cpu_ms_per_photo": 170.0 * len(used)}
+    aps = {n: {"v1-val": c["v1-val"]["map50"]["date"], "real-val": real} for n, c in configs.items()}
+    decided = m2b.decisions()
+    record = {"arm": "n1280-ft", "run": "n1280-ft-s0", "threshold_record": decided["R3"]["threshold"],
+              "configurations": configs,
+              "sources": {"v1-val": {"processor": "Apple M2", "device": "cpu", "torch_threads": 1,
+                                     "torch_threads_used": 7, "photos": 34, "git_commit": "e38ae84c"},
+                          "real-val": {"processor": "Xeon", "device": "cpu", "torch_threads": 24,
+                                       "torch_threads_used": None, "photos": 165, "git_commit": "e38ae84c"}},
+              "ap_check": {"within": 0.01, "largest_real_val_difference": worst, "agrees": worst <= 0.01,
+                           "seeds": {f"s{s}": {name: {"ours": 0.95, "ultralytics": 0.95 - worst, "difference": worst}
+                                               for name in ("real-val", "v1-val")} for s in m2b.SEEDS}}}
+    for key, band in (("R4", decided["noise_store"]["band"]), ("what_if", m2b.WHAT_IF_BAND)):
+        walk = m2b.decide_addons(aps, band)
+        record[key] = {**walk, "threshold": 0.3 if walk["adopted"] else record["threshold_record"]}
+    run_dir = finish("inference")
+    (run_dir / "inference.json").write_text(json.dumps(record))
+    return run_dir
+
+
+APS = {"none": 0.94, "ensemble": 0.98, "rotation": 0.97, "imgsz-1536": 0.95, "ensemble+rotation": 0.99,
+       "ensemble+imgsz-1536": 0.985, "rotation+imgsz-1536": 0.96, "ensemble+rotation+imgsz-1536": 0.99}
+
+
+def test_r4_and_the_what_if_are_worked_out_again_and_checked(records):
+    r3_decided()
+    run_dir = inference(APS)
+    block = r.inference_block()
+    assert "**Warning:**" not in block
+    assert ("**R4, as written (band 0.1000, the noise band): adopts nothing**. Gains on v1-val over what it had "
+            "kept, in R4's order: ensemble +0.0400, rotation +0.0300, imgsz-1536 +0.0100") in block
+    assert "So the M2b detector is `n1280-ft-s0` alone at its threshold_store, 0.2000." in block
+    # The what-if keeps the ensemble (+0.04 > 0.03), then measures rotation on it (+0.01): out.
+    assert "(band 0.0300, the plan's floor; it decides nothing): adopts ensemble**" in block
+    assert "for the plan's Later, not for S14" in block
+    record = json.loads((run_dir / "inference.json").read_text())
+    table = r.walk_table(record, "what_if")
+    assert [cells(table, a)["kept"] for a in m2b.ADDONS] == ["**kept**", "no", "no"]
+    assert cells(table, "rotation")["against"] == "ensemble" and cells(table, "rotation")["gain"] == "+0.0100"
+    assert "R4 and the what-if are the record's" in r.r4_check(record)
+    record["R4"]["adopted"] = ["ensemble"]                           # a record that disagrees with the rule
+    (run_dir / "inference.json").write_text(json.dumps(record))
+    assert "**Warning:** R4: worked out again, it adopts nothing, the record ['ensemble']" in r.inference_block()
+    record["R4"]["adopted"], record["threshold_record"] = [], 0.5
+    (run_dir / "inference.json").write_text(json.dumps(record))
+    assert "threshold_record: the record's 0.5, R3's 0.2" in r.inference_block()
+
+
+def test_every_configuration_with_counts_beside_rates_and_the_ap_check(records):
+    r3_decided()
+    first = inference(APS)
+    record = json.loads((first / "inference.json").read_text())
+    first.rename(first.with_name("20261117-000000-m2b-inference"))   # older, and its name free again
+    table = r.configuration_table(record)
+    none = cells(table, "none")
+    assert (none["passes"], none["v1-val AP"], none["dates found"], none["expiry found"]) == ("1", "0.9400", "50/63",
+                                                                                             "20/29")
+    assert (none["false boxes"], none["CPU ms a photo"]) == ("6", "170")
+    assert cells(table, "ensemble+rotation+imgsz-1536")["passes"] == "12"
+    assert "v1-val on Apple M2 (cpu, 7 torch threads" in r.sources_line(record)
+    assert "real-val on Xeon (cpu, torch's threads not recorded" in r.sources_line(record)
+    suites = r.configuration_suites(record)
+    assert cells(r.tag_table(suites), "rotation")["sideways"] == "4/6"
+    assert cells(r.size_table(suites), "none")["under 1.5%"] == "15/20"
+    assert "**The AP check passes**: on real-val ours is within 0.0005" in r.inference_block()
+    inference(APS, worst=0.02)                                        # the newest record is read
+    assert "**Warning:** our AP and Ultralytics' differ by 0.0200 on real-val" in r.inference_block()
+
+
+def test_the_timing_and_the_device_check(records):
+    r3_decided()
+    assert "_The timing: not yet" in r.inference_block() and "_The device check: not yet._" in r.inference_block()
+    timing = {"config": {"processor": "Apple M2", "torch_threads": 7, "photos": 34, "photo_long_side_median": 1600,
+                         "warmup": 2, "repeats": 3},
+              "timed": {"n1280-ft-s0@1280": {"median_ms": 175.0, "mean_ms": 178.0, "repeat_mean_ms": [170, 179, 185]},
+                        "m1280-ft-s0@1280": {"median_ms": 819.0, "mean_ms": 905.0, "repeat_mean_ms": [890, 835, 989]}}}
+    finish("inference-timing").joinpath("timing.json").write_text(json.dumps(timing))
+    table = r.timing_table(r.timing_record())
+    assert cells(table, "m1280-ft-s0@1280")["against the first"] == "4.68×"
+    assert cells(table, "n1280-ft-s0@1280")["each repeat's mean"] == "170, 179, 185"
+    run_dir = m2b.finished_run("n1280-ft-s0")
+    here = m2b_suite(0.91)
+    here["v1-val"]["iou0.5"]["dates_found"] = 49                     # one date moved
+    (run_dir / "device-check-cpu").mkdir()
+    (run_dir / "device-check-cpu" / "suite-m2b.json").write_text(json.dumps(here))
+    line = r.device_check_line()
+    assert line.startswith("**The device check passes**") and "dates found 50/63 on the GPU, 49/63 here" in line
+    here["v1-val"]["iou0.5"]["expiry_found"] = 18                    # two more: three in all
+    (run_dir / "device-check-cpu" / "suite-m2b.json").write_text(json.dumps(here))
+    assert "**Warning:** more than two dates moved." in r.device_check_line()

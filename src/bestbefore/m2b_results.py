@@ -636,6 +636,217 @@ def model_size_block(root: Path | None = None) -> str:
         control_compute_line(root), runs_table(run_names(arms[1:]), root))
 
 
+# --- S13: the inference add-ons -----------------------------------------------------------
+
+INFERENCE_RUN, TIMING_RUN = "inference", "inference-timing"     # scripts/m2b_inference.py's records
+
+
+def inference_record(root: Path | None = None) -> dict | None:
+    """The newest finished `score` of scripts/m2b_inference.py (inference.json): counts only."""
+    run_dir = m2b.finished_run(INFERENCE_RUN, root)
+    return m2.read_json(run_dir / "inference.json") if run_dir else None
+
+
+def timing_record(root: Path | None = None) -> dict | None:
+    """The newest finished `time` of scripts/m2b_inference.py (timing.json)."""
+    run_dir = m2b.finished_run(TIMING_RUN, root)
+    return m2.read_json(run_dir / "timing.json") if run_dir else None
+
+
+def addon_aps(record: dict) -> dict[str, dict[str, float]]:
+    """Each configuration's AP@0.5 for dates (ours) on R4's sets."""
+    return {name: {s: c[s]["map50"]["date"] for s in m2b.R4_SETS} for name, c in record["configurations"].items()}
+
+
+def r4_check(record: dict, root: Path | None = None) -> str:
+    """R4 (the noise band) and the what-if (m2b.WHAT_IF_BAND) worked out
+    again with m2b.decide_addons from the record's APs, and its arm, run and
+    threshold against R3 as m2b.decisions() works it out here; a warning if
+    anything differs."""
+    decided, problems = m2b.decisions(root), []
+    if "R3" not in decided:
+        problems.append("R3 isn't decided here")
+    else:
+        for key, ours in (("arm", "arm"), ("run", "run"), ("threshold_record", "threshold")):
+            if record[key] != decided["R3"][ours]:
+                problems.append(f"{key}: the record's {record[key]!r}, R3's {decided['R3'][ours]!r}")
+        for key, band in (("R4", decided["noise_store"]["band"]), ("what_if", m2b.WHAT_IF_BAND)):
+            again = m2b.decide_addons(addon_aps(record), band)
+            if again != {k: record[key][k] for k in again}:
+                problems.append(f"{key}: worked out again, it adopts {again['adopted'] or 'nothing'}, "
+                                f"the record {record[key]['adopted'] or 'nothing'}")
+    if problems:
+        return "**Warning:** " + "; ".join(problems) + "."
+    return ("Worked out again here with `m2b.decide_addons()` from the record's APs, R4 and the what-if are the "
+            "record's, and its arm, run and threshold are R3's in the chain's record.")
+
+
+def walk_line(record: dict, key: str) -> str:
+    """What one walk (R4, or the what-if) adopted, and why."""
+    walk, run = record[key], record["run"]
+    gains = ", ".join(f"{s['addon']} {s['v1_val_gain']:+.4f}" for s in walk["steps"])
+    best = max(walk["steps"], key=lambda s: s["v1_val_gain"])
+    if key == "R4":
+        head = (f"**R4, as written (band {walk['band']:.4f}, the noise band): adopts "
+                f"{', '.join(walk['adopted']) or 'nothing'}**")
+        tail = (f"So the M2b detector is `{run}` alone at its threshold_store, {walk['threshold']:.4f}."
+                if not walk["adopted"] else
+                f"So the M2b detector is `{run}` with {walk['configuration']}, at its threshold {walk['threshold']:.4f}.")
+    else:
+        head = (f"**The what-if (band {walk['band']:.4f}, the plan's floor; it decides nothing): adopts "
+                f"{', '.join(walk['adopted']) or 'nothing'}**")
+        tail = ("Nothing for the plan's Later." if not walk["adopted"] else
+                f"It would keep {walk['configuration']} at its own threshold, {walk['threshold']:.4f}: "
+                "for the plan's Later, not for S14.")
+    return (f"{head}. Gains on v1-val over what it had kept, in R4's order: {gains}; the largest, "
+            f"{best['addon']}'s {best['v1_val_gain']:+.4f}, is "
+            f"{'above' if best['v1_val_gain'] > walk['band'] else 'within'} the band. {tail}")
+
+
+def walk_table(record: dict, key: str) -> str:
+    """One walk's steps: each add-on, what it was measured against, our AP
+    on v1-val before and after, the gain, real-val's change and the verdict."""
+    aps, walk, rows = addon_aps(record), record[key], []
+    for s in walk["steps"]:
+        before, after = aps[s["against"]], aps[s["tried"]]
+        real_ok = m2.at_least(after["real-val"], before["real-val"] - m2b.NOISE)
+        rows.append({"add-on": s["addon"], "against": s["against"], "tried": s["tried"],
+                     "v1-val before": f"{before[m2b.STORE_SET]:.4f}", "after": f"{after[m2b.STORE_SET]:.4f}",
+                     "gain": f"{s['v1_val_gain']:+.4f}", "band": f"{walk['band']:.4f}",
+                     "real-val change": f"{s['real_val_change']:+.4f}",
+                     "real-val guard": "passes" if real_ok else "fails",
+                     "kept": "**kept**" if s["adopted"] else "no"})
+    return markdown_table(rows, left=("add-on", "against", "tried", "real-val guard", "kept"))
+
+
+def configuration_table(record: dict) -> str:
+    """Every configuration, the detector alone first: passes, our AP on
+    v1-val and real-val, then on v1-val at its own F2 threshold the dates
+    and expiries found, precision, false boxes a photo, boxed at any
+    confidence, and CPU time a photo on the laptop."""
+    rows = []
+    for name, c in record["configurations"].items():
+        v1, real = c[m2b.STORE_SET], c["real-val"]
+        a = v1["iou0.5"]
+        rows.append({"configuration": name, "passes": str(len(c["passes"])),
+                     "v1-val AP": f"{v1['map50']['date']:.4f}", "real-val AP": f"{real['map50']['date']:.4f}",
+                     "threshold": f"{c['threshold']:.4f}", "dates found": f"{a['dates_found']}/{a['dates']}",
+                     "expiry found": f"{a['expiry_found']}/{a['expiry_dates']}",
+                     "precision": f"{a['precision']:.3f}",
+                     "false boxes": f"{a['boxes_kept'] - a['dates_found']}",    # matching is one to one
+                     "false / photo": f"{a['false_boxes_per_photo']:.2f}",
+                     "boxed at any confidence": f"{v1['any_conf']['dates_found']}/{v1['any_conf']['dates']}",
+                     "real-val found": f"{real['iou0.5']['dates_found']}/{real['iou0.5']['dates']}",
+                     "CPU ms a photo": f"{c['cpu_ms_per_photo']:.0f}"})
+    return markdown_table(rows, left=("configuration",))
+
+
+def configuration_suites(record: dict) -> dict[str, list[dict]]:
+    """Each configuration as a one-seed M2b suite holding v1-val, so S11's
+    tag and size tables read it."""
+    return {name: [{m2b.STORE_SET: c[m2b.STORE_SET]}] for name, c in record["configurations"].items()}
+
+
+def ap_check_table(record: dict) -> str:
+    """Each seed's upright pass at 1,280 px: our AP against Ultralytics' mAP
+    in its run's GPU suite, on real-val (the check) and v1-val (shown)."""
+    rows = []
+    for seed, row in record["ap_check"]["seeds"].items():
+        out = {"run": f"{record['arm']}-{seed}"}
+        for name in ("real-val", m2b.STORE_SET):
+            out |= {f"{name} ours": f"{row[name]['ours']:.4f}", f"{name} Ultralytics": f"{row[name]['ultralytics']:.4f}",
+                    f"{name} difference": f"{row[name]['difference']:+.4f}"}
+        rows.append(out)
+    return markdown_table(rows, left=("run",))
+
+
+def ap_check_line(record: dict) -> str:
+    check = record["ap_check"]
+    if not check["agrees"]:
+        return (f"**Warning:** our AP and Ultralytics' differ by {check['largest_real_val_difference']:.4f} on "
+                f"real-val, more than {check['within']}: R4's numbers can't be trusted until that is understood.")
+    return (f"**The AP check passes**: on real-val ours is within {check['largest_real_val_difference']:.4f} of "
+            f"Ultralytics' for every seed (the plan asks {check['within']}).")
+
+
+def sources_line(record: dict) -> str:
+    """Where each set's passes were made: the machine, torch's threads and the code."""
+    parts = []
+    for name, s in record["sources"].items():
+        threads = (f"{s['torch_threads_used']} torch threads" if s.get("torch_threads_used")
+                   else "torch's threads not recorded")
+        parts.append(f"{name} on {s['processor']} ({s['device']}, {threads}, {s['photos']} photos, "
+                     f"code `{s['git_commit'][:7]}`)")
+    return "Passes: " + "; ".join(parts) + "."
+
+
+def timing_table(timing: dict) -> str:
+    """The detector against m on the laptop's CPU: milliseconds a photo, the
+    median and mean over every photo and repeat, each repeat's mean, and
+    each against the detector at 1,280 px."""
+    base = next(iter(timing["timed"].values()))["median_ms"]
+    rows = [{"model": key, "median ms": f"{v['median_ms']:.0f}", "mean ms": f"{v['mean_ms']:.0f}",
+             "each repeat's mean": ", ".join(f"{x:.0f}" for x in v["repeat_mean_ms"]),
+             "against the first": f"{v['median_ms'] / base:.2f}×"}
+            for key, v in timing["timed"].items()]
+    return markdown_table(rows, left=("model", "each repeat's mean"))
+
+
+def timing_line(timing: dict) -> str:
+    c = timing["config"]
+    return (f"{c['processor']}, {c['torch_threads']} torch threads, {c['photos']} v1-val photos (long side "
+            f"{c['photo_long_side_median']:.0f} px, median) loaded first, one photo a call, rect=False; "
+            f"{c['warmup']} warm-up calls each left out, then {c['repeats']} repeats.")
+
+
+def device_check_line(root: Path | None = None) -> str:
+    """R3's run scored again on v1-val on the laptop's CPU
+    (score_suite.py --sets v1-val --out <run>/device-check-cpu) beside its GPU suite."""
+    decided = m2b.decisions(root)
+    run_dir = m2b.finished_run(decided["R3"]["run"], root) if "R3" in decided else None
+    here = m2.read_json(run_dir / "device-check-cpu" / m2b.SUITE_FILE) if run_dir else None
+    if here is None:
+        return "_The device check: not yet._"
+    gpu = m2.read_json(run_dir / m2b.SUITE_FILE)
+    a, b = gpu[m2b.STORE_SET], here[m2b.STORE_SET]
+    pairs = [("dates found", a["iou0.5"]["dates_found"], b["iou0.5"]["dates_found"], a["iou0.5"]["dates"]),
+             ("expiries found", a["iou0.5"]["expiry_found"], b["iou0.5"]["expiry_found"], a["iou0.5"]["expiry_dates"]),
+             ("boxed at any confidence", a["any_conf"]["dates_found"], b["any_conf"]["dates_found"], a["any_conf"]["dates"])]
+    moved = sum(abs(x - y) for _, x, y, _ in pairs)
+    counts = "; ".join(f"{label} {x}/{n} on the GPU, {y}/{n} here" for label, x, y, n in pairs)
+    return (f"**The device check {'passes' if moved <= 2 else 'fails'}**: `{decided['R3']['run']}` on v1-val, on the "
+            f"laptop's CPU against its GPU suite, each at its own F2 threshold ({gpu['threshold']:.4f} on the GPU, "
+            f"{here['threshold']:.4f} here; the GPU's is the run's): {counts}; mAP@0.5 for dates (Ultralytics') "
+            f"{a['map50']['date']:.4f} and {b['map50']['date']:.4f}." + ("" if moved <= 2 else " **Warning:** more "
+                                                                         "than two dates moved."))
+
+
+def inference_block(root: Path | None = None) -> str:
+    """experiments/m2b-inference: the device check, the AP check, R4 and the
+    what-if worked out again, every configuration on v1-val (by tag and by
+    size) and real-val, and n timed against m on the laptop's CPU."""
+    record, timing = inference_record(root), timing_record(root)
+    noise = m2b.decisions(root).get("noise_store")
+    if record is None:
+        parts = ["_The add-ons: not yet (scripts/m2b_inference.py predict on both sets, then score)._"]
+    else:
+        suites = configuration_suites(record)
+        parts = [ap_check_line(record), ap_check_table(record),
+                 f"**R4, worked out again** (the noise band {noise['band']:.4f}; R4's own AP, ours, before and "
+                 "after, like with like):" if noise else "**R4:**",
+                 walk_line(record, "R4"), walk_table(record, "R4"),
+                 walk_line(record, "what_if"), walk_table(record, "what_if"), r4_check(record, root),
+                 "**Every configuration**, side readings, none adopted (counts on v1-val at each configuration's "
+                 "own F2 threshold; real-val's dates found at that threshold too; CPU time a photo is the "
+                 "laptop's, its passes' mean plus the fusion):", configuration_table(record), sources_line(record),
+                 f"**v1-val by failure tag**, expiry dates {LEVELS['iou0.5']}:", tag_table(suites),
+                 f"and {LEVELS['any_conf']}:", tag_table(suites, "any_conf"),
+                 f"**v1-val's dates by size**, {SIZE_COUNTS['found']}:", size_table(suites)]
+    timing_parts = (["_The timing: not yet (scripts/m2b_inference.py time)._"] if timing is None else
+                    [f"**The detector against `m` on the laptop's CPU**: {timing_line(timing)}", timing_table(timing)])
+    return paragraphs(device_check_line(root), *parts, *timing_parts, record_check(root))
+
+
 def main() -> None:
     print(runs_table(every_run()))
 
