@@ -37,6 +37,11 @@ read = ["lmdb==3.0.0", "onnx==1.23.2", "onnxruntime==1.31.1"]
 # as the cluster installed them, with every package the train extra brought
 # held at its version (M3 S1).
 vlm = ["transformers==5.22.2", "peft==0.21.2", "accelerate==1.15.0"]
+# M2b's inference add-ons (S13): weighted boxes fusion, MIT. 1.0.9 is the
+# release that stood from 2022 until two new ones in late 2026; it imports
+# numba when loaded (its NMS variants) and lists pandas. Laptop only, added
+# with every installed package held (CLAUDE.md's constraints method).
+ensemble = ["ensemble-boxes==1.0.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

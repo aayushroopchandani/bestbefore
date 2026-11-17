@@ -558,6 +558,37 @@ R4_SETS = (STORE_SET, "real-val")   # each configuration's AP@0.5 for dates, our
 WHAT_IF_BAND = NOISE_STORE_MIN
 
 
+# The SHA-256 of runs' final weights, taken read-only on the cluster, as no
+# run record holds what a run made (S12): R3's arm's three seeds (S12), and
+# m1280-ft-s0 (S13), timed beside them only. A copy is checked against its
+# hash before it predicts anything.
+LAST_PT_SHA256 = {
+    "n1280-ft-s0": "c839af8a810a96a6297576cf8ecc4349dc05d19866d0f6d9cb3112ecfda138bd",
+    "n1280-ft-s1": "4a9fef7987999b0f46c34a498f483e6bfddcbcc0215588adfaa1b51eb4e52364",
+    "n1280-ft-s2": "ec403127eaa42293cca1c49d2e5a02865efd56851cfa6af654dc3a04f8b5b370",
+    "m1280-ft-s0": "682c1ccf6865c7e200f8b9d1fb2a48d1062114ff3034514ac258c661f703a2cb",
+}
+
+
+def last_pt(run: str, root: Path | None = None) -> tuple[Path, str]:
+    """A finished run's final weights on this machine, checked against
+    LAST_PT_SHA256: the path its run.json names where it exists (the
+    cluster), else the laptop's copy, $CHECKPOINT_DIR/m2b/<run folder>/weights/last.pt
+    (as scripts/score_suite.py finds it); and the run's folder name."""
+    run_dir = finished_run(run, root)
+    if run_dir is None:
+        raise FileNotFoundError(f"no finished run m2b-{run} in results/runs")
+    recorded = Path(read_json(run_dir / "run.json")["checkpoint"])
+    weights = recorded if recorded.exists() else checkpoint_dir() / "m2b" / run_dir.name / "weights" / "last.pt"
+    if not weights.exists():
+        raise FileNotFoundError(f"{weights}, m2b-{run}'s last.pt, isn't on this machine: copy it (weights only)")
+    if run not in LAST_PT_SHA256:
+        raise KeyError(f"no SHA-256 recorded for m2b-{run}'s last.pt")
+    if (digest := sha256(weights)) != LAST_PT_SHA256[run]:
+        raise RuntimeError(f"{weights} isn't the last.pt hashed on the cluster ({digest[:8]}…)")
+    return weights, run_dir.name
+
+
 def adopt(before: Mapping[str, float], after: Mapping[str, float], band: float) -> bool:
     """R4, on the laptop. An add-on stays if it raises v1-val AP@0.5 for
     dates (our own, detection_eval.average_precision) by more than `band`
