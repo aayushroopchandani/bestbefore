@@ -3053,6 +3053,32 @@ found:
 As S11, with `experiments/m2b-model-size`.
 **Commit:** `docs: m2b model size results`
 
+**Added 2026-11-17, before S12's code** (no rule, band, threshold or share
+changes):
+
+- **Laptop only.** Job B did S12's GPU work and S11 pulled it (S11's
+  note). The cluster part is a read-only check: the queue, the records
+  against the laptop's, the chain's dry run, and the chosen arm's weights.
+- **R3 stands as the code computes it** (the owner's call, 2026-11-17).
+  The README and this record say plainly how the fine-tuned sizes compare,
+  as the side question asks, and why the rule's choice is kept.
+- **`experiments/m2b-model-size`** holds: R1 again; R3's table (each
+  candidate's guard, eligibility, mean v1-val mAP@0.5 and its distance from
+  the band's edge), worked out again with `m2b.decisions()` and checked
+  against the chain's record; `n`, `s` and `m` at step 1 and step 2 on
+  every set with the seed spread; v1-val at both thresholds, by tag and by
+  size; compute by size.
+- **Added beyond the side question: v1-val's mAP@0.5 by class** (`date`,
+  `due`, `prod`, `code`), which the M2b suite already records. M3 reads the
+  keyword boxes (`EXP`, `MFG`) as well as the dates, so how size moves them
+  belongs beside the dates.
+- **Step 1's early read on M2's suite** (`suite.json`) is shown only as a
+  check: it holds the same four sets as the M2b suite, scored from the same
+  weights, so it adds nothing unless they differ.
+- **Commits:** `feat: m2b model size tables, r3 read back` (`m2b_results.py`
+  and its tests) before `docs: m2b model size results`, as S11's code and
+  results were two.
+
 ### S13. Inference add-ons · laptop
 
 **Goal:** R4 applied, the M2b detector fixed.
