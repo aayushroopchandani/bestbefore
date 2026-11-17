@@ -220,6 +220,7 @@ def score() -> Path:
         if any(set(photos) != set(ids) for photos in boxes.values()) or len(boxes) != len(ensemble.every_pass()):
             raise SystemExit(f"{run_dir.name} doesn't hold every pass on every photo of {name}")
     v1_seconds = loaded[m2b.STORE_SET][1]["seconds"]
+    ensemble.fuse([[], []])        # loads ensemble-boxes (and numba) before any fusion is timed
 
     configurations = {}
     for addons in all_configurations():
