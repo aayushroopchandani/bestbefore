@@ -1,0 +1,455 @@
+"""M2b's results read back from the run records, as tables
+(docs/m2b-store-and-size.md, S11 on), for experiments/m2b-*/summarise.py.
+
+Every rule comes from m2b.py, the code the chain applies on the cluster:
+each decision is worked out again with m2b.decisions() and compared with
+the chain's own record, results/runs/m2b-decisions.json. The cells are
+M2's (bestbefore.m2_results): `60/63 (58–60)` is the mean count over the
+seeds in, of 63, with the lowest and highest; `0.942 (0.936–0.951)` a mean
+with its range; "not yet" a seed not scored or not pulled. Counts are at
+each run's own threshold, threshold_store (the best F2 for dates on
+v1-val), unless a column says M2's. The M2b suite holds counts only, so
+nothing here names a store photo.
+
+    python -m bestbefore.m2b_results       # every M2b run's compute
+"""
+from __future__ import annotations
+
+import csv
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+
+from . import m2, m2b, store
+from . import m2_results as m2r
+from .m2_results import (NA, NOT_YET, Seeds, complete, count_cell, counted, date_map, each,
+                         paragraphs, seeds_cell, suite_set, suite_table, value_cell)
+from .synth.spec import SYNTH_VAL_V2
+from .tables import markdown_table
+
+STEP2_N = tuple(arm for arm, step in m2b.STEP2.items() if step.size == "n")   # ft, ft2, ft-gen50k
+FINE_TUNE = (m2b.CONTROL, *STEP2_N)                     # experiments/m2b-fine-tune
+GEN_V2 = (m2b.CONTROL, "n1280-ft", "n1280-ft-gen50k")   # experiments/m2b-gen-v2: ft against gen50k
+STRATA_V2 = tuple(name for name, _ in SYNTH_VAL_V2)
+LEVELS = {"iou0.5": "found at each run's threshold", "any_conf": "boxed at any confidence",
+          "at_threshold_m2": "found at M2's threshold"}
+
+
+def label(arm: str) -> str:
+    return f"{arm} (control)" if arm == m2b.CONTROL else arm
+
+
+def arm_suites(arms: Sequence[str], root: Path | None = None) -> dict[str, list[dict | None]]:
+    """Each arm's M2b suite for every seed, keyed by its label; None where a
+    seed isn't scored or pulled yet."""
+    return {label(arm): m2b.arm_suites(arm, root) for arm in arms}
+
+
+def run_names(arms: Sequence[str]) -> list[str]:
+    return [f"{arm}-s{s}" for arm in arms for s in m2b.SEEDS]
+
+
+# --- The rules, worked out again and compared with the chain's record -----------------
+
+def chain_check(key: str, root: Path | None = None) -> str:
+    return m2r.chain_check(key, root, rules=m2b)
+
+
+def record_check(root: Path | None = None) -> str:
+    """The chain's whole record against m2b.decisions() worked out here:
+    every decision it holds, R3 included, must be the same."""
+    chain, ours = m2.read_json(m2b.decisions_path(root)), m2b.decisions(root)
+    if chain is None:
+        return ("_The chain's record isn't here yet: `scripts/pull_cluster_results.sh`._"
+                if ours else "")
+    if ours == chain:
+        return (f"Worked out again here with `m2b.decisions()`, the chain's whole record "
+                f"(`results/runs/{m2b.decisions_path(root).name}`: {', '.join(chain)}) is the same.")
+    keys = sorted(k for k in ours.keys() | chain.keys() if ours.get(k) != chain.get(k))
+    return (f"**Warning:** the chain's record differs from `m2b.decisions()` here in "
+            f"{', '.join(keys)}. Pull again and check the runs.")
+
+
+def noise_line(root: Path | None = None) -> str:
+    """The noise band on v1-val (noise_store), fixed by the control."""
+    noise = m2b.decisions(root).get("noise_store")
+    if noise is None:
+        scored = sum(s is not None for s in m2b.arm_suites(m2b.CONTROL, root))
+        return f"_The noise band: not yet, {scored} of {len(m2b.SEEDS)} control seeds on the M2b suite._"
+    values = ", ".join(f"{v:.4f}" for v in noise["control_v1_val_map50"])
+    return (f"**The noise band: {noise['band']:.4f}.** The control's three seeds (M2's `gen-rot-1280`, "
+            f"no store training) score {values} on v1-val (mAP@0.5 for dates): a spread of "
+            f"{noise['spread']:.4f}, so the band is {noise['band']:.4f} (the spread, at least "
+            f"{m2b.NOISE_STORE_MIN}), fixed before any other run was scored. "
+            f"{chain_check('noise_store', root)}")
+
+
+def r1_line(root: Path | None = None) -> str:
+    """R1: whether m1280 earns 2 more seeds and step 2."""
+    r1 = m2b.decisions(root).get("R1")
+    if r1 is None:
+        return "_R1: not yet (m1280-s0 and every s1280 seed on the M2b suite)._"
+    m, s = r1["m1280_s0_v1_val_map50"], r1["s1280_v1_val_map50"]
+    beats = "above every one" if m > max(s) else "not above every one"
+    verdict = "`m` earns 2 more seeds and step 2" if r1["passes"] else "`m` stops at its probe"
+    return (f"**R1, the `m` probe: {'passes' if r1['passes'] else 'fails'}**, so {verdict}. "
+            f"`m1280-s0` scores {m:.4f} on v1-val against `s1280`'s seeds' "
+            f"{', '.join(f'{v:.4f}' for v in s)}, {beats}, and it "
+            f"{'passes' if r1['guard'] else 'fails'} the guard. {chain_check('R1', root)}")
+
+
+def r2_table(root: Path | None = None) -> str:
+    """R2's inputs: the guard's two sets and v1-val, for the control and
+    each recipe on n, mean mAP@0.5 for dates over the seeds (range)."""
+    control = m2b.arm_suites(m2b.CONTROL, root)
+    rows = []
+    for arm in (m2b.CONTROL, *(f"{m2b.CONTROL}-{r}" for r in m2b.RECIPES)):
+        seeds = m2b.arm_suites(arm, root)
+        row = {"arm": label(arm), "seeds": seeds_cell(seeds)}
+        for name in (*m2b.GUARDED, m2b.STORE_SET):
+            row[name] = value_cell(each(seeds, lambda s: date_map(suite_set(s, name))), 4)
+        if arm == m2b.CONTROL:
+            row["guard"] = NA
+        elif complete(seeds) and complete(control):
+            row["guard"] = "passes" if m2b.guard(seeds, control) else "fails"
+        else:
+            row["guard"] = NOT_YET
+        rows.append(row)
+    return markdown_table(rows, left=("arm", "guard"))
+
+
+def r2_line(root: Path | None = None) -> str:
+    """R2's choice, and why."""
+    decided = m2b.decisions(root)
+    r2 = decided.get("R2")
+    if r2 is None:
+        return "_R2: not yet (`n1280-ft` and `n1280-ft2`, all three seeds, on the M2b suite)._"
+    if r2["recipe"] is None:
+        return ("**R2: no recipe passed the guard**, so step 2 on `s` and `m` and R3 wait for a "
+                f"person. {chain_check('R2', root)}")
+    control = m2b.arm_suites(m2b.CONTROL, root)
+    floors = ", ".join(f"{name} {m2.map50_date(control, (name,)) - m2b.NOISE:.4f}" for name in m2b.GUARDED)
+    means, chosen = r2["v1_val_map50"], r2["recipe"]
+    ok = [r for r in m2b.RECIPES if r2["guard"][r]]
+    best = max(ok, key=lambda r: means[r])
+    if chosen == best:
+        why = f"the highest mean on v1-val, {means[chosen]:.4f}"
+    else:
+        why = (f"{means[chosen]:.4f} on v1-val, within the band ({r2['band']:.4f}) of the best, "
+               f"`{best}`'s {means[best]:.4f}, and the simpler")
+    others = "; ".join(f"`{r}` {means[r]:.4f} ({means[r] - means[chosen]:+.4f})"
+                       for r in m2b.RECIPES if r != chosen)
+    out = [r for r in m2b.RECIPES if r not in ok]
+    return (f"**R2, by the rule: `{chosen}`**, {why}; {others}. "
+            + (f"Out by the guard: {', '.join(out)}. " if out else
+               f"Both recipes pass the guard (its floors, the control's mean less {m2b.NOISE}: {floors}). ")
+            + chain_check("R2", root))
+
+
+# --- The suite, set by set ------------------------------------------------------------
+
+def map_table(suites: Mapping[str, Seeds]) -> str:
+    """mAP@0.5 for dates on every set of the M2b suite, one row per arm."""
+    rows = []
+    for arm, seeds in suites.items():
+        row = {"arm": arm, "seeds": seeds_cell(seeds)}
+        for name in m2b.SUITE:
+            row[name] = value_cell(each(seeds, lambda s: date_map(suite_set(s, name))))
+        rows.append(row)
+    return markdown_table(rows, left=("arm",))
+
+
+# The two thresholds every M2b suite records: its own, and M2's rule's.
+THRESHOLDS = (("store (v1-val)", "threshold", lambda entry: entry),
+              ("M2's (real sets)", "threshold_m2", lambda entry: entry["at_threshold_m2"]))
+
+
+def threshold_table(suites: Mapping[str, Seeds], name: str = m2b.STORE_SET, seeds_column: bool = True) -> str:
+    """One set at both thresholds, two rows per arm: the threshold, dates
+    and expiry dates found (IoU 0.5), precision and false boxes per photo."""
+    rows = []
+    for arm, seeds in suites.items():
+        sets = [suite_set(s, name) for s in seeds]
+        for words, key, level in THRESHOLDS:
+            at = each(sets, lambda entry: level(entry)["iou0.5"])
+            row = {"arm": arm, "threshold": words}
+            if seeds_column:
+                row["seeds"] = seeds_cell(seeds)
+            row |= {"value": value_cell(each(seeds, lambda s: s[key]), 4),
+                    "dates found": count_cell(each(at, counted)),
+                    "expiry found": count_cell(each(at, lambda a: counted(a, "expiry"))),
+                    "precision": value_cell(each(at, lambda a: a["precision"])),
+                    "false boxes / photo": value_cell(each(at, lambda a: a["false_boxes_per_photo"]), 2)}
+            rows.append(row)
+    return markdown_table(rows, left=("arm", "threshold"))
+
+
+def control_threshold_table(root: Path | None = None) -> str:
+    """The threshold side question: M2's weights at M2's threshold against
+    at threshold_store, on v1-val, seed by seed (seed 0 is M2's detector)."""
+    control = m2b.arm_suites(m2b.CONTROL, root)
+    return threshold_table({f"m2b-{m2b.CONTROL}-s{s}": [suite] for s, suite in zip(m2b.SEEDS, control)},
+                           seeds_column=False)
+
+
+def m2_threshold_check(root: Path | None = None) -> str:
+    """M2's threshold as the M2b suite works it out again for the control
+    must be each seed's own M2 record: the same weights, sets and rule."""
+    pairs = [(s, m2b.suite_of(f"{m2b.CONTROL}-s{s}", root), m2.suite_of(f"{m2b.CONTROL_FROM}-s{s}", root))
+             for s in m2b.SEEDS]
+    pairs = [(s, ours, theirs) for s, ours, theirs in pairs if ours and theirs]
+    if not pairs:
+        return ""
+    bad = [f"seed {s}: {ours['threshold_m2']:.6f} here, {theirs['threshold']:.6f} in M2's record"
+           for s, ours, theirs in pairs if abs(ours["threshold_m2"] - theirs["threshold"]) > 1e-6]
+    if bad:
+        return "**Warning:** M2's threshold, worked out again, isn't M2's own: " + "; ".join(bad) + "."
+    values = ", ".join(f"{theirs['threshold']:.4f}" for _, _, theirs in pairs)
+    return (f"M2's threshold, worked out again in the M2b suite, is each control seed's own in M2's "
+            f"records ({values}; {len(pairs)} of {len(m2b.SEEDS)} seeds compared).")
+
+
+def expiry_tags(suites: Mapping[str, Seeds], name: str = m2b.STORE_SET) -> list[str]:
+    """The failure tags with an expiry date to find in a set, in store.TAGS order."""
+    found = {tag for seeds in suites.values() for s in seeds if s
+             for tag, entry in (suite_set(s, name) or {}).get("by_tag", {}).items()
+             if entry["iou0.5"].get("expiry_dates")}
+    return [t for t in store.TAGS if t in found]
+
+
+def at(entry: dict, level: str) -> dict:
+    """A set's (or a tag's) summary at one of LEVELS: IoU 0.5 at the run's
+    threshold, at any confidence, or at M2's threshold."""
+    return entry["at_threshold_m2"]["iou0.5"] if level == "at_threshold_m2" else entry[level]
+
+
+def _by(seeds: Seeds, name: str, key: str) -> list:
+    """Each seed's breakdown of one set (by_tag or by_size); None where a seed isn't in."""
+    return [(suite_set(s, name) or {}).get(key) if s else None for s in seeds]
+
+
+def tag_table(suites: Mapping[str, Seeds], level: str = "iou0.5", name: str = m2b.STORE_SET) -> str:
+    """Expiry dates by failure tag on one set (v1-val), then every expiry
+    and every date, at one of LEVELS: one row per arm."""
+    tags, rows = expiry_tags(suites, name), []
+    for arm, seeds in suites.items():
+        by_tag, sets = _by(seeds, name, "by_tag"), [suite_set(s, name) for s in seeds]
+        row = {"arm": arm, "seeds": seeds_cell(seeds)}
+        for tag in tags:
+            row[tag] = count_cell(each(by_tag, lambda t: counted(at(t[tag], level), "expiry")))
+        row["all expiry dates"] = count_cell(each(sets, lambda e: counted(at(e, level), "expiry")))
+        row["all dates"] = count_cell(each(sets, lambda e: counted(at(e, level))))
+        rows.append(row)
+    return markdown_table(rows, left=("arm",))
+
+
+SIZE_COUNTS = {"found": "found at each run's threshold", "found_at_threshold_m2": "found at M2's threshold",
+               "boxed_at_any_confidence": "boxed at any confidence"}
+
+
+def size_table(suites: Mapping[str, Seeds], key: str = "found") -> str:
+    """v1-val's dates by Cause 4's size bands (m2b.SIZE_BANDS), one row per arm."""
+    rows = []
+    for arm, seeds in suites.items():
+        by_size = _by(seeds, m2b.STORE_SET, "by_size")
+        row = {"arm": arm, "seeds": seeds_cell(seeds)}
+        for band, _, _ in m2b.SIZE_BANDS:
+            row[band] = count_cell(each(by_size, lambda b: (b[band][key], b[band]["dates"])))
+        rows.append(row)
+    return markdown_table(rows, left=("arm",))
+
+
+def strata_table(suites: Mapping[str, Seeds], level: str = "iou0.5", name: str = "synth-val-v2",
+                 strata: Sequence[str] = STRATA_V2) -> str:
+    """A generated set's targets, one column per stratum, one row per arm:
+    synth-val-v2's, or M2's synth-val with m2_results.STRATA."""
+    rows = []
+    for arm, seeds in suites.items():
+        by_tag = _by(seeds, name, "by_tag")
+        row = {"arm": arm, "seeds": seeds_cell(seeds)}
+        for stratum in strata:
+            row[stratum] = count_cell(each(by_tag, lambda t: counted(t[stratum][level], "expiry")))
+        rows.append(row)
+    return markdown_table(rows, left=("arm",))
+
+
+# --- Training: ft2's frozen layers, and compute ---------------------------------------
+
+def frozen_table(arm: str = "n1280-ft2", root: Path | None = None) -> str:
+    """What each two-stage run's first stage moved (m2b.frozen_drift, in
+    its run.json): in the frozen layers, and in the layers it trained."""
+    rows = []
+    for name in run_names((arm,)):
+        run_dir = m2b.finished_run(name, root)
+        row = {"run": f"m2b-{name}"}
+        drift = None if run_dir is None else next(
+            (stage["frozen"] for stage in m2.read_json(run_dir / "run.json").get("stages", ())
+             if "frozen" in stage), None)
+        if drift is None:
+            rows.append(row | dict.fromkeys(("frozen layers", "convolution weights",
+                                             "batch-norm weights and biases", "running means",
+                                             "running variances", "values trained"), NOT_YET))
+            continue
+
+        def moved(kind: str) -> str:
+            return f"{drift[kind]['changed']:,} of {drift[kind]['values']:,}"
+
+        trained = drift["trained"]
+        rows.append(row | {"frozen layers": f"0 to {drift['layers'] - 1}",
+                           "convolution weights": moved("conv"),
+                           "batch-norm weights and biases": moved("bn_affine"),
+                           "running means": moved("bn_running_mean"),
+                           "running variances": moved("bn_running_var"),
+                           "values trained": f"{moved('trained')} "
+                                             f"({100 * trained['changed'] / trained['values']:.1f}%)"})
+    return markdown_table(rows, left=("run",))
+
+
+def _times(path: Path) -> list[float] | None:
+    """The cumulative `time` column of a results.csv; None if it isn't here."""
+    try:
+        with path.open() as f:
+            return [float(row["time"]) for row in csv.DictReader(f)]
+    except FileNotFoundError:
+        return None
+
+
+def stages(run_dir: Path, record: dict) -> list[dict]:
+    """Each Ultralytics training in a run (one, or a two-stage run's two):
+    its epochs, minutes, the minutes outside its epochs (setup: lists,
+    label scan, loading and saving; results.csv's clock starts with epoch
+    1), its first epoch's seconds and images a second over epochs 2 to the
+    last but one (m2_results.throughput's measure). A
+    stage's results.csv is in the run's folder once pulled (a first stage
+    in <id>-stage1/), else beside its weights."""
+    parts = record.get("stages") or [record]
+    out = []
+    for k, stage in enumerate(parts, 1):
+        if k == len(parts):
+            path = m2.results_csv(run_dir)
+        else:
+            pulled = run_dir.parent / f"{run_dir.name}-stage{k}" / "results.csv"
+            path = pulled if pulled.exists() else Path(stage["applied"]["save_dir"]) / "results.csv"
+        times, images = _times(path), stage["applied"]["train_images"]
+        speed = (images * (len(times) - 2) / (times[-2] - times[0])
+                 if times and len(times) >= 3 else None)
+        out.append({"epochs": stage["epochs_run"], "minutes": stage["train_minutes"],
+                    "setup_minutes": stage["train_minutes"] - times[-1] / 60 if times else None,
+                    "epoch_1_s": times[0] if times else None, "images_per_s": speed})
+    return out
+
+
+COMPUTE = ("trained", "epochs", "photos per epoch", "train minutes", "setup minutes", "epoch 1 s",
+           "images/s", "M2b suite minutes", "M2 suite minutes")
+
+
+def runs_table(names: Sequence[str], root: Path | None = None) -> str:
+    """Compute, one row per M2b run (`n1280-ft-s0`, ...): epochs, photos
+    per epoch, training minutes and those outside its epochs, epoch 1's
+    seconds and images a second (a two-stage run's two stages joined by
+    +), and the minutes each suite took to score it; then the sums."""
+    rows, train, scoring = [], 0.0, 0.0
+    for name in names:
+        run_dir = m2b.finished_run(name, root)
+        row = {"run": f"m2b-{name}"}
+        if run_dir is None:
+            rows.append(row | dict.fromkeys(COMPUTE, NOT_YET))
+            continue
+        record = m2.read_json(run_dir / "run.json")
+        suites = [m2.read_json(run_dir / f) for f in (m2b.SUITE_FILE, "suite.json")]
+        if record["config"].get("trained") is False:
+            row |= {"trained": "no: M2's weights", **dict.fromkeys(COMPUTE[1:7], NA)}
+        else:
+            parts = stages(run_dir, record)
+
+            def joined(key: str, fmt: Callable[[float], str]) -> str:
+                return " + ".join(NOT_YET if p[key] is None else fmt(p[key]) for p in parts)
+
+            row |= {"trained": "yes", "epochs": joined("epochs", str),
+                    "photos per epoch": f"{record['applied']['train_images']:,}",
+                    "train minutes": joined("minutes", lambda v: f"{v:g}"),
+                    "setup minutes": joined("setup_minutes", lambda v: f"{v:.1f}"),
+                    "epoch 1 s": joined("epoch_1_s", lambda v: f"{v:.0f}"),
+                    "images/s": joined("images_per_s", lambda v: f"{v:.0f}")}
+            train += record["train_minutes"]
+        for column, suite in zip(COMPUTE[7:], suites):
+            row[column] = f"{suite['scored']['minutes']:g}" if suite else NA
+            scoring += suite["scored"]["minutes"] if suite else 0.0
+        rows.append(row)
+    total = (f"Over these runs: {train / 60:.2f} h of training (setup included) and "
+             f"{scoring / 60:.2f} h of scoring, from their records.")
+    return paragraphs(markdown_table(rows, left=("run", "trained")), total)
+
+
+def every_run(root: Path | None = None) -> list[str]:
+    """Every M2b run the chain lists, but the smoke, in its order by arm:
+    the control, step 1, step 2 on n, then on s and m with R2's recipe."""
+    recipe = (m2b.decisions(root).get("R2") or {}).get("recipe") or "ft"
+    return run_names((m2b.CONTROL, *m2b.STEP1, *STEP2_N, f"s1280-{recipe}", f"m1280-{recipe}"))
+
+
+# --- The experiments' blocks ------------------------------------------------------------
+
+def fine_tune_block(root: Path | None = None) -> str:
+    """experiments/m2b-fine-tune: the noise band, R1 and R2; each n arm
+    against the control on every set; the threshold side question; v1-val
+    by tag and by size; ft2's frozen layers; compute."""
+    suites = arm_suites(FINE_TUNE, root)
+    return paragraphs(
+        "**The rules**, applied by the chain as their inputs came in, and worked out again here:",
+        noise_line(root), r1_line(root),
+        "**R2**, `ft` against `ft2` on `n`: the guard (real-val and synth-val, no more than "
+        f"{m2b.NOISE} under the control), then the mean on v1-val; mAP@0.5 for dates over the 3 seeds:",
+        r2_table(root), r2_line(root), record_check(root),
+        "**mAP@0.5 for dates on every set of the M2b suite:**", map_table(suites),
+        "**real-val-rot180** (ExpDate's validation photos turned 180°), at each run's threshold:",
+        suite_table(suites, "real-val-rot180"),
+        "**v1-val at both thresholds**: each run's own (threshold_store, the best F2 on v1-val) and "
+        "M2's rule's (the best F2 on the three real sets, pooled):", threshold_table(suites),
+        "**The threshold on M2's weights**, seed by seed (seed 0 is the M2 detector):",
+        control_threshold_table(root), m2_threshold_check(root),
+        f"**v1-val by failure tag**, expiry dates {LEVELS['iou0.5']}:", tag_table(suites),
+        f"{LEVELS['at_threshold_m2']}:", tag_table(suites, "at_threshold_m2"),
+        f"and {LEVELS['any_conf']}:", tag_table(suites, "any_conf"),
+        "**v1-val's dates by size** (Cause 4's bands: a box's short side over its photo's long side), "
+        f"{SIZE_COUNTS['found']}:", size_table(suites),
+        f"{SIZE_COUNTS['found_at_threshold_m2']}:", size_table(suites, "found_at_threshold_m2"),
+        f"**synth-val, M2's strata**, targets {LEVELS['iou0.5']}:",
+        strata_table(suites, "iou0.5", "synth-val", m2r.STRATA),
+        f"and {LEVELS['any_conf']}:", strata_table(suites, "any_conf", "synth-val", m2r.STRATA),
+        "**ft2's frozen layers** (stage 1, from the control's weights to its last.pt; layers 0 to 10, "
+        "the backbone):", frozen_table(root=root),
+        "**Compute** (GPU job B on an H100; minutes and images a second from each run's record and "
+        "results.csv):", runs_table(run_names(FINE_TUNE), root))
+
+
+def gen_v2_block(root: Path | None = None) -> str:
+    """experiments/m2b-gen-v2: n1280-ft against n1280-ft-gen50k in the
+    plan's order, the control beside them: synth-val-v2 per stratum (the
+    layouts), then real-val-small and v1-val's dates by size (the sizes),
+    then real-val-rot180. No rule decides it."""
+    suites = arm_suites(GEN_V2, root)
+    noise = m2b.decisions(root).get("noise_store")
+    band = (f"v1-val's noise band is {noise['band']:.4f}, the control's seed spread; "
+            if noise else "v1-val's noise band isn't fixed yet; ")
+    return paragraphs(
+        "No rule decides this side question (\"Reading the side questions\"): it is read in the "
+        f"order the plan fixed. As yardsticks, {band}on the real and synthetic sets the rules use "
+        f"{m2b.NOISE} of mAP@0.5. {record_check(root)}",
+        f"**1. The layouts: synth-val-v2 by stratum**, targets {LEVELS['iou0.5']}:",
+        strata_table(suites), f"and {LEVELS['any_conf']}:", strata_table(suites, "any_conf"),
+        "synth-val-v2 as a whole, at each run's threshold:", suite_table(suites, "synth-val-v2"),
+        "**2. The sizes: real-val-small** (ExpDate's validation photos in 2 × 2 grids, every date "
+        "at half its size):", suite_table(suites, "real-val-small"),
+        f"and **v1-val's dates by size**, {SIZE_COUNTS['found']}:", size_table(suites),
+        f"and {SIZE_COUNTS['boxed_at_any_confidence']}:", size_table(suites, "boxed_at_any_confidence"),
+        "v1-val as a whole, at each run's threshold:", suite_table(suites, "v1-val"),
+        "**3. real-val-rot180** (ExpDate's validation photos turned 180°):",
+        suite_table(suites, "real-val-rot180"))
+
+
+def main() -> None:
+    print(runs_table(every_run()))
+
+
+if __name__ == "__main__":
+    main()

@@ -237,15 +237,16 @@ def strata_table(suites: Mapping[str, Seeds], level: str = "iou0.5") -> str:
 
 # --- Decisions, worked out again and compared with the chain's record ---------------
 
-def chain_check(key: str, root: Path | None = None) -> str:
-    """How decision `key`, worked out again here with m2.decisions(),
-    compares with the chain's record, results/runs/m2-decisions.json."""
-    ours = m2.decisions(root).get(key)
-    chain = (m2.read_json(m2.decisions_path(root)) or {}).get(key)
+def chain_check(key: str, root: Path | None = None, rules=m2) -> str:
+    """How decision `key`, worked out again here with rules.decisions(),
+    compares with the chain's record, results/runs/m2-decisions.json (or
+    m2b-decisions.json for rules=m2b)."""
+    ours = rules.decisions(root).get(key)
+    chain = (m2.read_json(rules.decisions_path(root)) or {}).get(key)
     if ours is None and chain is None:
         return ""
     if ours == chain:
-        return "The chain's own record (`results/runs/m2-decisions.json`) agrees."
+        return f"The chain's own record (`results/runs/{rules.decisions_path(root).name}`) agrees."
     if chain is None:
         return "The chain hasn't recorded this decision yet."
     if ours is None:
