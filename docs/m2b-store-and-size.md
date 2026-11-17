@@ -29,7 +29,10 @@ R3, smoked on a CPU node of the cluster; the frozen layers didn't move;
 stage 2 ready); job B released 2026-11-12, ran 2026-11-13 to 11-14 and did
 all of stage 2, S12's GPU work included; S11 done 2026-11-17 (the noise
 band 0.1414, R1 passes, R2 `ft`; fine-tuning far above the control;
-gen-v2 helps its own strata only). Next: S12, on the laptop only.
+gen-v2 helps its own strata only); S12 done 2026-11-17 (R3 `n1280-ft`:
+`n1280-ft-s0` at 0.1641; `m1280-ft` better on every seed, inside a band too
+coarse to separate fine-tuned arms; kept by the rule, owner's call). Next:
+S13.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -2914,6 +2917,7 @@ found:
   tasks done and the decisions "noise band 0.1414, R1 passes, R2 ft, R3
   n1280-ft". Waiting, held: `73906` (A's spare) and M3's `73946` and
   `73947`; nothing running. Nothing was submitted, released or cancelled.
+  **(corrected 2026-11-17, S12: 56 tasks, 8, 17, 7 and 24 by section.)**
 - **The AssertionError is harmless, and no result moved.** It appears once
   in the 4,053-line log, in the last task, `suite-m2b-m1280-ft-s2`, while
   Ultralytics validated real-val-rot180: `Exception ignored in:
@@ -3078,6 +3082,174 @@ changes):
 - **Commits:** `feat: m2b model size tables, r3 read back` (`m2b_results.py`
   and its tests) before `docs: m2b model size results`, as S11's code and
   results were two.
+
+**Done 2026-11-17.** The plan's note `8c4e360`, then the tables
+(`src/bestbefore/m2b_results.py`: R3 read back, v1-val by class, the early
+read's check, `n`'s step-1 compute and `model_size_block`, with 5 new tests
+in `tests/test_m2b_results.py`), then `experiments/m2b-model-size` and this
+record. 1,070 tests pass (1,065 before), and the code commit passes
+alone, in a worktree with the laptop's data and nothing skipped
+(1,070). What was found:
+
+- **The cluster, read-only** (2026-11-17 20:48; `squeue`, `sacct`, the
+  records, the chain's dry run, the weights). Waiting, held: `73906` (A's
+  spare) and M3's `73946` and `73947`; nothing running. No M2b job has run
+  since job B, only M3's CPU jobs (`73965` to `73971`, 2026-11-16). All 75
+  M2b JSON files of the cluster's `results/runs/` (every run's records and
+  the decisions) and all 29 M2b `results.csv` are the laptop's, SHA-256 by
+  SHA-256, so nothing was pulled. `m2b-decisions.json` is still
+  `66b8411c…` and equals `m2b.decisions()` worked out on the laptop. The
+  cluster's checkout stays at `679849a`. The chain's dry run there lists 56
+  tasks, all done (8 in stage 1, 17 in stage 2, 7 scores on M2's suite and
+  24 on the M2b suite; S11's record said 58, corrected there), and "R3
+  n1280-ft". Nothing was submitted, released or cancelled.
+- **R3, as the code computes it: `n1280-ft`**, so the M2b detector is
+  `n1280-ft-s0` (v1-val 0.9514) at its `threshold_store`, 0.1641, unless R4
+  adopts the ensemble. Every candidate passes the guard. The best mean is
+  `m1280-ft`'s 0.9868 and the band 0.1414, so the band's edge is 0.8454.
+  From it: `n1280` −0.1253, **`n1280-ft` +0.0961, the cheapest inside**,
+  `s1280` −0.0648, `s1280-ft` +0.1194, `m1280` −0.0010 and `m1280-ft`
+  +0.1414. `m1280`, with no store training, sits 0.1 point under the edge,
+  a sixteenth of one date; inside, it wouldn't change R3, as `n1280-ft`
+  comes first. `summarise.py` agrees with the chain's whole record. **R3's
+  choice stands** (the owner's call): the rule was set in advance, and `n`
+  is the fastest, which live scanning needs.
+- **`m1280-ft` was consistently better.** On v1-val's dates 0.987
+  (0.982–0.992) against `s1280-ft`'s 0.965 (0.961–0.972) and `n1280-ft`'s
+  0.942 (0.936–0.951): every `m` seed above every `s` seed, and every `s`
+  seed above every `n` seed. The same on the `prod` keyword boxes (the
+  manufacture word M3 reads): `m` 0.884 (0.851–0.936) against `n` 0.717
+  (0.674–0.751) and `s` 0.736 (0.713–0.753). On `code` boxes `m` (0.529)
+  and `s` (0.538) are level, every seed above `n`'s (0.383–0.425); on `due`
+  all three are level (0.950 to 0.957). At its own threshold `m1280-ft`
+  finds 61.3 of 63 dates and all 29 expiries at precision 0.995 (0.01
+  false boxes a photo), `n1280-ft` 60 and 27.7 at 0.776 (0.51): `m`'s
+  `threshold_store` is 0.65 against `n`'s 0.17.
+- **The band was too coarse to separate fine-tuned arms.** It is the
+  control's seed spread, 14.1 points, as the rule says, and right for
+  telling fine-tuning from no training. Fine-tuned seeds spread 1.5 (`n`),
+  1.2 (`s`) and 1.0 (`m`) points; `m1280-ft` is 4.5 points above
+  `n1280-ft`, about three times that, and well inside the band. So every
+  fine-tuned arm ties under R3, which falls to the cheapest whatever size
+  is best. A band from the fine-tuned arms' own spread is in
+  [Later](#later), with `m1280-ft` as M3's fallback. No rule or band
+  changed.
+- **R4 can't adopt any add-on with this band.** It adopts one only if it
+  raises v1-val AP by more than the band; `n1280-ft-s0` scores 0.9514, 4.9
+  points short of 1.0 (Ultralytics' mAP; R4's own AP should agree within
+  0.01, S13 checks). That is R4 as written; S13 reads it.
+- **Step 1: bigger finds more store dates, but reads upside-down print
+  worse.** v1-val 0.720 (`n`), 0.781 (`s`), 0.844 (`m`); `s`'s range
+  overlaps the control's. On ExpDate's quarter turns and small copies
+  bigger helps (real-val-rot 0.988, 0.993, 0.995; real-val-small 0.986,
+  0.994, 0.995), but real-val-rot180 falls with size, 0.435, 0.295, 0.234,
+  and so do synth-val-v2's upside-down targets boxed at any confidence,
+  226.7, 199.7 and 166.3 of 300. Step 1 trains on 90° and 270° turns only;
+  that a bigger model carries a half turn it never saw less far is a
+  reading, not tested. Step 2, with the real 180° copies in the replay,
+  turns it round: 0.953, 0.970, 0.983.
+- **Where a bigger model doesn't beat a smaller one, or the control:**
+  `s1280` at step 1 on sideways expiries (2.7 of 6 against the control's
+  3.3) and on the smallest dates boxed at any confidence (16.3 of 23
+  against 18.3); one dot-matrix expiry missed in a seed by `m1280` and by
+  `s1280-ft` at their thresholds; `m1280-ft` finds fewer of
+  real-val-rot180's dates at its high threshold (176.7 of 187 against
+  `n1280-ft`'s 178.7 and `s1280-ft`'s 181.3, at precision 0.955 against
+  0.788 and 0.857); `s1280-ft` a target or two ahead of `m1280-ft` on
+  synth-val-v2's upside-down, worn and nozzle-row strata; and the smallest
+  store dates after fine-tuning, 21.7, 22 and 22.7 of 23. `n1280-ft` is
+  0.5 points under the control on real-val-rot; `s1280-ft` and `m1280-ft`
+  aren't.
+- **What we expected**, against what happened: `s1280` "a little up" on
+  v1-val held (+6.0 points, inside the band), on sideways it didn't (2.7
+  against 3.3 of 6), and its real-val-rot180 is 0.295, not "about 0"; on
+  small dates it finds 2 more at its threshold and boxes 2 fewer at any
+  confidence. `m1280` is not "about as `s`": every seed above every `s`
+  seed, so R1 passed. `s1280-ft` is the highest of the arms first planned,
+  but `m1280-ft`, run by R1, is higher; "up the most" on small dates by a
+  third of a date. Real-val is as `n`'s everywhere. Month words wait for
+  v2 (S14).
+- **Step 1's early read on M2's suite adds nothing**: for all 9 step-1
+  runs (`n`'s from M2's own records) its mAP on the four sets it shares
+  with the M2b suite, and M2's threshold, are the M2b suite's to the fourth
+  decimal. So the early read is shown as one checked line.
+- **`m1280`'s seeds trained at two commits**, seed 0 in job A at
+  `2b68e2e`, seeds 1 and 2 in job B at `04451ff` and `4d3166e`. Their
+  Ultralytics arguments are the same but for name, seed and paths, and so
+  are torch and Ultralytics; only `onnxruntime` 1.31.1 was added to the
+  venv in between (M3 S1), which training doesn't use.
+- **The M2b detector's weights are on the cluster**, read-only
+  (`sha256sum`, `stat`), under `~/bestbefore-data/checkpoints/m2b/`, each
+  5,585,434 bytes, with `best.pt` beside it:
+
+  | Run | `last.pt` SHA-256 |
+  |---|---|
+  | `20261113-092835-m2b-n1280-ft-s0` | `c839af8a810a96a6297576cf8ecc4349dc05d19866d0f6d9cb3112ecfda138bd` |
+  | `20261113-104348-m2b-n1280-ft-s1` | `4a9fef7987999b0f46c34a498f483e6bfddcbcc0215588adfaa1b51eb4e52364` |
+  | `20261113-115550-m2b-n1280-ft-s2` | `ec403127eaa42293cca1c49d2e5a02865efd56851cfa6af654dc3a04f8b5b370` |
+
+  **No run record holds the SHA-256 of its final `last.pt`**: a step-2
+  record hashes the weights it started from (`config.start.sha256`), the
+  control's records M2's, but not what a run made. So these were taken
+  now, not at training. Each file was last written when its training ended
+  (its start plus its training minutes, within 20 s) and before it was
+  scored, so the scored weights are these files. Not copied (S13's).
+- **Compute by size** (the README's table, from the records; estimates
+  from S2 and S10). Step 1: `n` 203.2 minutes a run at 211 images a second
+  (M2's own records), `s` 230.3 to 239.4 at 185 to 186 (S2: about 3.9
+  hours), `m` 388.8 to 395.6 at 108 to 110 (S2: about 80 a second, 7.5 to
+  12.4 hours; the plan's 7). Step 2: `n` 22.7 to 25.4 minutes at 203 to
+  204, `s` 23.1 to 23.3 at 189 to 190 (S10: 23), `m` 40.5 to 43 at 110 to
+  111 (S10: 39). `m` trains at about half `n`'s speed. S10 put `s1280` at
+  177 to 184 images a second, over each run's whole training time; the
+  tables measure epochs 2 to the last but one, as M2. The M2b suite, the
+  only inference time recorded, took 1.7 to 1.8 minutes on an H100 for
+  `n1280-ft`, 1.9 to 2 for `s1280-ft` and 2.4 for `m1280-ft`.
+- **GPU memory** (Ultralytics' `GPU_mem` in jobs A's and B's logs, peak
+  per training, read with a scratch parser): step 2 takes what step 1 did
+  for each size, `n` 9.3 to 10.0 GB, `s` 16.1 to 16.2 (step 1 16.2 to
+  16.3), `m` 30.6 to 30.7 (step 1 30.8 for all three seeds; S2 estimated
+  44). `ft2`'s frozen first stage took 4.9 to 5.0 GB, half of `ft`'s,
+  though no faster (S11).
+- **`73906` isn't needed.** It runs `slurm/m2b_chain.sh`, whose chain has
+  nothing left, so released it would end at once. S13 to S15 run on the
+  laptop, or as CPU jobs on `short` where the laptop's heat rule asks; a
+  GPU job for later work (Later's ideas) would need new code and its own
+  job. Held, it takes one of the account's 5 submitted jobs, which M3's CPU
+  jobs could use. Recommended: `scancel 73906`, the owner's call; not
+  touched.
+- **Details fixed while writing:** `r2_recipe` is shared by `every_run` and
+  the size arms; R3's table shows `m`'s rows while R1 has passed or isn't
+  known, as R3 leaves `m` out when it fails; v1-val by class shows "–"
+  where a set has no box of a class; the early read's check warns only
+  beyond `NOISE`. Four deliberate bugs, one at a time, were each caught by
+  the new tests: the best mean taken over every candidate, not those
+  through the guard; the early read compared with `threshold_store`; the
+  class table read from `map50_95`; `m`'s rows kept after R1 fails. The
+  file was put back and compared by SHA-256 after each.
+- **Searched**: this slice's 913 added lines (from `d2d9b10`: the code, tests,
+  the README, `summarise.py` and this plan's changes) against every v1,
+  v2 and v3 photo name (196, and the 15 HEIC names) and the 132 stems of 5
+  characters or more (v2's from S4's `designs.json`, no v2 file opened),
+  all 92 design ids and their 128 words of 4 characters or more, the
+  cluster's user name and the owner's email: no name, no id; 3 common
+  words of design ids match, each inside plain English (`clear`, `pack`
+  and `training`, in "clearly", "pack designs" and "training").
+- **Not checked:** CPU inference time per size (the suites' H100 minutes
+  are the only inference time here; S13 times the chosen configuration);
+  why `m1280-s1` and `-s2` scored in 4.0 and 4.3 minutes where `-s0` took
+  2.3 (S11's question, still open); v1-val by pack design or date format
+  (the suite records neither); whether step 1's weakness on upside-down
+  print grows with size for a reason, or by chance in three seeds; the
+  weights' copies (S13's); the learnings guide (not written).
+- **For S13:** the arm is `n1280-ft`, the run `n1280-ft-s0` at
+  `threshold_store` 0.1641, the band 0.1414; copy the three `last.pt` above
+  and check each against its SHA-256 here. R4, as written, can't adopt an
+  add-on with this band (above). S13's steps on the laptop's CPU (the device
+  check, the add-ons on v1-val) meet the heat rule in `CLAUDE.md`, which
+  keeps only v2's one-time pass on the laptop and sends other scoring to
+  `short` jobs; the device check's point is the laptop's CPU, as v2 is
+  scored there. S13 decides where each runs before its code.
 
 ### S13. Inference add-ons · laptop
 
@@ -3290,7 +3462,19 @@ results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed
   the store share, instead of two steps.
 - **Sizes apart from layouts**: a gen-v2 with M2's sizes, to tell what the
   store-like sizes add on their own (the side arm measures both together).
-- **`l` or `x`**, only if `m` clearly beats `s`.
+- **`l` or `x`**, only if `m` clearly beats `s`. **(S12)** After
+  fine-tuning `m` beats `s` on every seed (v1-val 0.987 against 0.965),
+  inside the band; v1-val leaves 1.3 points above `m1280-ft`, too little
+  to show a bigger model, so that needs a harder store set first.
+- **`m1280-ft` for M3 (owner's call, S12): if M3 loses photos to missed
+  mfg keyword boxes or missed dates, try `m1280-ft`.** On v1-val it beat
+  `n1280-ft`, the M2b detector, on every seed, on dates (0.987 against
+  0.942) and on `prod` boxes (0.884 against 0.717), at precision 0.995
+  against 0.776; R3 kept `n` because the band, the control's seed spread
+  (14.1 points), can't separate fine-tuned arms. With it, **a band from the
+  fine-tuned arms' own seed spread** (1.0 to 1.5 points on v1-val) for
+  choosing between fine-tuned arms, written before it is used. M3's
+  results by failure show whether the detector is what holds it back.
 - **The pack's own orientation**: a whole photo turned (EXIF missing)
   against print turned on an upright pack; the gallery can't yet tell
   which the 15 sideways expiries are.
