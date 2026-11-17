@@ -101,16 +101,6 @@ def predict(name: str, device: str | None, limit: int | None = None) -> Path:
     weights = {seed: m2b.last_pt(f"{arm}-s{seed}") for seed in m2b.SEEDS}
     samples = sets.load_set(name)[:limit]
     every = ensemble.every_pass()
-    config = {"set": name, "arm": arm, "photos": len(samples), "limit": limit,
-              "weights": {f"s{seed}": {"run": run, "sha256": m2b.LAST_PT_SHA256[f"{arm}-s{seed}"]}
-                          for seed, (_, run) in weights.items()},
-              "passes": [p.name for p in every], "predict_conf": detector.PREDICT_CONF, "rect": False,
-              **machine(device)}
-    # A smoke (--limit) is named apart, so `score` never takes it for the set's passes.
-    record = runs.start_run(f"m2b-inference-passes-{name}" + ("-smoke" if limit else ""), config)
-    private = name == m2b.STORE_SET
-    folder = store.RUNS_DIR / record.name if private else record
-    folder.mkdir(parents=True, exist_ok=True)
     models = {seed: YOLO(str(path)) for seed, (path, _) in weights.items()}
 
     def predictor(seed: int, imgsz: int):
@@ -121,6 +111,18 @@ def predict(name: str, device: str | None, limit: int | None = None) -> Path:
     for seed in models:                                     # warm-up, untimed, not kept
         for imgsz in (ensemble.IMGSZ, ensemble.IMGSZ_UP):
             predictor(seed, imgsz)(first)
+    # Read after the warm-up: Ultralytics sets torch's threads when it first
+    # predicts on a CPU (min(8, CPUs - 1)), whatever OMP_NUM_THREADS said.
+    config = {"set": name, "arm": arm, "photos": len(samples), "limit": limit,
+              "weights": {f"s{seed}": {"run": run, "sha256": m2b.LAST_PT_SHA256[f"{arm}-s{seed}"]}
+                          for seed, (_, run) in weights.items()},
+              "passes": [p.name for p in every], "predict_conf": detector.PREDICT_CONF, "rect": False,
+              **machine(device)}
+    # A smoke (--limit) is named apart, so `score` never takes it for the set's passes.
+    record = runs.start_run(f"m2b-inference-passes-{name}" + ("-smoke" if limit else ""), config)
+    private = name == m2b.STORE_SET
+    folder = store.RUNS_DIR / record.name if private else record
+    folder.mkdir(parents=True, exist_ok=True)
     boxes = {p.name: {} for p in every}
     taken = {p.name: [] for p in every}
     for k, sample in enumerate(samples):
@@ -250,7 +252,9 @@ def score() -> Path:
            "sources": {name: {"run": run_dir.name, "boxes_sha256": record["boxes_sha256"],
                               "git_commit": record["git_commit"], "git_dirty": record["git_dirty"],
                               **{k: record["config"][k] for k in ("device", "torch_threads", "processor",
-                                                                   "platform", "photos")}}
+                                                                   "platform", "photos")},
+                              # a record made before b345960 read the threads too early; its note says
+                              "torch_threads_used": record.get("torch_threads_used")}
                        for name, (run_dir, record, _) in loaded.items()},
            "wbf": {"iou_thr": ensemble.WBF_IOU, "conf_type": ensemble.WBF_CONF,
                    "skip_box_thr": detector.PREDICT_CONF},
@@ -299,16 +303,16 @@ def time_models(device: str | None) -> Path:
     weights = {name: m2b.last_pt(name) for name in dict.fromkeys(n for n, _ in timed)}
     samples = m2b.load_v1_val()
     images = [load_upright(s.image) for s in samples]
-    config = {"timed": [f"{n}@{size}" for n, size in timed], "photos": len(images),
-              "photo_long_side_median": statistics.median(max(im.size) for im in images),
-              "warmup": WARMUP, "repeats": REPEATS, "batch": 1, "rect": False,
-              "weights": {n: {"run": r, "sha256": m2b.LAST_PT_SHA256[n]} for n, (_, r) in weights.items()},
-              **machine(device)}
-    record = runs.start_run("m2b-inference-timing", config)
     models = {name: YOLO(str(path)) for name, (path, _) in weights.items()}
     for name, size in timed:
         for _ in range(WARMUP):
             detector.predict(models[name], [images[0]], size, device)
+    config = {"timed": [f"{n}@{size}" for n, size in timed], "photos": len(images),
+              "photo_long_side_median": statistics.median(max(im.size) for im in images),
+              "warmup": WARMUP, "repeats": REPEATS, "batch": 1, "rect": False,
+              "weights": {n: {"run": r, "sha256": m2b.LAST_PT_SHA256[n]} for n, (_, r) in weights.items()},
+              **machine(device)}           # after the warm-up, as predict's
+    record = runs.start_run("m2b-inference-timing", config)
     taken = {f"{n}@{size}": [[] for _ in range(REPEATS)] for n, size in timed}
     started = time.time()
     for r in range(REPEATS):

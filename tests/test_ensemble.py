@@ -217,3 +217,26 @@ def test_n_is_timed_beside_m_without_keeping_a_box(inference):
     assert len(one["per_photo_s"]) == script.REPEATS and all(len(r) == 2 for r in one["per_photo_s"])
     assert timing["config"]["warmup"] == 2 and timing["config"]["batch"] == 1
     assert "p1.png" not in json.dumps(timing)
+
+
+def test_torchs_threads_are_read_after_ultralytics_sets_them(inference, monkeypatch):
+    """Ultralytics sets torch's threads when it first predicts on a CPU
+    (min(8, CPUs - 1)), so a record reads them after the warm-up."""
+    import torch
+
+    script, _ = inference
+    before, fake = torch.get_num_threads(), detector.predict
+
+    def predict_and_set(model, images, imgsz, device):
+        torch.set_num_threads(3)
+        return fake(model, images, imgsz, device)
+
+    monkeypatch.setattr(detector, "predict", predict_and_set)
+    try:
+        torch.set_num_threads(1)
+        record = script.predict("v1-val", "cpu", limit=1)
+        timing = script.time_models("cpu")
+    finally:
+        torch.set_num_threads(before)
+    assert json.loads((record / "run.json").read_text())["config"]["torch_threads"] == 3
+    assert json.loads((timing / "timing.json").read_text())["config"]["torch_threads"] == 3
