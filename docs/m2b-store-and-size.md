@@ -2863,6 +2863,38 @@ and `m2b-gen-v2` `summarise.py` must agree with `m2b-decisions.json` (a
 disagreement stops the slice).
 **Commit:** `docs: m2b fine-tuning and gen-v2 results`
 
+**Added 2026-11-17, before S11's code** (no rule, band, threshold or share
+changes):
+
+- **Job B ran S12's GPU work too.** `73832` ran from 2026-11-13 09:09 to
+  11-14 05:53 on `cn5` (20 h 44 min, exit 0): the M2b suite on the control
+  and step 1, `n`'s 9 step-2 runs, then `s1280-ft` ×3 (R2 named `ft`),
+  `m1280` s1 and s2 and `m1280-ft` ×3 (R1 passed), and it ended with
+  nothing left. The chain wrote the noise band, R1, R2 and R3. So "Jobs A
+  and B run what is ready" is history: A's spare, `73906`, never ran and
+  stays held (whether it is still needed is S12's question). S11 pulls
+  every run; S12 is laptop work only.
+- **Where R1 and the threshold go:** the plan names no experiment for them.
+  `experiments/m2b-fine-tune` holds the noise band, R1 and R2 (each checked
+  against the chain's record), each `n` arm against the control, and the
+  threshold side question (M2's weights at M2's threshold against
+  `threshold_store`, on v1-val). `experiments/m2b-gen-v2` holds `ft`
+  against `ft-gen50k`, in the order [Reading the side
+  questions](#the-validation-suite-m2b) fixes; no rule decides it, and its
+  `summarise.py` checks the chain's record all the same. S12's
+  `m2b-model-size` shows R1 again beside `s` and `m`.
+- **Store month words** (a column of [What we
+  expect](#what-we-expect-written-before-any-run)): the M2b suite splits
+  v1-val by tag and by size, not by format, so month words are read on v2,
+  by cause, in S14.
+- **Compute:** each run's training minutes and images a second (from
+  `results.csv`, epochs 2 to the last but one, as M2) and each suite's
+  minutes, against S10's estimates; job B's `s` and `m` runs too, as
+  compute only (their scores are S12's).
+- **Commits:** `feat: m2b results tables` (`m2b_results.py` and its tests)
+  before the slice's `docs: m2b fine-tuning and gen-v2 results`: code and
+  results are two logical changes.
+
 ### S12. Step 2 on `s` (and `m` by R1) · cluster, then laptop
 
 **Goal:** R3, the M2b detector's arm.
