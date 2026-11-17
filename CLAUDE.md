@@ -265,7 +265,13 @@ this repo.
   RapidOCR 1.2.3 has no option for it: replace
   `rapidocr_onnxruntime.utils.SessionOptions` before building it
   (`scripts/crop_experiment.py`). PaddleOCR 3.7 runs on Paddle, not ONNX
-  Runtime, and takes `cpu_threads` (M3 S2).
+  Runtime, and takes `cpu_threads` (M3 S2). **Ultralytics sets torch's
+  threads itself** (M2b S13): importing it sets `OMP_NUM_THREADS=1` when
+  unset, and its first prediction on a CPU sets torch to `min(8, CPUs −
+  1)` threads, whatever `OMP_NUM_THREADS` says: 7 on the laptop, and by
+  that rule 8 in a job on a 48-CPU node however many CPUs it asked for
+  (not measured in a job). Read `torch.get_num_threads()` after the first
+  prediction, not before.
 - **Don't train in bf16 on the CPU nodes** (M3 S5): the CRNN's bf16
   training gave NaN 3 times in 3 on `cn1` (jobs 73967, 73969, 73970, at
   steps under 50, 202 and 34), though a one-convolution bf16 check
@@ -384,7 +390,11 @@ this repo.
   M2b S2). Its `step2` task (M2b S10, job 73951) trained yolo11n's ft and
   two-stage smokes on 413 photos in 3 and 4 minutes and scored the M2b
   suite's 5,070 photos in 12 (about 40 ms an image): 19 minutes in all,
-  17.1 GB by `sacct`'s sample.
+  17.1 GB by `sacct`'s sample. Prediction alone, one photo a call (M2b
+  S13, job 73981, `cn4`, 24 CPUs asked): yolo11n at 1,280 px takes 54 ms
+  a pass, 79 at 1,536; 3,960 passes over real-val's 165 photos took 5.1
+  minutes, 34 CPU-minutes, 0.86 GB by `sacct`'s sample. The laptop's CPU
+  takes 167 to 175 ms for the same pass, and yolo11m 819 ms.
 - **The laptop overheats on long CPU runs:** anything heavier than a few
   seconds (OCR, scoring, smokes) runs as a `short` job; only store set
   v2's one-time pass stays local.
@@ -398,6 +408,9 @@ this repo.
   RapidOCR 1.2.3), which holds **one OpenCV**: PaddleX pins
   `opencv-contrib-python==4.10.0.84` and RapidOCR asks for `opencv-python`,
   two packages writing one `cv2/`, so RapidOCR goes in with `--no-deps`.
+  The `ensemble` extra (`ensemble-boxes`, with numba, llvmlite and pandas;
+  M2b S13) is in the laptop's venv only: the cluster's job only predicts,
+  and the tests that fuse boxes skip there.
   `~/venvs` holds other projects' venvs too. A fresh venv from the module
   starts with pip 24.0. **To add packages without moving any:** `pip
   freeze --exclude-editable > constraints.txt`, then `pip install -c
