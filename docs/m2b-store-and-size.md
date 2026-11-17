@@ -3216,8 +3216,12 @@ alone, in a worktree with the laptop's data and nothing skipped
   laptop, or as CPU jobs on `short` where the laptop's heat rule asks; a
   GPU job for later work (Later's ideas) would need new code and its own
   job. Held, it takes one of the account's 5 submitted jobs, which M3's CPU
-  jobs could use. Recommended: `scancel 73906`, the owner's call; not
-  touched.
+  jobs could use. Its one asset was the oldest place in the GPU queue
+  (submitted 2026-11-09, ahead of every waiting GPU job, M3's from 11-12
+  behind several), which M3 could only use by making an M2b script run M3's
+  work. **Cancelled** by Claude at the owner's word, `scancel 73906` at
+  21:33:12 on 2026-11-17: `CANCELLED`, never ran (elapsed 0). M3's `73946`
+  and `73947` stay held, nothing else of ours waits.
 - **Details fixed while writing:** `r2_recipe` is shared by `every_run` and
   the size arms; R3's table shows `m`'s rows while R1 has passed or isn't
   known, as R3 leaves `m` out when it fails; v1-val by class shows "–"
