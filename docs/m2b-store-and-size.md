@@ -26,7 +26,10 @@ before S10's code (owner's go-ahead): the smoke on a CPU node of the
 cluster, the replay's 180° copies, ft2's stages, R2 without a recipe, the
 band first; S10 done 2026-11-12 (step 2, the M2b suite and the rules R1 to
 R3, smoked on a CPU node of the cluster; the frozen layers didn't move;
-stage 2 ready). Next: job B's release, then S11.
+stage 2 ready); job B released 2026-11-12, ran 2026-11-13 to 11-14 and did
+all of stage 2, S12's GPU work included; S11 done 2026-11-17 (the noise
+band 0.1414, R1 passes, R2 `ft`; fine-tuning far above the control;
+gen-v2 helps its own strata only). Next: S12, on the laptop only.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -2894,6 +2897,150 @@ changes):
 - **Commits:** `feat: m2b results tables` (`m2b_results.py` and its tests)
   before the slice's `docs: m2b fine-tuning and gen-v2 results`: code and
   results are two logical changes.
+
+**Done 2026-11-17.** The plan's note `029641c`, the tables
+`src/bestbefore/m2b_results.py` with `tests/test_m2b_results.py` (12 tests),
+then `experiments/m2b-fine-tune` and `experiments/m2b-gen-v2` and this
+record. 1,065 tests pass (1,053 before), and the code commit passes alone,
+in a worktree with the laptop's data and nothing skipped (1,065). What was
+found:
+
+- **The cluster, read-only** (2026-11-17 19:52; `squeue`, `sacct`, the
+  log, the records, the chain's dry run). Job B, `73832`: `COMPLETED`, exit
+  0, on `cn5` from 2026-11-13 09:09:46 to 11-14 05:53:59 (20 h 44 min). Its
+  log names every task, each `[done]`, none failed, then "nothing left that
+  a GPU job could do", so it left no replacement. There is no
+  `m2b-failures/` and `m2b-claims/` is empty; the dry run shows all 58
+  tasks done and the decisions "noise band 0.1414, R1 passes, R2 ft, R3
+  n1280-ft". Waiting, held: `73906` (A's spare) and M3's `73946` and
+  `73947`; nothing running. Nothing was submitted, released or cancelled.
+- **The AssertionError is harmless, and no result moved.** It appears once
+  in the 4,053-line log, in the last task, `suite-m2b-m1280-ft-s2`, while
+  Ultralytics validated real-val-rot180: `Exception ignored in:
+  _MultiProcessingDataLoaderIter.__del__`, ending `AssertionError: can only
+  test a child process`. A data loader's iterator was cleaned up in a
+  process that hadn't started its workers: a worker freshly forked for the
+  next validation, holding a copy of the last one's iterator. Python
+  ignores an exception raised in `__del__`, and the validation carried on
+  (165 images, 408 boxes, as every run's) and the suite was written whole.
+  That run's real-val-rot180 mAP, 0.9817, is its seed 1's (seed 0 0.9858),
+  and it boxes 185 of 187 dates at any confidence (186, 187). It is S12's
+  run.
+- **The cluster's checkout moved under the job.** It was pulled for M3
+  while job B ran, and each task is a process of its own, so job B's runs
+  carry three commits: everything S11 reads (the control's and step 1's
+  M2b suites, the 9 `n` runs) and `s1280-ft` at `04451ff`; `m1280-s1`
+  trained at `04451ff` and scored at `4d3166e`; `m1280-s2` at `4d3166e` and
+  `5739871`; `m1280-ft` at `5739871`. Between `04451ff` and `5739871` no
+  file M2b trains, scores or chains with changed (of them only
+  `slurm/m3_cpu.sbatch`), so every run used S10's M2b code. Every record
+  says a clean tree.
+- **The pull** (`scripts/pull_cluster_results.sh`, 13 s): each run's
+  `run.json`, `suite-m2b.json`, `suite.json` (step 1), `data.yaml` and
+  `results.csv` (20, three of them `ft2`'s first stages, in
+  `<id>-stage1/`), the decisions and the job's log (71 MB, in the
+  gitignored `slurm/logs/`); no image and no weights (every image under
+  `results/runs/` is an older laptop run's). All 24 runs of the control,
+  step 1 and step 2 are finished and scored on the M2b suite, one attempt
+  each. `m2b-decisions.json` (SHA-256 `66b8411c…`) equals `m2b.decisions()`
+  worked out on the laptop, whole: the noise band, R1, R2 and R3. Both
+  `summarise.py` agree with it.
+- **The rules, as the code computes them.** The noise band is **0.1414**:
+  the control's seeds score 0.6546, 0.7960 and 0.7096 on v1-val. **R1
+  passes**: `m1280-s0`'s 0.8625 is above every `s1280` seed's (0.7555,
+  0.7845, 0.8016), and it passes the guard. **R2: `ft`**, 0.9415 against
+  `ft2`'s 0.9369, both through the guard; `ft` is the highest mean, so the
+  band doesn't decide R2. R3's record names `n1280-ft`; S12 reads it.
+- **The band is wide: 14.1 points, nearly five times its floor.** M2's
+  seeds disagree on store print (Cause 1), and the rule takes their spread
+  as written. Fine-tuned seeds spread far less (`ft` 1.5 points, `ft2`
+  0.8, `ft-gen50k` 3.8), so between fine-tuned arms the band is coarse:
+  that matters for R3, S12's reading. No rule or band changed.
+- **Fine-tuning** (`experiments/m2b-fine-tune`): v1-val mAP@0.5 for dates
+  0.720 (0.655–0.796) for the control, 0.942 (0.936–0.951) for `ft`, 0.937
+  for `ft2`: every fine-tuned seed above every control seed, by more than
+  the band. At each run's threshold `ft` finds 60 of 63 dates and 27.7 of
+  29 expiries (the control 45.7 and 21.7); sideways expiries 5.3 of 6
+  (3.3), small print 6.3 of 7 (3.7), dates under 1.5% 21.7 of 23 (12.3).
+  The guard holds (real-val 0.995 level, synth-val 0.15 points down).
+  Where it doesn't beat the control: real-val-rot 0.5 points down with
+  `ft` and 1.0 with `ft2`; synth-val's strata at each run's threshold (the
+  same boxes at any confidence, under higher thresholds); embossed
+  synth-val-v2 targets, 296 of 300 at any confidence against 299.3; and
+  `ft`'s precision on v1-val, 0.776. `ft2` reads upside-down print worse:
+  real-val-rot180 0.892 against `ft`'s 0.953, ranges apart, though it
+  boxes nearly as many at any confidence (184 against 185).
+- **The threshold** (the same experiment): M2's detector, the control's
+  seed 0, finds 27 of 63 dates and 11 of 29 expiries at M2's threshold
+  (0.3424, precision 0.964) and 44 and 20 at `threshold_store` (0.0055,
+  precision 0.530, 1.15 false boxes a photo). Over the seeds, the store
+  threshold closes about half of the gap in dates found (31.3, 45.7, then
+  60 fine-tuned) at a cost in precision that fine-tuning doesn't pay
+  (0.950, 0.601, 0.776). M2's threshold worked out again in the M2b suite
+  is each seed's M2 record exactly.
+- **gen-v2** (`experiments/m2b-gen-v2`, no rule): on its own strata it
+  adds upside-down targets (291 of 300 against `ft-gen50k`'s 253.7) and
+  line-pairs (292.7 against 277.7), ranges apart; the other six strata are
+  within 3 targets at any confidence, embossed lower with gen-v2. On real
+  print nothing measurable: real-val-small 0.987 against 0.988,
+  real-val-rot180 0.953 against 0.949, v1-val 0.942 against 0.926 (1.6
+  points, ranges overlapping), and the smallest store dates level (21.7
+  and 21.3 of 23). The real 180° copies both arms replay lift real
+  upside-down print; gen-v2's blocks lift their own stratum.
+- **What we expected**, against what happened: the control's
+  real-val-rot180 is **0.435, not "about 0"**: M2's weights already find
+  94.7 of 187 upside-down dates. `ft-gen50k` is **not below `ft` on small
+  store dates**. Everything else in the table held; month words wait for
+  v2 (S14).
+- **`ft2`'s frozen layers didn't move**, in all three runs: 0 of
+  1,357,104 convolution weights, 8,368 batch-norm weights and biases, and
+  4,184 running means and variances each; 99.6% of the trained layers'
+  values changed.
+- **Compute against S10's estimates** (`python -m bestbefore.m2b_results`
+  prints every run; the sums by group from the same records):
+
+  | GPU work | Runs | S10's estimate, each | Measured, each | S10, hours | Measured, hours |
+  |---|---:|---|---|---:|---:|
+  | the M2b suite: the control and step 1 | 7 | about 4 min | 1.8 to 2.3 min, the first 5.4 (cold) | 0.5 | 0.29 |
+  | `n` step 2 | 9 | 20 min training, 5 setup, 4 scoring | 21.1 to 25.4 min training (setup in it), 1.7 to 1.8 scoring | 4.4 | 3.63 |
+  | `s` step 2 | 3 | 23 + 5 + 4 min | 23.1 to 23.3, 1.9 to 2.0 | 1.6 | 1.26 |
+  | `m` by R1: seeds 1 and 2, both suites | 2 | 6.6 h + 7 min | 388.8 and 392.4 min, 4.0 + 4.3 scoring | 13.4 | 13.30 |
+  | `m` step 2 | 3 | 39 + 5 + 5 min | 40.5 to 43.0, 2.4 | 2.5 | 2.20 |
+  | **job B** | | | | **about 22.5** | **20.67** |
+
+  Job B's 20.67 hours of training and scoring sit in its 20.74 elapsed.
+  Fine-tuning trained at 203 to 204 images a second for `n` (frozen
+  backbone or not, as M2's 208 to 211), 189 to 190 for `s` and 110 to 111 for
+  `m`; `m`'s step-1 seeds at 110 (seed 0, 108). A first epoch is 6 to 18 s
+  slower than the next ones (cold reads of the run's own sample). A
+  one-stage `n` run spends 1.4 to 4.7 minutes outside its epochs, a stage
+  of `ft2` 0.2 to 0.6; where that goes wasn't found. The M2b suite takes
+  about 2 minutes a run on an H100 (12.1 on 24 CPUs, S10's smoke).
+- **Details fixed while writing:** `m2_results.chain_check` takes the
+  rules' module (M2's default), so M2b checks against its own record; M2's
+  four experiments print their READMEs' blocks unchanged after it. The
+  tables also show v1-val at M2's threshold, by tag and by size, for the
+  expected table's second row. `python -m bestbefore.m2b_results` prints
+  every M2b run's compute.
+- **Searched**: this slice's 1,473 added lines (from `5b0a410`: the code,
+  tests, both READMEs and this plan's changes) against every v1, v2 and v3
+  photo name (196 distinct names, and 132 stems of 5 characters or more;
+  v2's from S4's `designs.json`, no v2 file opened), the HEIC names, all 92
+  design ids and their 128 words of 4 characters or more: no name and no
+  id; 6 common words of design ids match, each inside plain English
+  (`clear`, `fresh`, `pack`, `stick`, `sticks` and `training`, in
+  "clearly", "freshly", "packs", "yardsticks" and "training").
+- **Not checked:** v1-val by pack design or by date format (the M2b suite
+  records neither; month words are S14's); why job B's `m1280-s1` and
+  `-s2` scored in 4.0 and 4.3 minutes where `m1280-s0` took 2.3 and 2.1;
+  where a run's minutes outside its epochs go; the AssertionError beyond
+  its traceback (PyTorch's code wasn't read); `s` and `m`'s step 2 and R3
+  (S12's); the learnings guide (not written).
+- **For S12:** its GPU work is done and pulled, so S12 is laptop work only:
+  `experiments/m2b-model-size` (`n`, `s` and `m` at step 1 and step 2,
+  R1 shown again), R3's reading with a band of 14.1 points, and whether
+  `73906` is still needed (its chain has nothing left to run, so released
+  it would end at once).
 
 ### S12. Step 2 on `s` (and `m` by R1) · cluster, then laptop
 
