@@ -3278,6 +3278,99 @@ alone, in a worktree with the laptop's data and nothing skipped
 `feat: seed ensemble and test-time rotation`,
 `docs: m2b inference add-ons`
 
+**Added 2026-11-17, before S13's code** (the owner's calls; no rule, band,
+threshold or share changes, and none will after a number is seen):
+
+- **R3 stays `n1280-ft`, and R4 is applied exactly as written.** With the
+  band 0.1414 it can't adopt anything: `n1280-ft-s0` scores 0.9514 on
+  v1-val (Ultralytics' mAP), so no add-on can raise it by more than 4.9
+  points, and our own AP is checked to agree within 0.01. **The M2b
+  detector S14 scores is `n1280-ft-s0` alone, at `threshold_store`
+  0.1641.** Nothing adopted, so that threshold is kept: the laptop's own F2
+  threshold for it is recorded beside it, not used.
+- **The add-ons are measured anyway, as side readings marked not adopted.**
+  Every combination of the three (8, from none to all three) is built
+  from saved prediction passes, 3 seeds × 4 turns × 1,280 and 1,536 px,
+  so each reading below comes from the same records whatever the first
+  steps find. For each: v1-val AP (ours), real-val AP (ours), dates and
+  expiries found, precision and false boxes a photo at its own F2
+  threshold on v1-val, by tag and by size, and CPU time a photo on the
+  laptop. Counts beside every rate (v1-val holds 63 dates).
+- **A "what if" reading of R4, fixed now, before any add-on is measured:**
+  R4's own steps, in its order (ensemble, rotation, 1,536 px, each
+  against what it would have adopted so far, real-val no more than
+  `NOISE` down), with only the band changed, to `NOISE_STORE_MIN`, 0.03,
+  the plan's own floor. **It decides nothing**: whatever it would keep goes
+  to [Later](#later), as `m1280-ft` did.
+- **R4 in code** (it wasn't): `m2b.adopt()` as the text says, and
+  `m2b.decide_addons()` for its order. "By more than the band" is strict:
+  an add-on at the band's edge is within it and stays out, as "within the
+  band" includes its edge in R2 and R3. Both APs are our own
+  (`detection_eval.average_precision`), before and after, like with like.
+  Tests before any add-on is measured.
+- **Fixed settings:** WBF is `ensemble-boxes`' `weighted_boxes_fusion`
+  with its defaults (IoU 0.55, `conf_type="avg"`, equal weights), boxes
+  under 0.001 skipped (`PREDICT_CONF`), one fusion over every pass of a
+  configuration, class by class. Rotation: each photo turned 90°, 180° and
+  270° (`derived.turn`), predicted, and its boxes turned back with
+  `turn_box(·, 4 − q)`. 1,536 px: `imgsz=1536`. Every pass predicts with
+  `rect=False`, one photo at a time. A configuration of one pass (none, or
+  1,536 px alone) is its raw predictions, unfused.
+- **Where each step runs** (`CLAUDE.md`'s heat rule; the plan's "on v1-val
+  only" left out real-val, which R4's own text checks):
+  - **laptop**: the device check, v1-val's 24 passes (34 photos; per-photo
+    boxes in `data/store/runs/`, counts only in `results/runs/`), the
+    fusion, the scores, R4 and the timing;
+  - **cluster**: real-val's 24 passes, one `short` CPU job
+    (`slurm/m2b_inference_cpu.sbatch`), ExpDate photos only; the passes are
+    copied back into `results/runs/` (gitignored). No store photo is read
+    on the cluster in S13.
+- **The device check reads v1-val only**: `score_suite.py --sets v1-val`
+  (only with `--out` and the M2b suite) scores the sets named; M2's
+  threshold, which needs the three real sets, is then the run's own
+  record's. Within a date or two of the GPU's `suite-m2b.json`, or stop.
+- **The AP check**: our AP on real-val, from the job's CPU passes
+  (`rect=False`), against Ultralytics' mAP@0.5 in each `n1280-ft` seed's
+  GPU `suite-m2b.json` (`rect=True`): within 0.01 for each of the 3 seeds,
+  or stop. Ours follows Ultralytics 8.4.177's `compute_ap` (101-point
+  interpolation of the precision envelope); only the matching differs
+  (ours by confidence, theirs by IoU). v1-val's is shown beside it, not as
+  a criterion (one date is about 1.6 points there).
+- **Timing** (the owner's call): `n1280-ft-s0` against `m1280-ft-s0`, and
+  `n` at 1,536 px, on the laptop's CPU: v1-val's 34 photos loaded first,
+  one photo a call, `rect=False`, 2 warm-up passes each left out, 3
+  repeats; the median and mean milliseconds a photo, with torch's threads.
+  It backs or corrects "`n` is the fastest" (S12). Where the detector will
+  run (live on a phone, or on a server per photo) stays open; the times are
+  recorded for M3. `m1280-ft` gets no add-on and isn't switched to.
+- **Weights**, only `weights/last.pt`, into
+  `$CHECKPOINT_DIR/m2b/<run>/weights/`: the three `n1280-ft` seeds, checked
+  against S12's SHA-256, and `m1280-ft-s0`, hashed read-only on the
+  cluster first (2026-11-17): `682c1ccf6865c7e200f8b9d1fb2a48d1062114ff3034514ac258c661f703a2cb`,
+  40,594,028 bytes, last written 2026-11-14 04:24:31, when its training
+  ended (its start, 03:41:45, plus its training minutes). Every pass checks
+  its weights against these hashes (`m2b.LAST_PT_SHA256`).
+- **`ensemble-boxes==1.0.9`**, MIT (its `LICENSE`, 2020), wheel SHA-256
+  `f095f34d…` as PyPI lists it: the release that stood from 2022-04-20
+  until 1.0.10 (2026-10-29) and 1.0.11 (2026-11-15) came after four quiet
+  years. Its WBF is plain numpy; the package imports numba when loaded (for
+  its NMS variants) and lists pandas. Checked first in a throwaway venv
+  with numpy 2.4.6 (deprecation warnings as errors); added to the laptop's
+  venv by the constraints method (`CLAUDE.md`): ensemble-boxes, numba
+  0.68.1, llvmlite 0.50.0, pandas 3.1.1, and nothing moved. A new extra,
+  `ensemble`. Laptop only: the cluster job only predicts.
+- **The cluster** (the owner's OK): S11 to S13's commits pushed, `git pull`
+  there once the diff from `679849a` shows no M3 file changed (M3's
+  `73946` and `73947` are held, so no running task can be reached), then
+  one `short` job. v2 and ExpDate test are S14's, the report S15's.
+- **Commits:** this note; `feat: average precision in the evaluator,
+  checked against ultralytics` (with `--sets`); `feat: r4, the inference
+  add-ons rule, in m2b's rules` (new); `feat: seed ensemble and test-time
+  rotation` (`ensemble.py`, `scripts/m2b_inference.py`, the job script, the
+  pin); `feat: m2b inference tables` (new: `m2b_results.py`'s block and its
+  tests, as S11 and S12); `docs: m2b inference add-ons`
+  (`experiments/m2b-inference` and this record).
+
 ### S14. Store set v2 and ExpDate test, once · laptop
 
 **Goal:** every planned run scored once on v2, and the M2b detector on
