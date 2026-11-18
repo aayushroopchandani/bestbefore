@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 
 from bestbefore.detection_eval import (Matches, Prediction, average_precision, best_threshold,
-                                       evaluate, iou, match_photo, pooled, summary)
+                                       evaluate, iou, match_photo, pooled, restricted, summary)
 from bestbefore.samples import Box, Sample
 
 DATE = (0.10, 0.40, 0.30, 0.45)        # a labelled date
@@ -126,6 +126,23 @@ def test_pooled_matches_are_the_sets_scored_together():
     assert summary(pool, 0.5) == summary(together, 0.5)
     with pytest.raises(ValueError, match="IoU"):
         pooled([evaluate([a], preds, 0.5), evaluate([b], preds, 0.3)])
+
+
+def test_restricted_matches_are_those_photos_scored_alone():
+    a = photo("a", ("expiry", EXPIRY), ("mfg", DATE), tag="clean")
+    b = photo("b", ("expiry", EXPIRY), tag="sideways")
+    c = photo("c", ("mfg", DATE), tag="clean")
+    preds = {"a": [pred(EXPIRY, 0.9), pred((0.6, 0.6, 0.7, 0.7), 0.4)],
+             "b": [pred(DATE, 0.8)],                      # a false box; b's expiry is missed
+             "c": [pred(DATE, 0.3)]}
+    every = evaluate([a, b, c], preds)
+    alone = evaluate([a, c], preds)
+    assert restricted(every, {"clean"}) == alone
+    assert summary(restricted(every, {"clean"}), 0.35) == summary(every, 0.35, {"clean"})
+    assert average_precision(restricted(every, {"clean"})) == average_precision(alone)
+    assert restricted(every, {"clean", "sideways"}) == every
+    none = restricted(every, {"curved"})
+    assert none.n_photos == {} and none.truth_conf == [] and average_precision(none) is None
 
 
 # --- Average precision (M2b S13) ---------------------------------------------------

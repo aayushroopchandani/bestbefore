@@ -146,6 +146,25 @@ def pooled(matches: list[Matches]) -> Matches:
     return out
 
 
+def restricted(m: Matches, tags: set) -> Matches:
+    """The matches of the photos whose tag is in `tags` alone: what
+    evaluate gives for those photos by themselves, since each photo is
+    matched on its own. So AP can be taken per group of photos
+    (M2b S14: store set v2 by failure tag and by pack design)."""
+    out = Matches(m.iou_min, {t: n for t, n in m.n_photos.items() if t in tags})
+    for conf, tp, tag in zip(m.pred_conf, m.pred_tp, m.pred_tag):
+        if tag in tags:
+            out.pred_conf.append(conf)
+            out.pred_tp.append(tp)
+            out.pred_tag.append(tag)
+    for conf, expiry, tag in zip(m.truth_conf, m.truth_expiry, m.truth_tag):
+        if tag in tags:
+            out.truth_conf.append(conf)
+            out.truth_expiry.append(expiry)
+            out.truth_tag.append(tag)
+    return out
+
+
 def best_threshold(m: Matches, beta: float = 1.0) -> tuple[float, float]:
     """The confidence that maximises F-beta for dates, and that F-beta.
 
