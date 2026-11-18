@@ -3521,6 +3521,148 @@ counts only (searched for photo names).
 **Commits:** `feat: store set v2 as a scored-once set`,
 `docs: m2b store v2 and expdate test results`
 
+**Added 2026-11-18, before S14's code** (the owner's go-ahead; no rule,
+band, threshold or run changes, and none will once v2 is scored):
+
+- **What is scored on v2: 30 records from 27 prediction passes**, each at
+  the threshold its own GPU record holds, never one worked out on the
+  laptop:
+
+  | Records | Weights | Threshold, from | Values |
+  |---|---|---|---|
+  | M1's `n640` s0–s2 | `best.pt` | `val.json` (M1's F1 rule) | 0.7279, 0.667, 0.6643 |
+  | M2's `gen-rot-1280` s0–s2 | `last.pt` | `suite.json` (M2's pooled F2) | 0.3424, 0.4243, 0.3988 |
+  | the control, `m2b-n1280` s0–s2 | M2's `last.pt` again | `suite-m2b.json`'s threshold_store | 0.0055, 0.0387, 0.0131 |
+  | `s1280`, `m1280` s0–s2 (step 1) | `last.pt` | the same | 0.0025 to 0.0121 |
+  | `n1280-ft`, `n1280-ft2`, `n1280-ft-gen50k`, `s1280-ft`, `m1280-ft` s0–s2 | `last.pt` | the same | 0.1276 to 0.6866 |
+
+  The M2b detector is in the list as `m2b-n1280-ft-s0` at 0.1641, alone:
+  R4 adopted no add-on (S13), so the slice's "a configuration with
+  add-ons" and [The final test](#the-final-test)'s "the M2b detector with
+  its add-ons" are history. M2's runs and the control share their weights,
+  so each pair is predicted once and cut at both thresholds: the threshold
+  question then compares the very same boxes. v2's labels were frozen on
+  2026-11-03 (M0 D6), so that pre-flight item is a check. The compute
+  budget's v2 row (25 configurations, 12 passes a photo) is history too.
+- **By cause**, M2's `cause_of` on v2's frozen labels alone, with two
+  changes, both written before any score:
+  - **Month words are one group.** v2's labels write every month word as
+    `MON` (`MON-YYYY`, `DDMONYYYY`, ...; 29 expiries), where v1's wrote
+    `Month` for a full name and `MON` for an abbreviation (22 and 14). So
+    v2's labels can't tell the two apart, and M2's rule would call every
+    one of v2's month words an abbreviation. M2's tables on v1 keep their
+    split.
+  - **Upside-down** is split from sideways by S3's rule, the one that found
+    v1's 2 ([Cause 2](#cause-2-layouts-the-generator-never-draws)): a
+    sideways-tagged expiry whose box isn't taller than wide, in the upright
+    photo's pixels.
+
+  v2's 68 expiries in frame: month word 25, numbers under 1.5% 6, 1.5 to
+  2.5% 15, 2.5% and up 12, sideways 9, upside-down 1. As in M2, a
+  sideways-tagged expiry is sideways or upside-down whatever its format,
+  so 4 more month words sit there. Precision belongs to a photo, not to an
+  expiry's cause, so it is shown by tag and by design.
+- **By design**, from the frozen design files and both splits: **seen in
+  training**, a design with photos in v1-train or v3-train; **seen only in
+  validation**, in v1-val or v3-val and not in training; **unseen**, the
+  rest. v3's designs count by their own split (S5b decision 6), so v3-train
+  is training. No v2 design is in v3, so S4's counts hold: 16 photos, 4
+  expiries and 21 dates seen in training; 14, 7 and 23 seen only in
+  validation; 69, 57 and 168 unseen. The first two groups are too small to
+  read alone, so counts sit beside every rate. For a run never trained on
+  store photos (M1, M2, the control, step 1) the groups are a control:
+  how hard each is without store training.
+- **Other-face, derived and the unreadable expiry**, as M2 scored v1: an
+  `other-face` photo (24) has no expiry; its dates (11, on 8 photos) count
+  among all dates, and every box on it counts toward precision and false
+  boxes a photo. A derived expiry (8) has no box, so it isn't counted; its
+  mfg box counts among the dates. **The unreadable expiry** (v1 had none)
+  has its box and its format (`YYYYMMDD`, 2.5% and up): it counts as an
+  expiry to find, since finding it doesn't need reading it, under its tag
+  (`clean`) and that cause, with a footnote.
+- **Our AP@0.5 for dates on v2** (beyond the plan):
+  `detection_eval.average_precision` (S13, within 0.0005 of Ultralytics'
+  on real-val), overall, by tag and by design. The thresholds run from
+  0.0025 to 0.69, so a count at the threshold mostly measures the
+  threshold; R1 to R3 chose by mAP, so AP is the like-for-like reading.
+  Ultralytics' mAP can't be had: v2 has no YOLO labels.
+- **How it is read** (fixed now): each arm as the mean of its 3 seeds with
+  the range, counts beside rates, and precision and false boxes a photo
+  beside every count; the headline is each milestone's detector, seed 0 at
+  its own threshold (M1's `n640`, M2's `gen-rot-1280-s0`, M2b's
+  `n1280-ft-s0`), its arm's mean beside it. **"Learned packs, not
+  print"**: each fine-tuned arm against the control on v2's unseen designs,
+  by AP (as v1-val's choices were made by mAP), dates found beside it. It
+  lifts them if the ranges are apart (every fine-tuned seed above every
+  control seed), not if they overlap. On v1-val every fine-tuned seed was
+  above every control seed (S11); if that doesn't hold on v2's unseen
+  designs, it is the finding [What we
+  expect](#what-we-expect-written-before-any-run) asks to write up.
+- **Nothing changes once v2 is scored**: no rule, threshold, run or
+  detector. `m1280-ft` stays M3's fallback by [Later](#later)'s own rule,
+  whatever v2 shows. v2's misses may be looked at only once every score is
+  written, and nothing is changed because of them.
+- **The guard, stricter for v2.** `store-v2` is a set of
+  `eval_detector.py`'s only, not of `sets.NAMES`, so no other script can
+  load v2 by name; it scores only the 30 records above; `--again` is
+  refused for it, and so is a run whose private folder already exists.
+  Every weights file is checked against its SHA-256 before it predicts:
+  M1's three `best.pt` (`m1.BEST_PT_SHA256`, new: no record held them),
+  M2's three `last.pt` (`m2.LAST_PT_SHA256`, new; the control's records
+  hold the same) and the 21 trained M2b runs' (`m2b.LAST_PT_SHA256`). The
+  17 not yet there were hashed read-only on the cluster on 2026-11-18:
+  each was last written 3 to 19 s before its start plus its training
+  minutes, and before its M2b suite was scored, so each is the file that
+  was scored. M1's and M2's files on the cluster are the laptop's copies,
+  byte for byte.
+- **Per-photo boxes** go to `data/store/v2/runs/` only, exact for every
+  milestone: the date boxes as M2 kept v1's, and the keyword classes' boxes
+  beside them, since M3 reads from the M2b detector. `store-v2.json` holds
+  counts only: by tag, by cause, by design and our AP, so the tables read
+  records alone; the per-photo boxes check that they give the record's
+  counts.
+- **ExpDate test**: the M2b detector's 3 seeds (`n1280-ft` s0–s2), each at
+  its threshold_store, with the counts at threshold_m2 beside them from the
+  same pass, to set beside M2's 662.7 of 665 (at M2's threshold);
+  Ultralytics' mAP and ours. **On the cluster (owner's call)**, not on the
+  laptop as planned: the heat rule keeps only v2's pass local, the data is
+  public, and the weights are there and hashed. One `short` CPU job
+  (`slurm/m2b_test_cpu.sbatch`, 24 CPUs, 16 GB, 1 hour). Before it: the
+  cluster's ExpDate test files (its list, photos, labels and annotations)
+  compared with the laptop's by SHA-256, and S14's commits pushed and
+  pulled with nothing of ours running. After it: each `real-test.json`
+  copied back and compared. The push and the `sbatch` are each asked for.
+- **The rest on the laptop**:
+  - the **device check** on v1-val (`score_suite.py --sets v1-val --out`):
+    `s1280-ft-s0` and `m1280-ft-s0` against their GPU suites, within a date
+    or two each, or stop. `m`'s peak memory is read there too: prediction
+    goes 16 photos a batch at 1,280 px on an 8 GB laptop, and v1-val's
+    copies are v2's size (every v2 photo is 1,599 or 1,600 px long);
+  - the **pre-flight**, `eval_detector.py --set store-v2 --dry-run` over
+    the 30: every run found and its threshold read; every weights file
+    there and matching its hash; no record and no private folder for any;
+    v2's labels loading with their frozen hashes and photo list, and the
+    design files and both splits with theirs. It predicts and writes
+    nothing;
+  - **v2 in 5 parts**, each in the background and timed, each command with
+    its run names typed out (M2 S8's zsh slip), with 5 to 10 minutes and
+    `pmset -g therm` between parts: (1) M1's 3, and M2's 3 with the
+    control's, about 1.5 minutes; (2) `n`'s 9 fine-tuned runs, about 3;
+    (3) `s`'s 6, about 4; (4) `m1280`'s 3, about 4; (5) `m1280-ft`'s 3,
+    about 4. About 17 minutes of compute at S13's times (`n` 175 ms a
+    photo, `m` 819).
+- **Where v2's tables go** (the plan named no experiment):
+  `experiments/m2b-final-test` (README and `summarise.py`), the tables in
+  `m2b_results.py` with tests, as S11 to S13; S15's report reuses them.
+- **Privacy**: v2 never leaves the laptop. Committed files hold counts
+  only, searched before each commit for every photo name, design id and
+  word of one.
+- **Commits:** this note; `feat: hashes of the weights scored on store set
+  v2`; `feat: store set v2 as a scored-once set` (`eval_detector.py`, a new
+  `final_test.py` for v2's groups, tests); `feat: m2b expdate test as a cpu
+  job`; `feat: m2b final test tables`; `docs: m2b store v2 and expdate test
+  results` (the experiment and this record).
+
 ### S15. Report · laptop
 
 **Goal:** `results/m2b_detector.md`, the README, this plan closed.
