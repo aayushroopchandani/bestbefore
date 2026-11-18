@@ -116,7 +116,10 @@ def test_weights_are_used_only_if_they_are_the_ones_hashed_on_the_cluster(monkey
         m2b.last_pt("n1280-ft-s0")
     monkeypatch.setitem(m2b.LAST_PT_SHA256, "n1280-ft-s0", store.sha256(copy))
     assert m2b.last_pt("n1280-ft-s0") == (copy, run_dir.name)
-    assert set(m2b.LAST_PT_SHA256) == {"n1280-ft-s0", "n1280-ft-s1", "n1280-ft-s2", "m1280-ft-s0"}
+    # Every trained run is hashed (S12, S13, then the rest in S14); the control's weights are M2's.
+    trained = (*m2b.STEP1, *(f"{size}1280-ft" for size in m2b.SIZES), "n1280-ft2", "n1280-ft-gen50k")
+    assert set(m2b.LAST_PT_SHA256) == {f"{arm}-s{s}" for arm in trained for s in m2b.SEEDS}
+    assert all(len(h) == 64 and int(h, 16) >= 0 for h in m2b.LAST_PT_SHA256.values())
 
 
 # --- scripts/m2b_inference.py on made-up photos and records ---------------------------------

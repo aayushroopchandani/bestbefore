@@ -180,6 +180,16 @@ ARMS = {
                         ("train_synth_clean", "synth_rot", "gen50k"), imgsz=1280),
 }
 
+# The SHA-256 of the M2 detector's arm's final weights, gen-rot-1280's three
+# seeds' last.pt, for store set v2's one score (M2b S14): the cluster's files
+# and the laptop's copies alike, and the hashes M2b's control records hold
+# (M2b S2).
+LAST_PT_SHA256 = {
+    "gen-rot-1280-s0": "8c9a03c778760c65fbccbbdf52d6e03c8fab46c58b560137cb27dc386c582321",
+    "gen-rot-1280-s1": "09f49e9cf1a8b3ea01d668637f7ef73f9bac052ebad7f789d54b161378db67b6",
+    "gen-rot-1280-s2": "6de901f244d769d2bee100b1661d50b775a448402bccba8c9bdde23b17f97e2e",
+}
+
 
 @dataclass(frozen=True)
 class Mix:

@@ -22,6 +22,15 @@ BOTH = "train_synth,train_real"
 REAL = "train_real"
 NOISE = 0.01   # 1 point of mAP@0.5: smaller differences are treated as noise
 
+# The SHA-256 of the M1 detector's three seeds' best.pt, which no run record
+# holds: taken on 2026-11-18 (M2b S14), the cluster's files and the laptop's
+# copies alike, so that store set v2's one score checks the weights it reads.
+BEST_PT_SHA256 = {
+    "n640": "99b171fcf569a49f94ecca5e779a64c1f76e77adbcd57a03bd6b919c8c4c622e",
+    "n640-seed1": "dec7fe8803e873cbf29528256af2c06f7081a6d63bece7dd2c259a0cac409734",
+    "n640-seed2": "5245f4a444334c78cdfa3959648be421062ceebab59f4987d8ed48a406175eaa",
+}
+
 
 def map50_date(scores: dict) -> float:
     return scores["map50"]["date"]

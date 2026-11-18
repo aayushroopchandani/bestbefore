@@ -559,14 +559,33 @@ WHAT_IF_BAND = NOISE_STORE_MIN
 
 
 # The SHA-256 of runs' final weights, taken read-only on the cluster, as no
-# run record holds what a run made (S12): R3's arm's three seeds (S12), and
-# m1280-ft-s0 (S13), timed beside them only. A copy is checked against its
-# hash before it predicts anything.
+# run record holds what a run made (S12): R3's arm's three seeds (S12),
+# m1280-ft-s0 (S13, timed beside them), and every other trained run (S14,
+# 2026-11-18, for store set v2's one score), each file last written when
+# its training ended and before it was scored. A copy is checked against
+# its hash before it predicts anything.
 LAST_PT_SHA256 = {
+    "s1280-s0": "fa323adf4d87147e5af676e89939390ca511f3187dfd420cb817fc34ff348c13",
+    "s1280-s1": "9099dc4bbe5334d696a8af49b5b968d4564c7c16b1c94ec40e9e5af5eca8c11a",
+    "s1280-s2": "3cc6e0c1e07d22fc6826792324faea3ed6fa57985aaf4f96612d5cec9901a042",
+    "m1280-s0": "7728f5f82f932d514ead0695ddea9640b8e20641ddea17748068c4ba203a7509",
+    "m1280-s1": "1812e553e92cfbad4f7dcaa614081a067575b9c39a2752f841795f8cd4af6931",
+    "m1280-s2": "6d5b6791c7ee935ed4acd164dda5f7a8fffca36fb9a3e198cd42b7334e4c7c51",
     "n1280-ft-s0": "c839af8a810a96a6297576cf8ecc4349dc05d19866d0f6d9cb3112ecfda138bd",
     "n1280-ft-s1": "4a9fef7987999b0f46c34a498f483e6bfddcbcc0215588adfaa1b51eb4e52364",
     "n1280-ft-s2": "ec403127eaa42293cca1c49d2e5a02865efd56851cfa6af654dc3a04f8b5b370",
+    "n1280-ft2-s0": "adc4e9f9c4fbcb39811005544545eafaeb6d22207b0e95bbd57da7832c2cdb58",
+    "n1280-ft2-s1": "5242528cd9b4fef79790e29c34b3e10007661801895a4be0b91596adf8fe7220",
+    "n1280-ft2-s2": "5e3ab176b0602656074b91d840fc9fa2e861c6cdb6dba7ada135357ca268b1d7",
+    "n1280-ft-gen50k-s0": "53cd6396cce0db56fdcf275de07799b4c8b93663aec683b9c2d79fe59b3c914c",
+    "n1280-ft-gen50k-s1": "e52d3fa43ac39cb22969c515d5d1cde82af438eea2ec53b823f75be89e34ee52",
+    "n1280-ft-gen50k-s2": "40d74a01dfea9c17b9e9dfcb9b313108806967cdf905f9bb3cd3a21f483cf1f9",
+    "s1280-ft-s0": "f6193910a1945ad7b4a84eec8d5f6513249e545fbb539336552e865a22aa16c2",
+    "s1280-ft-s1": "f20923b5e2a5ecfae4c219cac9a36e9a79de288db55460f4787960c383f714cd",
+    "s1280-ft-s2": "d38d4b6d2785579f75b01f8faf0f3c9724b4f8520e194c49fd84206705cc33f9",
     "m1280-ft-s0": "682c1ccf6865c7e200f8b9d1fb2a48d1062114ff3034514ac258c661f703a2cb",
+    "m1280-ft-s1": "c0ef2d374f6266f0d0c0e54dc4473a2f5ff23f26e11e7c0704ffaee317be8e86",
+    "m1280-ft-s2": "313c1061aa96fd8352ddcd241c2b58230bc6908a9c5e1f673d88dc90286a1429",
 }
 
 
