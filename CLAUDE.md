@@ -221,7 +221,11 @@ this repo.
   account's only QOS, so it covers **every** job on every partition,
   CPU-only ones and other projects' too: **2 running** and **5 submitted**
   (waiting + running) per user. Each task of a job array counts as one
-  job.
+  job. Other projects' jobs fill the same slots, and a held job keeps its
+  submit slot: on 2026-11-19 three of another project's jobs (two running)
+  and M3's two held ones made 5 submitted, so a sixth `sbatch` would be
+  refused, and a free submit slot would still wait for a running one (M2b
+  S14).
 - **Queue:** first come, first served by submit time (every job has
   priority 1, every partition the same tier). A job submitted with
   `--hold` keeps its submit time when released, and a waiting job's CPUs,
@@ -397,7 +401,12 @@ this repo.
   takes 167 to 175 ms for the same pass, and yolo11m 819 ms.
 - **The laptop overheats on long CPU runs:** anything heavier than a few
   seconds (OCR, scoring, smokes) runs as a `short` job; only store set
-  v2's one-time pass stays local.
+  v2's one-time pass stays local. **Predicting at 1,280 px, 16 photos a
+  call overflow its 8 GB** (M2b S14): `s` peaked at a 6.4 GB footprint, and
+  `m` at 8.0 GB, swapping for 8.4 minutes at 5.4 s a photo, which
+  overheated it. One photo a call needs 0.65 GB for `n`, 0.90 for `s` and
+  1.43 for `m`, with no swap (`eval_detector.py` does that for v2,
+  `score_suite.py --batch 1` for a device check).
 - **Python:** modules `Python/3.11.11` (same minor version as the laptop),
   `cuda/12.6.3`, `anaconda3/2024.10`. The system `python3` is 3.9: don't
   use it. The module provides `python3`, not `python`, and the venv only

@@ -3840,6 +3840,9 @@ reads. What was found:
   `m2b_inference_cpu.sbatch`, `final_test.py`, `m2b_test_cpu.sbatch`,
   `experiments/m2b-final-test`), and its compute budget's v2 row the
   measured one.
+- **`CLAUDE.md`** gained, with the owner's OK: 16 photos a call at 1,280 px
+  overflow the 8 GB laptop, and what one photo a call needs by size; and
+  other projects' jobs and held ones filling the account's job slots.
 
 ### S15. Report · laptop
 
