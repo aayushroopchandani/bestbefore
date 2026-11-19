@@ -31,6 +31,7 @@ SETTINGS = dict(
     deterministic=True,
 )
 PREDICT_CONF = 0.001   # keep nearly every box; thresholds are applied later
+PREDICT_BATCH = 16     # photos a call; store set v2 goes one at a time on the 8 GB laptop (M2b S14)
 
 # The arguments `applied` reads back off Ultralytics' trainer (freeze: M2b's
 # two-stage arm).
@@ -176,7 +177,7 @@ def predict(model, images: list, imgsz: int, device=None) -> list[list[Predictio
 
 
 def predict_samples(model, samples: list[Sample], imgsz: int, device=None,
-                    batch: int = 16) -> dict[str, list[Prediction]]:
+                    batch: int = PREDICT_BATCH) -> dict[str, list[Prediction]]:
     """Predictions for every sample, keyed by sample id."""
     out = {}
     for i in range(0, len(samples), batch):
@@ -187,10 +188,10 @@ def predict_samples(model, samples: list[Sample], imgsz: int, device=None,
 
 
 def predict_checkpoint(checkpoint: Path, samples: list[Sample], imgsz: int,
-                       device=None) -> dict[str, list[Prediction]]:
-    """predict_samples for a checkpoint on disk."""
+                       device=None, batch: int = PREDICT_BATCH) -> dict[str, list[Prediction]]:
+    """predict_samples for a checkpoint on disk, `batch` photos a call."""
     from ultralytics import YOLO
-    return predict_samples(YOLO(str(checkpoint)), samples, imgsz, device)
+    return predict_samples(YOLO(str(checkpoint)), samples, imgsz, device, batch)
 
 
 def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | None = None,
@@ -282,7 +283,8 @@ def score_suite(checkpoint: Path, imgsz: int, out_dir: Path, device=None) -> dic
 
 
 def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None,
-                    sets: Sequence[str] | None = None, record: dict | None = None) -> dict:
+                    sets: Sequence[str] | None = None, record: dict | None = None,
+                    batch: int = PREDICT_BATCH) -> dict:
     """Score a run on the M2b suite (docs/m2b-store-and-size.md, "The
     validation suite, M2b"): M2's four sets, real-val-rot180, synth-val-v2
     and v1-val, every one needed.
@@ -301,6 +303,10 @@ def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None,
     `sets` scores only those sets (S13's device check, on v1-val alone);
     a threshold whose sets aren't among them is then `record`'s, the run's
     own suite-m2b.json, and says so in its rule.
+
+    `batch` photos go through each call, Ultralytics' validation's too:
+    fewer than 16 only for a device check on the 8 GB laptop (S14), where
+    16 at 1,280 px overflow its memory.
     """
     from ultralytics import YOLO
 
@@ -317,10 +323,11 @@ def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None,
         raise FileNotFoundError(f"the M2b suite needs every set: {lacking}")
     from_record = "from the run's own suite-m2b.json (its sets not scored here)"
     model = YOLO(str(checkpoint))
+    extra = {} if batch == PREDICT_BATCH else {"batch": batch}
     matched = {}
     for name in names:
         samples = sets_module.load_set(name)
-        preds = predict_samples(model, samples, imgsz, device)
+        preds = predict_samples(model, samples, imgsz, device, **extra)
         matched[name] = samples, evaluate(samples, preds, 0.5), evaluate(samples, preds, 0.3)
     beta = m2.THRESHOLD_BETA
     if store:
@@ -352,7 +359,7 @@ def score_suite_m2b(checkpoint: Path, imgsz: int, out_dir: Path, device=None,
         listed = str(m2b.suite_list(name))
         # Ultralytics wants a train entry too; validating never reads it.
         data = dataset_yaml(expdate_dir() / "yolo", [listed], folder / f"{name}.yaml", val=listed)
-        out[name].update(_val_metrics(model, data, "val", imgsz, device, folder / "val", name, conf))
+        out[name].update(_val_metrics(model, data, "val", imgsz, device, folder / "val", name, conf, **extra))
     return out
 
 
@@ -366,10 +373,10 @@ def _two_thresholds(at_05: Matches, at_03: Matches, conf: float, conf_m2: float,
 
 
 def _val_metrics(model, data: Path, split: str, imgsz: int, device, project: Path | None,
-                 name: str, conf: float) -> dict:
+                 name: str, conf: float, batch: int = PREDICT_BATCH) -> dict:
     """Ultralytics' mAP per class on one split of a dataset file, and its own
     date recall at `conf`, to cross-check ours."""
-    metrics = model.val(data=str(data), split=split, imgsz=imgsz, batch=16,
+    metrics = model.val(data=str(data), split=split, imgsz=imgsz, batch=batch,
                         device=device, plots=False, verbose=False,
                         project=str(project) if project else None, name=name)
     box = metrics.box

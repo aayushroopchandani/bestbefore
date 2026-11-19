@@ -41,6 +41,9 @@ M2_RUNS = tuple(f"m2-{m2b.CONTROL_FROM}-s{s}" for s in m2b.SEEDS)
 M2B_ARMS = (m2b.CONTROL, *m2b.STEP1, "n1280-ft", "n1280-ft2", "n1280-ft-gen50k", "s1280-ft", "m1280-ft")
 RUNS = (*M1_RUNS, *M2_RUNS, *(f"m2b-{arm}-s{s}" for arm in M2B_ARMS for s in m2b.SEEDS))
 DETECTOR = "m2b-n1280-ft-s0"                    # R3's run; R4 adopted no add-on (S13)
+# Photos a call: store set v2 is predicted one at a time, as 16 at 1,280 px
+# overflow the 8 GB laptop's memory (S14's change of 2026-11-19).
+BATCH = 1
 EXPDATE_TEST = tuple(f"m2b-n1280-ft-s{s}" for s in m2b.SEEDS)    # the M2b detector's 3 seeds
 
 # --- By cause -----------------------------------------------------------------------

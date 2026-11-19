@@ -206,8 +206,8 @@ def test_runs_that_share_weights_share_one_pass_and_say_so(load_script, trained,
     ev = load_script("eval_detector")
     calls = []
 
-    def predict(weights, samples, imgsz, device):
-        calls.append(weights)
+    def predict(weights, samples, imgsz, device, batch=16):
+        calls.append((weights, batch))
         return {"testset2/a.jpeg": [Prediction("date", (0.1, 0.5, 0.4, 0.52), 0.2)]}
 
     def score(weights, samples, imgsz, conf, predictions, **kwargs):
@@ -219,11 +219,15 @@ def test_runs_that_share_weights_share_one_pass_and_say_so(load_script, trained,
     monkeypatch.setattr(detector, "predict_checkpoint", predict)
     monkeypatch.setattr(detector, "score", score)
     cache = {}
+    with pytest.raises(SystemExit, match="1 photo a call, not 16"):      # v2 at 16 a call: refused
+        ev.score_run(ev.find("m2-gen-rot-1280-s0"), "store-v2", one_photo_v2.samples, "cpu", False,
+                     cache, one_photo_v2)
     first = ev.score_run(ev.find("m2-gen-rot-1280-s0"), "store-v2", one_photo_v2.samples, "cpu", False,
-                         cache, one_photo_v2)
+                         cache, one_photo_v2, batch=1)
     second = ev.score_run(ev.find("m2b-n1280-s0"), "store-v2", one_photo_v2.samples, "cpu", False,
-                          cache, one_photo_v2)
-    assert len(calls) == 1                                   # one pass, two thresholds
+                          cache, one_photo_v2, batch=1)
+    assert len(calls) == 1 and calls[0][1] == 1              # one pass, one photo a call, two thresholds
+    assert first["scored"]["batch"] == second["scored"]["batch"] == 1
     assert first["scored"]["predicted_by"] == second["scored"]["predicted_by"] == "m2-gen-rot-1280-s0"
     assert second["scored"]["predict_seconds"] == 0.0
     assert (first["iou0.5"]["expiry_found"], second["iou0.5"]["expiry_found"]) == (0, 1)   # 0.2: under M2's, over the control's
@@ -234,21 +238,28 @@ def test_runs_that_share_weights_share_one_pass_and_say_so(load_script, trained,
         assert json.loads((trained / "runs" / run_dir / "store-v2.json").read_text())["scored"]["set"] == "store-v2"
         assert runs.latest_run(f"detector-store-v2-{name}", final_test.RUNS_DIR) is not None
     with pytest.raises(SystemExit, match="already scored"):    # and never again
-        ev.score_run(ev.find("m2b-n1280-s0"), "store-v2", one_photo_v2.samples, "cpu", False, {}, one_photo_v2)
+        ev.score_run(ev.find("m2b-n1280-s0"), "store-v2", one_photo_v2.samples, "cpu", False, {}, one_photo_v2,
+                     batch=1)
 
 
 def test_expdate_test_gives_an_m2b_run_threshold_m2s_counts_beside_its_own(load_script, trained, monkeypatch):
     ev = load_script("eval_detector")
     sample = Sample(id="test_1.jpg", image=Path("test_1.jpg"), width=1000, height=1000,
                     boxes=(Box("exp", (0.1, 0.5, 0.4, 0.55)),))
-    monkeypatch.setattr(detector, "predict_checkpoint", lambda *a, **k: {
-        "test_1.jpg": [Prediction("date", (0.1, 0.5, 0.4, 0.55), 0.2)]})
+    asked = []
+
+    def predict(*a, **k):
+        asked.append(k.get("batch"))
+        return {"test_1.jpg": [Prediction("date", (0.1, 0.5, 0.4, 0.55), 0.2)]}
+
+    monkeypatch.setattr(detector, "predict_checkpoint", predict)
     monkeypatch.setattr(detector, "score", lambda *a, conf, **k: {"threshold": round(conf, 4)})
     monkeypatch.setattr(detector, "dataset_yaml", lambda *a, **k: Path("data.yaml"))
     got = ev.score_run(ev.find("m2b-n1280-ft-s0"), "real-test", [sample], "cpu", False)
     assert got["at_threshold_m2"]["threshold"] == 0.25
     assert got["at_threshold_m2"]["iou0.5"]["expiry_found"] == 0          # 0.2 is under M2's 0.25
     assert got["ap50_ours"]["date"] is not None
+    assert asked == [16] and got["scored"]["batch"] == 16                # ExpDate test: 16 a call
     for root in (final_test.RUNS_DIR, store.RUNS_DIR):        # ExpDate photos aren't private
         assert not root.exists() or not any(root.iterdir())
 
@@ -279,6 +290,9 @@ def test_a_dry_run_checks_every_run_and_writes_nothing(load_script, trained, mon
     assert run_main(ev, monkeypatch, "--set", "store-v2", "--dry-run", "--runs", *ready, "m2b-s1280-s0") == 1
     assert "| m2b-s1280-s0 | – |" in capsys.readouterr().out          # no such run here: listed, not a crash
     assert run_main(ev, monkeypatch, "--set", "store-v2", "--dry-run", "--again", "--runs", *ready) == 1
+    assert "refused" in run_main(ev, monkeypatch, "--set", "store-v2", "--dry-run", "--batch", "16", "--runs", *ready)
+    assert run_main(ev, monkeypatch, "--set", "store-v2", "--dry-run", "--batch", "1", "--runs", *ready) == 0
+    assert "1 photo(s) a call" in capsys.readouterr().out
     assert written(trained) == before                          # nothing written, nothing private
 
 

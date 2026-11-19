@@ -1104,21 +1104,62 @@ def final_check(root: Path | None = None) -> str:
             scored[set_name] = scored.get(set_name, 0) + 1
             threshold, sha = final_expected(name, root)
             got = record.get("scored", {})
-            for what, ours, want in (("threshold", got.get("threshold"), threshold),
-                                     ("weights' SHA-256", got.get("weights_sha256"), sha),
-                                     ("device", got.get("device"), "cpu")):
-                if ours != want:
-                    problems.append(f"{name} on {set_name}: {what} {ours!r}, not {want!r}")
+            checks = [("threshold", got.get("threshold"), threshold),
+                      ("weights' SHA-256", got.get("weights_sha256"), sha), ("device", got.get("device"), "cpu")]
             if set_name == final_test.SET:
+                checks.append(("photos a call", got.get("batch"), final_test.BATCH))
                 problems += breakdown_problems(name, record)
+            problems += [f"{name} on {set_name}: {what} {ours!r}, not {want!r}"
+                         for what, ours, want in checks if ours != want]
     if problems:
         return "**Warning:** " + "; ".join(problems) + "."
     if not scored:
         return ""
     return (f"Every record in so far ({scored.get(final_test.SET, 0)} of {len(final_test.RUNS)} on store set v2, "
             f"{scored.get('real-test', 0)} of {len(final_test.EXPDATE_TEST)} on ExpDate test) was scored on a CPU, "
-            "at its own GPU record's threshold exactly, by the weights hashed for it; on v2 its counts by cause "
-            "and by design add up to its own.")
+            "at its own GPU record's threshold exactly, by the weights hashed for it; on v2, one photo a call, "
+            "and its counts by cause and by design add up to its own.")
+
+
+# Each size's device check on v1-val (score_suite.py --sets v1-val --out <run>/<folder>), the
+# laptop's CPU against the run's GPU suite: S13's for n and S14's for s and m at 16 photos a
+# call, then S14's at one a call, as store set v2 is predicted.
+DEVICE_CHECK_RUNS = ("n1280-ft-s0", "s1280-ft-s0", "m1280-ft-s0")
+DEVICE_CHECKS = (("device-check-cpu", 16), ("device-check-cpu-batch1", 1))
+
+
+def device_checks_table(root: Path | None = None) -> str:
+    """Each device check beside its run's GPU suite, each at its own F2
+    threshold on v1-val: dates and expiry dates found, dates boxed at any
+    confidence and Ultralytics' mAP@0.5 for dates, and how many dates moved
+    in all; within two it passes (S13). A record that doesn't say how many
+    photos a call it took was made at 16, the only setting then."""
+    rows = []
+    for run in DEVICE_CHECK_RUNS:
+        run_dir = m2b.finished_run(run, root)
+        gpu = m2.read_json(run_dir / m2b.SUITE_FILE) if run_dir else None
+        for folder, batch in DEVICE_CHECKS:
+            here = m2.read_json(run_dir / folder / m2b.SUITE_FILE) if run_dir else None
+            row = {"run": f"m2b-{run}", "photos a call": str(batch)}
+            if gpu is None or here is None:
+                rows.append(row | dict.fromkeys(("dates found", "expiry found", "boxed at any confidence",
+                                                 "mAP@0.5 date", "moved", "check"), NOT_YET))
+                continue
+            a, b = gpu[m2b.STORE_SET], here[m2b.STORE_SET]
+            counts = {"dates found": ("iou0.5", "dates_found", "dates"),
+                      "expiry found": ("iou0.5", "expiry_found", "expiry_dates"),
+                      "boxed at any confidence": ("any_conf", "dates_found", "dates")}
+            moved = sum(abs(a[lv][k] - b[lv][k]) for lv, k, _ in counts.values())
+            made = here.get("scored", {}).get("batch", 16)
+            row |= {what: f"{a[lv][k]}/{a[lv][n]} → {b[lv][k]}/{b[lv][n]}" for what, (lv, k, n) in counts.items()}
+            row |= {"mAP@0.5 date": f"{a['map50']['date']:.4f} → {b['map50']['date']:.4f}", "moved": str(moved),
+                    "check": ("passes" if moved <= 2 else "**fails**") if made == batch
+                             else f"**made at {made} a call**"}
+            rows.append(row)
+    bad = [f"{r['run']} at {r['photos a call']} a call: {r['check'].strip('*')}" for r in rows
+           if r["check"] not in ("passes", NOT_YET)]
+    warning = f"\n\n**Warning:** a device check didn't pass: {'; '.join(bad)}." if bad else ""
+    return markdown_table(rows, left=("run", "check")) + warning
 
 
 def private_check(root: Path | None = None, load: Callable[[], final_test.V2] | None = None) -> str:
@@ -1159,6 +1200,8 @@ def final_test_block(root: Path | None = None) -> str:
     return paragraphs(
         "**The headline**: each milestone's detector, seed 0 at its own threshold, on store set v2 and on ExpDate "
         "test; its arm's three seeds beside it:", headline_table(root),
+        "**The device checks** (v1-val on the laptop's CPU against each run's GPU suite, the GPU's count first; "
+        "v2 is predicted on that CPU one photo a call):", device_checks_table(root),
         "**Store set v2, every record** (M1's and M2's detectors at their own thresholds; every M2b run at "
         "threshold_store, the control being M2's weights cut there):", final_table(rows),
         "**By failure tag**, expiry dates found at each run's threshold:", found_by(rows, "by_tag"),

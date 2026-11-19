@@ -45,6 +45,14 @@ suite-m2b.json. The comparison shows the sets scored.
 
     python scripts/score_suite.py --milestone m2b --suite m2b --run n1280-ft-s0 --device cpu \
         --sets v1-val --out results/runs/<id>-m2b-n1280-ft-s0/device-check-cpu
+
+--batch, with the M2b suite only, sends that many photos through each call
+(Ultralytics' validation too) instead of 16, and is written into the record's
+`scored`: one at a time for M2b S14's device checks on the 8 GB laptop, as
+store set v2 is predicted, since 16 at 1,280 px overflow its memory.
+
+    python scripts/score_suite.py --milestone m2b --suite m2b --run m1280-ft-s0 --device cpu \
+        --sets v1-val --batch 1 --out results/runs/<id>-m2b-m1280-ft-s0/device-check-cpu-batch1
 """
 from __future__ import annotations
 
@@ -160,11 +168,17 @@ def main() -> None:
                         help="write suite.json here, not in the run's folder (S8's device check)")
     parser.add_argument("--sets", nargs="+", choices=m2b.SUITE, default=None,
                         help="with --out and --suite m2b: score only these sets (M2b S13's device check)")
+    parser.add_argument("--batch", type=int, default=detector.PREDICT_BATCH,
+                        help="with --suite m2b: photos a call (M2b S14's device checks, one a call)")
     args = parser.parse_args()
     if args.suite == "m2b" and args.milestone != "m2b":
         parser.error("--suite m2b scores M2b runs: add --milestone m2b")
     if args.sets and (args.out is None or args.suite != "m2b"):
         parser.error("--sets needs --out and --suite m2b: a run's own record is always the whole suite")
+    if args.batch != detector.PREDICT_BATCH and args.suite != "m2b":
+        parser.error("--batch is for the M2b suite only")
+    if args.batch < 1:
+        parser.error("--batch is a number of photos, 1 or more")
 
     file = m2b.SUITE_FILE if args.suite == "m2b" else "suite.json"
     run_dir = (m2b if args.milestone == "m2b" else m2).finished_run(args.run)
@@ -184,8 +198,10 @@ def main() -> None:
         if own is None:
             raise SystemExit(f"--sets compares with the run's own {file}, and {run_dir.name} has none")
         extra = {"sets": args.sets, "record": own}
+    if args.batch != detector.PREDICT_BATCH:
+        extra["batch"] = args.batch
     suite = score(checkpoint, record["config"]["imgsz"], out_dir, args.device, **extra)
-    suite["scored"] = {"device": args.device, **git_state(),
+    suite["scored"] = {"device": args.device, "batch": args.batch, **git_state(),
                        "date": datetime.now().isoformat(timespec="seconds"),
                        "minutes": round((time.time() - started) / 60, 1)}
     write_json(out_dir / file, suite)

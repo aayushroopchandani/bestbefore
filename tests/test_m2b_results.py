@@ -513,7 +513,8 @@ def v2_record(k=0, unseen_ap=0.7, threshold=0.2, sha="sha", device="cpu"):
                         for i, c in enumerate(final_test.CAUSES)},
            "ap50": {"date": 0.8, "by_tag": {t: 0.8 for t in tags},
                     "by_design": {final_test.SEEN: 0.9, final_test.VALIDATION: 0.85, final_test.UNSEEN: unseen_ap}},
-           "scored": {"set": "store-v2", "threshold": threshold, "weights_sha256": sha, "device": device}}
+           "scored": {"set": "store-v2", "threshold": threshold, "weights_sha256": sha, "device": device,
+                      "batch": 1}}
     out["by_tag"]["other-face"] = {lv: {"photos": 24, "dates": 11, "dates_found": 5, "precision": 0.5,
                                         "false_boxes_per_photo": 0.4} for lv in ("iou0.5", "iou0.3", "any_conf")}
     return out
@@ -624,7 +625,8 @@ def test_the_final_check_names_a_wrong_threshold_hash_device_or_breakdown(record
     good = json.loads((run_dir / "store-v2.json").read_text())
     for change, words in (({"threshold": 0.2001}, "threshold 0.2001, not 0.2"),
                           ({"weights_sha256": "abc"}, "weights' SHA-256 'abc'"),
-                          ({"device": "mps"}, "device 'mps', not 'cpu'")):
+                          ({"device": "mps"}, "device 'mps', not 'cpu'"),
+                          ({"batch": 16}, "photos a call 16, not 1")):
         (run_dir / "store-v2.json").write_text(json.dumps({**good, "scored": {**good["scored"], **change}}))
         assert "**Warning:**" in r.final_check() and words in r.final_check()
     bad = json.loads(json.dumps(good))
@@ -670,3 +672,27 @@ def test_each_final_record_expects_its_own_gpu_threshold_and_its_milestones_hash
     assert r.final_expected("m2b-n1280-s0") == (0.0055, m2.LAST_PT_SHA256["gen-rot-1280-s0"])    # the control: M2's
     assert r.final_expected("m2b-n1280-ft-s0") == (0.1641, m2b.LAST_PT_SHA256["n1280-ft-s0"])
     assert r.final_expected("m2b-s1280-s0") == (None, None)                                     # no such run here
+
+
+
+def test_the_device_checks_at_16_and_at_one_photo_a_call(records):
+    for run in r.DEVICE_CHECK_RUNS:
+        finish(run, m2b_suite(0.95))
+    table = r.device_checks_table()
+    assert cells(table, "m2b-n1280-ft-s0")["check"] == "not yet"
+    run_dir = m2b.finished_run("s1280-ft-s0")
+    here = m2b_suite(0.94)
+    here["v1-val"]["iou0.5"]["dates_found"] = 49                       # one date moved
+    for folder, batch in (("device-check-cpu", None), ("device-check-cpu-batch1", 1)):
+        (run_dir / folder).mkdir()
+        (run_dir / folder / "suite-m2b.json").write_text(json.dumps(
+            here | {"scored": {"device": "cpu"} | ({"batch": batch} if batch else {})}))
+    rows = [line for line in r.device_checks_table().splitlines() if "m2b-s1280-ft-s0" in line]
+    assert len(rows) == 2 and all("| passes |" in line for line in rows)
+    assert "| 1 | 50/63 → 49/63 | 20/29 → 20/29 | 60/63 → 60/63 | 0.9500 → 0.9400 | 1 | passes |" in rows[1]
+    assert "**Warning:**" not in r.device_checks_table()
+    here["v1-val"]["any_conf"]["dates_found"] = 58                     # two more: three in all
+    (run_dir / "device-check-cpu-batch1" / "suite-m2b.json").write_text(json.dumps(here | {"scored": {"batch": 1}}))
+    assert "**Warning:** a device check didn't pass: m2b-s1280-ft-s0 at 1 a call: fails." in r.device_checks_table()
+    (run_dir / "device-check-cpu-batch1" / "suite-m2b.json").write_text(json.dumps(m2b_suite(0.95)))  # made at 16
+    assert "made at 16 a call" in r.device_checks_table()

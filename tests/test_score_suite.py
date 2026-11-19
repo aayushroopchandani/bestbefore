@@ -329,3 +329,59 @@ def test_score_suite_m2b_on_v1_val_alone(monkeypatch, tmp_path):
         detector.score_suite_m2b(Path("/w.pt"), 1280, out_dir, sets=("v1-val",))
     with pytest.raises(ValueError, match="not in the M2b suite"):
         detector.score_suite_m2b(Path("/w.pt"), 1280, out_dir, sets=("v2",), record=record)
+
+
+def test_batch_goes_to_the_m2b_suite_and_into_the_record(load_script, control, monkeypatch, capsys):
+    """S14: the device checks one photo a call on the 8 GB laptop, as store set v2 is predicted."""
+    script = load_script("score_suite")
+    run_dir, laptop = control
+    (run_dir / "suite-m2b.json").write_text(json.dumps(_suite_m2b(0.21, 180) | {"scored": {"device": None,
+                                                                                          "date": "2026-11-13"}}))
+    asked = []
+
+    def score_suite_m2b(checkpoint, imgsz, out_dir, device, sets=None, record=None, **kw):
+        asked.append(kw)
+        return {k: v for k, v in _suite_m2b(0.2, 180).items() if k not in m2b.SUITE or k in sets} | {"sets": list(sets)}
+
+    monkeypatch.setattr(detector, "score_suite_m2b", score_suite_m2b)
+    for batch, folder in ((None, "device-check-cpu"), ("1", "device-check-cpu-batch1")):
+        monkeypatch.setattr(sys, "argv", ["score_suite.py", "--milestone", "m2b", "--suite", "m2b", "--run",
+                                          "n1280-s0", "--sets", "v1-val", "--out", str(run_dir / folder),
+                                          *(("--batch", batch) if batch else ())])
+        script.main()
+    assert asked == [{}, {"batch": 1}]                     # 16, the default, isn't passed at all
+    assert [json.loads((run_dir / f / "suite-m2b.json").read_text())["scored"]["batch"]
+            for f in ("device-check-cpu", "device-check-cpu-batch1")] == [16, 1]
+    for argv in (["--run", "gen-rot-1280-s0", "--batch", "1"],                       # M2's suite: no
+                 ["--milestone", "m2b", "--suite", "m2b", "--run", "n1280-s0", "--sets", "v1-val",
+                  "--out", str(run_dir / "x"), "--batch", "0"]):
+        monkeypatch.setattr(sys, "argv", ["score_suite.py", *argv])
+        with pytest.raises(SystemExit):
+            script.main()
+
+
+def test_score_suite_m2b_sends_its_batch_to_the_predictions_and_the_validation(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from bestbefore import sets
+    from bestbefore.samples import Box, Sample
+
+    monkeypatch.setenv("EXPDATE_DIR", str(tmp_path / "expdate"))
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: "a model"))
+    listed = tmp_path / "v1-val.txt"
+    listed.write_text("./x.jpg\n")
+    photo = Sample("v1-0004.jpg", Path("/v.jpg"), 1000, 800, (Box("expiry", (0.1, 0.1, 0.3, 0.14)),), tag="clean")
+    batches = []
+    monkeypatch.setattr(m2b, "suite_missing", lambda name: None)
+    monkeypatch.setattr(m2b, "suite_list", lambda name: listed)
+    monkeypatch.setattr(sets, "load_set", lambda name: [photo])
+    monkeypatch.setattr(detector, "predict_samples", lambda m, given, imgsz, device, batch=16: batches.append(
+        ("predict", batch)) or {})
+    monkeypatch.setattr(detector, "_val_metrics", lambda *a, batch=16: batches.append(("val", batch)) or {
+        "map50": {}, "map50_95": {}, "ultralytics_date_recall_at_threshold": None})
+    record = {"threshold_m2": 0.5, "f2_at_threshold_m2": 0.9}
+    detector.score_suite_m2b(Path("/w.pt"), 1280, tmp_path / "out", sets=["v1-val"], record=record, batch=1)
+    assert batches == [("predict", 1), ("val", 1)]
+    batches.clear()
+    detector.score_suite_m2b(Path("/w.pt"), 1280, tmp_path / "out", sets=["v1-val"], record=record)
+    assert batches == [("predict", 16), ("val", 16)]

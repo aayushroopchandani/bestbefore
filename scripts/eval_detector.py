@@ -32,6 +32,8 @@ once: --again is refused, and so is a run whose per-photo folder already
 exists, or whose weights have no recorded SHA-256. Its record also holds
 the counts by pack design and by cause, and our AP (final_test.breakdown).
 Runs that share their weights (M2's and M2b's control) share one pass.
+v2 is predicted one photo a call (final_test.BATCH: 16 at 1,280 px overflow
+the 8 GB laptop), any other set 16 a call unless --batch says otherwise.
 
 The ExpDate test split and the store photos are each meant to be scored
 once (docs/m1-date-detector.md, decision 6; M2 decision 17). So a run
@@ -208,9 +210,13 @@ def torch_threads() -> int | None:
 
 
 def score_run(run: Detector, set_name: str, samples, device: str, again: bool,
-              cache: dict | None = None, v2: final_test.V2 | None = None) -> dict:
-    """Score one run and write its record. Runs whose weights hash the same
-    at the same input size share one pass through `cache`."""
+              cache: dict | None = None, v2: final_test.V2 | None = None,
+              batch: int = detector.PREDICT_BATCH) -> dict:
+    """Score one run and write its record, `batch` photos a call. Runs whose
+    weights hash the same at the same input size share one pass through
+    `cache`."""
+    if set_name == final_test.SET and batch != final_test.BATCH:
+        raise SystemExit(f"store-v2 is predicted {final_test.BATCH} photo a call, not {batch}")
     out = output(run, set_name, again)
     cache = {} if cache is None else cache
     data = None
@@ -220,7 +226,7 @@ def score_run(run: Detector, set_name: str, samples, device: str, again: bool,
     shared = key in cache
     if not shared:
         started = time.time()
-        cache[key] = (run.name, detector.predict_checkpoint(run.weights, samples, run.imgsz, device),
+        cache[key] = (run.name, detector.predict_checkpoint(run.weights, samples, run.imgsz, device, batch=batch),
                       time.time() - started)
     made_by, preds, seconds = cache[key]
     threads = torch_threads()
@@ -243,7 +249,7 @@ def score_run(run: Detector, set_name: str, samples, device: str, again: bool,
                         "threshold": run.threshold, "threshold_from": run.threshold_from,
                         "weights_sha256": run.sha256, "predicted_by": made_by,
                         "predict_seconds": 0.0 if shared else round(seconds, 1),
-                        "photos": len(samples), "torch_threads": threads}
+                        "photos": len(samples), "batch": batch, "torch_threads": threads}
     write_json(out, scores)
     return scores
 
@@ -302,11 +308,16 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--again", action="store_true",
                         help="re-score a run already scored on a test set (refused for store-v2)")
+    parser.add_argument("--batch", type=int, default=None,
+                        help=f"photos a call (default {detector.PREDICT_BATCH}; store-v2 is always {final_test.BATCH})")
     parser.add_argument("--dry-run", action="store_true",
                         help="check everything a score needs, then stop: nothing is predicted or written")
     args = parser.parse_args()
     if len(set(args.runs)) != len(args.runs):
         raise SystemExit("a run is named twice")
+    if args.set == final_test.SET and args.batch not in (None, final_test.BATCH):
+        raise SystemExit(f"store-v2 is predicted {final_test.BATCH} photo a call (S14): --batch {args.batch} is refused")
+    batch = final_test.BATCH if args.set == final_test.SET else args.batch or detector.PREDICT_BATCH
 
     found, failed = {}, {}
     for name in args.runs:          # every run is found and checked before any is scored
@@ -323,15 +334,15 @@ def main() -> None:
         if v2 is not None:
             print(f"\nStore set v2, frozen and loaded ({len(v2.samples)} photos):\n")
             print(final_test.counts(v2))
-        print(f"\n{len(found) - len(set(failed) & set(found))} of {len(args.runs)} ready; "
-              "nothing predicted or written (--dry-run)")
+        print(f"\n{len(found) - len(set(failed) & set(found))} of {len(args.runs)} ready, {batch} photo(s) a "
+              "call; nothing predicted or written (--dry-run)")
         raise SystemExit(1 if failed else 0)
     if failed:
         raise SystemExit("nothing scored:\n" + "\n".join(f"- {n}: {'; '.join(w)}" for n, w in failed.items()))
 
     samples = v2.samples if v2 is not None else load_set(args.set)
     cache: dict = {}
-    results = {name: score_run(run, args.set, samples, args.device, args.again, cache, v2)
+    results = {name: score_run(run, args.set, samples, args.device, args.again, cache, v2, batch)
                for name, run in found.items()}
     print(m1.scores_table(results))
     if args.set in PRIVATE:
