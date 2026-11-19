@@ -3663,6 +3663,34 @@ band, threshold or run changes, and none will once v2 is scored):
   job`; `feat: m2b final test tables`; `docs: m2b store v2 and expdate test
   results` (the experiment and this record).
 
+**Changed 2026-11-19, before any v2 score (the owner's call): one photo a
+call.** The device checks at 16 photos a batch both passed: `s1280-ft-s0`
+and `m1280-ft-s0` on v1-val found what their GPU suites did, count for
+count and tag by tag (mAP@0.5 for dates 0.9709 against 0.9721, and 0.9866
+against 0.9864). But 16 photos a batch at 1,280 px don't fit the 8 GB
+laptop: `s` peaked at a 6.4 GB memory footprint, and `m` at 8.0 GB, which
+swapped for 8.4 minutes (5.4 s a photo, against S13's 0.82 one photo a
+call) and overheated the laptop. So, with v2 still on the laptop
+(decision 3; the owner's choice over moving it to the cluster):
+
+- **v2 is predicted one photo a call** (`final_test.BATCH`, written into
+  each record), as S13's timing was; every other set keeps 16.
+- **The device checks again, one photo a call** (`score_suite.py --batch
+  1`), for `n1280-ft-s0`, `s1280-ft-s0` and `m1280-ft-s0`, as a batch's
+  size reorders the arithmetic: within a date or two of each GPU suite, or
+  stop. `n`'s stands for M1's `n640` and M2's `gen-rot-1280` too, the same
+  network.
+- **v2 in 12 parts**, not 5, each in the background and timed, its memory
+  and the swap read: (1) M1's 3 and M2's 3 with the control's; (2) to (4)
+  `n1280-ft`, `n1280-ft2` and `n1280-ft-gen50k`, 3 runs a part; (5) and
+  (6) `s1280`, `s1280-ft`, 3 a part; (7) to (12) `m`'s runs one a part.
+  Each part is 1 to 2 minutes of compute, with 4 minutes' rest after it;
+  a part whose footprint passes 5 GB, or that grows the swap by 512 MB,
+  stops the rest.
+- **MPS, the laptop's GPU, isn't used**: it shares the same 8 GB, heats
+  the same chip, and would be a third device to check before a test that
+  is scored once.
+
 ### S15. Report · laptop
 
 **Goal:** `results/m2b_detector.md`, the README, this plan closed.
