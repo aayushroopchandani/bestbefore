@@ -34,7 +34,11 @@ gen-v2 helps its own strata only); S12 done 2026-11-17 (R3 `n1280-ft`:
 coarse to separate fine-tuned arms; kept by the rule, owner's call); S13
 done 2026-11-17 (R4 adopts nothing, nor does the what-if at 0.03: the M2b
 detector is `n1280-ft-s0` alone at 0.1641; on the laptop's CPU `n` takes
-175 ms a photo, `m` 4.7 times that). Next: S14.
+175 ms a photo, `m` 4.7 times that); S14's store set v2 done 2026-11-19
+(the M2b detector finds 65 of v2's 68 expiries, M2's 46 and M1's 20, at
+precision 0.761; fine-tuning lifts unseen designs too, so it learned
+print), ExpDate test waiting for a free slot on the cluster. Next: S14's
+ExpDate test, then S15.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -3690,6 +3694,152 @@ call) and overheated the laptop. So, with v2 still on the laptop
 - **MPS, the laptop's GPU, isn't used**: it shares the same 8 GB, heats
   the same chip, and would be a third device to check before a test that
   is scored once.
+
+**Store set v2 done 2026-11-19; ExpDate test waiting for a free slot on
+the cluster.** The plan's note `60e16c8`; the code `ab36e47` (the weights'
+hashes), `8666eba` (store set v2 as a scored-once set), `76ac042` (the
+ExpDate job), `3910228` (the tables); the change `0c3e94b` and its code
+`5240800` (one photo a call); then `experiments/m2b-final-test` and this
+record. 1,117 tests pass, none skipped (1,091 before: 26 new), and each
+code commit passes alone, in a worktree with the laptop's data and
+nothing skipped (1,091, 1,107, 1,114 and 1,117; 3 min 56 s to 4 min 7 s
+each); `76ac042` adds only a job script, which no test reads, so its
+tests are `8666eba`'s byte for byte. The last of those runs is the full
+suite on the final code: this record's commit adds no code a test
+reads. What was found:
+
+- **The read-only checks** (2026-11-18 09:04): of ours on the cluster only
+  M3's `73946` and `73947`, held, and since S13 only its job `73981`; the
+  cluster's checkout `e38ae84`, clean; its 76 M2b records (every run's
+  JSON, the decisions and S13's passes) byte for byte the laptop's;
+  `m2b-decisions.json` still `66b8411c…` and equal to `m2b.decisions()`
+  on the laptop; 1,091 tests passing (3 min 53 s). **The brief's "6
+  commits ahead of GitHub" was out of date**: they had been pushed from
+  the laptop at 08:45 that morning.
+- **v2's labels, read for counts only before any score** (no photo opened
+  or decoded; their headers read for sizes): 68 expiries in frame
+  (dot-matrix 28, clean 24, sideways 10, small-print 5, curved 1; one
+  photo has two), 212 dates. Every month word is written `MON` (29:
+  `MON-YYYY` 18, `DDMONYYYY` 9, `MONYYYY` and `DD.MON.YYYY` 1 each), where
+  v1's labels had `Month` 22 times and `MON` 14, so month words became one
+  cause (the note). The unreadable expiry has its box and its format. No
+  v2 design is in v3, so S4's design counts hold.
+- **Weights**: all 27 on the cluster, hashed read-only. The 17 new ones
+  were each last written 3 to 19 s before their run's start plus its
+  training minutes, and before its M2b suite was scored; M1's three
+  `best.pt` (no record held their hashes) and M2's three `last.pt` are the
+  laptop's copies byte for byte. The 17 copied by `tar` over `ssh` in 8 s,
+  `weights/last.pt` only (409 MB on the laptop with S13's four), each
+  checked by `m2b.last_pt`.
+- **ExpDate test's files on both machines**: its annotations, 665 photos,
+  665 label files and `test.txt`, 1,332 files, byte for byte the same.
+- **The device checks at 16 photos a call passed, and overheated the
+  laptop.** `s1280-ft-s0` and `m1280-ft-s0` on v1-val found what their GPU
+  suites did, count for count and tag by tag. But `s` peaked at a 6.4 GB
+  footprint (the swap 8.7 to 9.4 GB; 89 s) and `m` at 8.0 GB: 8.4 minutes,
+  242 s of it in the system, inference 5.4 s a photo against S13's 0.82
+  one photo a call. The owner found the laptop hot and stopped the session;
+  `m`'s run had finished by then (exit 0, its record whole). Hence the
+  change above (the owner's call; MPS not used).
+- **The device checks one photo a call**: `n1280-ft-s0` 12.6 s at a 0.65
+  GB peak, `s1280-ft-s0` 21.7 s at 0.90 GB, `m1280-ft-s0` 45 s at 1.43 GB,
+  the swap not grown. No count moved, overall or on any tag; mAP@0.5 for
+  dates 0.9511, 0.9705 and 0.9867 against the GPU's 0.9514, 0.9721 and
+  0.9864; each one's own F2 threshold as at 16 a call (0.1665, 0.1452,
+  0.7066), the GPU's staying the run's.
+- **The pre-flight** (`--dry-run` over the 30, names typed out): all 30
+  ready at their GPU records' thresholds, every weights file matching its
+  hash, the control sharing M2's passes; v2 loaded with its frozen hashes,
+  its counts as the note gives them; nothing written.
+- **v2's passes**: 12 parts on 2026-11-19, 20:11 to 21:12, every part at
+  most 1.37 GB; `n640` 52 to 72 ms a photo, `n` at 1,280 px 169 to 212,
+  `s` 368, `m` about 0.8 s (79 to 83 s a run of 99 photos). **Part 5
+  stopped the runner**: the swap grew 527 MB, over the 512 MB limit, while
+  another program took memory (ours peaked at 0.92 GB; `s1280-s1` ran at
+  1,640 ms a photo between 20:32 and 20:35, `s1280-s2` at 774). Its 3
+  records are whole; the arithmetic doesn't depend on speed. The owner had
+  it resume; parts 6 to 12 stayed inside the limits (the swap up 198 MB at
+  most).
+- **The records hold**: every one cut at its own GPU record's threshold,
+  exactly, by the weights hashed for it, one photo a call, on the laptop's
+  CPU with 7 torch threads; its counts by cause and by design add up to its
+  own; and the 30 folders of per-photo boxes give each record's counts
+  again (`summarise.py`'s checks). None of them is in `results/`.
+- **What v2 shows** (`experiments/m2b-final-test`, read in full there):
+  - **the M2b detector finds 65 of v2's 68 expiries**, M2's 46 and M1's
+    20 (arms 64, 48.7 and 25), and 88% of every date against M2's 57% (the
+    arm); its 3 misses are two clean numeric dates 1.5 to 2.5% high and a
+    sideways one, all unseen designs, and it boxes 67 at some confidence;
+  - **at a cost in precision**: 0.761 and 0.60 false boxes a photo,
+    against M2's 0.871 and 0.17 and M1's 0.956 and 0.02; our AP 0.895,
+    0.703 and 0.440;
+  - **the gains**: month words 24 of 25 for the arm (M2's weights 19 at
+    the store threshold, 14 at M2's), clean print 20.7 of 24 (M2 12.7),
+    sideways 9.3 of 10 (6.3), the one upside-down date (every seed of the
+    fine-tuned arms but one of `n1280-ft-gen50k`'s; none of M1, M2 or the
+    control); numeric dates 1.5 to 2.5% high don't move (13 of 15, as the
+    control's);
+  - **the threshold alone** on M2's weights: 48.7 to 58.3 expiries,
+    precision 0.903 to 0.550, about half the gap at a cost fine-tuning
+    doesn't pay, as on v1-val;
+  - **learned packs, not print? It learned print**: on unseen designs
+    every fine-tuned arm's AP is above every control seed's (`n1280-ft`
+    0.909, 0.905–0.915, against 0.726, 0.695–0.767), as fixed before any
+    score; and **designs seen in training aren't above unseen ones**,
+    against "What we expect" (seen well above unseen): AP 0.864, 0.865 and
+    0.909 for the M2b arm on seen, validation-only and unseen designs, and
+    M2's detector too finds the 4 trained designs' expiries, with no store
+    training;
+  - **side readings**: by AP `m1280-ft` (0.948) above `s1280-ft` (0.930)
+    above `n1280-ft` (0.897) on every seed, as on v1-val (R3 stands, Later
+    keeps `m1280-ft` for M3); gen-v2 above `n1280-ft-gen50k` with ranges
+    apart (0.897 against 0.880), where v1-val couldn't separate them; `ft`
+    and `ft2` level.
+- **The cluster** (the owner's OK): `7e9fe0e..5240800` pushed; the cluster
+  pulled to `5240800` with nothing of ours running (the account's other
+  jobs, `jd-refresh`, run from the home folder, not the checkout); the
+  job's own dry run passes there (3 of 3 ready, none scored on ExpDate
+  test). **The job couldn't be submitted**: the account's limits, 2 running
+  and 5 submitted per user, were full with another project's three
+  `jd-refresh` jobs (two running, to 04:38 and 08:53 on 11-20 at their
+  limits) and M3's two held ones, so a sixth `sbatch` would be refused, and
+  even a free submit slot would wait for a running one. The owner chose to
+  wait rather than run it outside the queue on the login node.
+- **Details fixed while writing**: `store-v2` is `eval_detector.py`'s alone
+  (not in `sets.NAMES`), for the 30 records only, `--again` refused, and a
+  run with kept boxes already refused (the boxes are written before the
+  record); every run resolved and checked before any is scored, and a
+  name given twice refused; runs sharing weights share one pass, keyed by
+  the weights' hash; v2's kept boxes exact for every milestone, with the
+  keyword classes' boxes beside the dates (M3 reads from the M2b
+  detector); `detection_eval.restricted` for AP per group; `score_suite.py
+  --batch`, passed on only when not 16, so older callers are unchanged.
+  35 deliberate bugs, one at a time, each file put back and compared by
+  SHA-256: 19 in the guard, the resolution and v2's groups, all caught; 10
+  in the tables, one first through (the control's expected hash computed by
+  the function under test), caught once a test pinned each milestone's
+  hash; 6 in the batch, all caught.
+- **Privacy**: v2 never left the laptop; its per-photo boxes and the
+  parts' logs are in `data/store/v2/runs/` only. Searched: every line this
+  slice adds (the code, tests, the job script, the experiment and this
+  plan's changes) against every v1, v2 and v3 photo name and stem, v3's
+  HEIC names, all 92 design ids and their words, the cluster's user name
+  and the owner's email: no name and no id; a few common words of design
+  ids inside plain English (`pack`, `training`, `clear`) and the format
+  `YYYYMMDD`.
+- **Not checked:** ExpDate test (waiting for a slot); the laptop's
+  temperature (`pmset -g therm` reported no thermal level throughout, and
+  reading the sensors needs admin rights); which program took memory in
+  part 5; a v2 pass at 16 photos a call (only v1-val's device checks set
+  the two side by side); MPS; the learnings guide (not written).
+- **For S15:** v2's tables are `m2b_results.final_test_block` (its parts
+  reusable for `results/m2b_detector.md`); ExpDate test's rows fill once
+  the job runs (`summarise.py --write` again, the three `real-test.json`
+  copied back and compared); the plan's "Code layout" and "Files at the
+  end" lists still miss S13's and S14's new files (`m2b_inference.py`,
+  `m2b_inference_cpu.sbatch`, `final_test.py`, `m2b_test_cpu.sbatch`,
+  `experiments/m2b-final-test`), and its compute budget's v2 row the
+  measured one.
 
 ### S15. Report · laptop
 

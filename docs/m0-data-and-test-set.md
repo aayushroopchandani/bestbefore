@@ -1028,7 +1028,10 @@ these checks:
   It's left out until then on purpose: `eval_detector.py` keeps store
   predictions private and scores a test set once only for the sets it
   names (`SCORED_ONCE`), so the name has to arrive together with that
-  guard. Its runs go to `data/store/v2/runs/`.
+  guard. Its runs go to `data/store/v2/runs/`. **(Arrived in M2b S14,
+  2026-11-19, not M3: a name of `eval_detector.py`'s only, not of
+  `sets.NAMES`, so no other script loads v2 by name; once a run, for M2b's
+  final test's 30 records only, `--again` refused.)**
 - B2's by-eye contact sheet for v2 needs that set name too. Until then,
   review the boxes in Label Studio.
 - **A label fix to a frozen set as a revision** (e.g. `v2.1`), with its
