@@ -8,7 +8,7 @@ from itertools import combinations
 
 import pytest
 
-from bestbefore import ensemble, m2, m2b, runs
+from bestbefore import ensemble, final_test, m2, m2b, runs
 from bestbefore import m2_results as m2r
 from bestbefore import m2b_results as r
 
@@ -485,3 +485,188 @@ def test_the_timing_and_the_device_check(records):
     here["v1-val"]["iou0.5"]["expiry_found"] = 18                    # two more: three in all
     (run_dir / "device-check-cpu" / "suite-m2b.json").write_text(json.dumps(here))
     assert "**Warning:** more than two dates moved." in r.device_check_line()
+
+
+# --- S14: the final test, store set v2 and ExpDate test ---------------------------------------
+
+def level(expiry, dates, precision=0.9, false=0.2):
+    return {"photos": 99, "expiry_found": expiry[0], "expiry_dates": expiry[1], "dates_found": dates[0],
+            "dates": dates[1], "precision": precision, "false_boxes_per_photo": false, "boxes_kept": dates[0] + 20}
+
+
+def v2_record(k=0, unseen_ap=0.7, threshold=0.2, sha="sha", device="cpu"):
+    """A store-v2.json whose breakdowns add up to its counts: `k` more
+    expiries found, all in unseen designs and month words."""
+    design = {"iou0.5": {final_test.SEEN: ((3, 4), (15, 21)), final_test.VALIDATION: ((5, 7), (18, 23)),
+                         final_test.UNSEEN: ((32 + k, 57), (117 + k, 168))},
+              "any_conf": {final_test.SEEN: ((4, 4), (20, 21)), final_test.VALIDATION: ((7, 7), (22, 23)),
+                           final_test.UNSEEN: ((49, 57), (158, 168))}}
+    causes = {"iou0.5": (15 + k, 2, 10, 10, 3, 0), "any_conf": (22, 4, 14, 12, 7, 1)}
+    of = (25, 6, 15, 12, 9, 1)
+    tags = {"dot-matrix": (20, 28), "clean": (12 + k, 24), "sideways": (3, 10), "small-print": (4, 5), "curved": (1, 1)}
+    out = {"iou0.5": level((40 + k, 68), (150 + k, 212)), "iou0.3": level((40 + k, 68), (150 + k, 212)),
+           "any_conf": level((60, 68), (200, 212), precision=0.3, false=5.0),
+           "by_tag": {t: {lv: level(c, (c[0] * 2, c[1] * 2)) for lv in ("iou0.5", "iou0.3", "any_conf")}
+                      for t, c in tags.items()},
+           "by_design": {g: {lv: level(*design[lv][g]) for lv in design} for g in final_test.DESIGN_GROUPS},
+           "by_cause": {c: {lv: {"expiry_found": causes[lv][i], "expiry_dates": of[i]} for lv in causes}
+                        for i, c in enumerate(final_test.CAUSES)},
+           "ap50": {"date": 0.8, "by_tag": {t: 0.8 for t in tags},
+                    "by_design": {final_test.SEEN: 0.9, final_test.VALIDATION: 0.85, final_test.UNSEEN: unseen_ap}},
+           "scored": {"set": "store-v2", "threshold": threshold, "weights_sha256": sha, "device": device}}
+    out["by_tag"]["other-face"] = {lv: {"photos": 24, "dates": 11, "dates_found": 5, "precision": 0.5,
+                                        "false_boxes_per_photo": 0.4} for lv in ("iou0.5", "iou0.3", "any_conf")}
+    return out
+
+
+def final_folder(name: str, threshold: float = 0.2, v1: float = 0.85):
+    """A finished run of any milestone by eval_detector.py's name, its own
+    record holding `threshold`."""
+    if name.startswith("m2b-"):
+        return finish(name[4:], m2b_suite(v1, threshold=threshold))
+    if name.startswith("m2-"):
+        return finish(name[3:], {"threshold": threshold}, milestone="m2")
+    run_dir = runs.start_run(f"m1-{name}", {})
+    (run_dir / "val.json").write_text(json.dumps({"threshold": threshold}))
+    return run_dir
+
+
+def scored_v2(name: str, k: int = 0, unseen_ap: float = 0.7, v1: float = 0.85):
+    run_dir = final_folder(name, v1=v1)
+    threshold, sha = r.final_expected(name)
+    (run_dir / "store-v2.json").write_text(json.dumps(v2_record(k, unseen_ap, threshold, sha)))
+    return run_dir
+
+
+def test_the_final_test_with_nothing_in_is_not_yet(records):
+    block = r.final_test_block()
+    assert "not yet" in block and "**Warning:**" not in block
+    assert r.final_check() == "" and r.private_check() == ""
+
+
+def test_store_v2_every_record_by_tag_cause_and_design_with_rates_and_ranges(records):
+    for name in (*final_test.M1_RUNS, *final_test.M2_RUNS, "m2b-n1280-s0", "m2b-n1280-s1", "m2b-n1280-s2"):
+        scored_v2(name)
+    for s, k in zip(m2b.SEEDS, (8, 9, 10)):
+        scored_v2(f"m2b-n1280-ft-s{s}", k)
+    rows = r.final_rows()
+    table = r.final_table(rows)
+    ft = r.FINAL_LABELS["n1280-ft"]
+    assert cells(table, ft)["expiry found"] == "49/68, 72% (48–50)"
+    assert cells(table, r.FINAL_LABELS["n1280"])["expiry found"] == "40/68, 59%"
+    assert cells(table, ft)["all dates found"] == "159/212, 75% (158–160)"
+    assert cells(table, ft)["expiry boxed at any confidence"] == "60/68, 88%"
+    assert cells(table, "s1280")["expiry found"] == "not yet" and cells(table, "s1280")["seeds"] == "0/3"
+    tags = r.found_by(rows, "by_tag")
+    assert "other-face" not in tags.splitlines()[0]                      # no expiry there
+    assert cells(tags, ft)["clean"] == "21/24, 88% (20–22)"
+    assert "other-face" in r.value_by(rows, "by_tag", r.precision_of("by_tag")).splitlines()[0]
+    causes = r.found_by(rows, "by_cause")
+    assert cells(causes, ft)[final_test.MONTH_WORD] == "24/25, 96% (23–25)"
+    assert cells(causes, ft)[final_test.UPSIDE_DOWN] == "0/1, 0%"
+    assert cells(r.found_by(rows, "by_cause", "any_conf"), ft)[final_test.UPSIDE_DOWN] == "1/1, 100%"
+    designs = r.found_by(rows, "by_design")
+    assert cells(designs, ft)[final_test.UNSEEN] == "41/57, 72% (40–42)"
+    assert cells(r.found_by(rows, "by_design", what="dates"), ft)[final_test.SEEN] == "15/21, 71%"
+    assert cells(r.value_by(rows, "by_design", r.ap_of("by_design")), ft)[final_test.UNSEEN] == "0.700"
+    head = r.headline_table()
+    assert cells(head, "M2b (`n1280-ft-s0`)")["v2: expiry found"] == "48/68, 71%"
+    assert cells(head, "M2b (`n1280-ft-s0`)")["v2: its arm's 3 seeds"] == "49/68, 72% (48–50)"
+    assert cells(head, "M2b (`n1280-ft-s0`)")["ExpDate test: expiry found"] == "not yet"
+    assert "Every record in so far (12 of 30 on store set v2, 0 of 3 on ExpDate test)" in r.final_check()
+
+
+def test_learned_packs_reads_unseen_designs_against_the_control_by_ap(records):
+    for s, (ap, v1) in enumerate(((0.60, 0.70), (0.62, 0.75), (0.61, 0.72))):
+        scored_v2(f"m2b-n1280-s{s}", unseen_ap=ap, v1=v1)
+    for arm, aps, v1s in (("n1280-ft", (0.70, 0.72, 0.71), (0.94, 0.95, 0.93)),
+                          ("n1280-ft2", (0.58, 0.66, 0.61), (0.93, 0.94, 0.93)),
+                          ("n1280-ft-gen50k", (0.50, 0.52, 0.55), (0.92, 0.93, 0.74))):
+        for s, (ap, v1) in enumerate(zip(aps, v1s)):
+            scored_v2(f"m2b-{arm}-s{s}", unseen_ap=ap, v1=v1)
+    table = r.packs_table()
+    assert cells(table, "n1280-ft")["v2 unseen, against the control"] == "lifted: ranges apart"
+    assert cells(table, "n1280-ft")["v1-val, against the control"] == "lifted: ranges apart"
+    assert cells(table, "n1280-ft2")["v2 unseen, against the control"] == "not lifted: ranges overlap"
+    assert cells(table, "n1280-ft-gen50k")["v2 unseen, against the control"] == "lowered: ranges apart"
+    assert cells(table, "n1280-ft-gen50k")["v1-val, against the control"] == "not lifted: ranges overlap"
+    assert cells(table, "s1280-ft")["v2 unseen, against the control"] == "not yet"
+    assert cells(table, "n1280 (control)")["v2 unseen: AP (ours)"] == "0.610 (0.600–0.620)"
+
+
+def test_expdate_test_sets_the_m2b_detector_beside_m1_and_m2_at_both_thresholds(records):
+    def test_record(found, extra=None):
+        return {"threshold": 0.3, "iou0.5": level((found, 665), (found + 68, 733)), "map50": {"date": 0.995},
+                **(extra or {})}
+
+    for name, found in zip(final_test.M1_RUNS, (637, 651, 650)):           # M1's records: no any_conf, no AP of ours
+        final_folder(name).joinpath("real-test.json").write_text(json.dumps(test_record(found)))
+    for name in final_test.M2_RUNS:
+        final_folder(name).joinpath("real-test.json").write_text(json.dumps(test_record(662, {
+            "any_conf": level((664, 665), (731, 733))})))
+    for name in final_test.EXPDATE_TEST:
+        extra = {"any_conf": level((665, 665), (733, 733)), "ap50_ours": {"date": 0.994},
+                 "at_threshold_m2": {"threshold": 0.4, "iou0.5": level((660, 665), (726, 733), precision=0.99)}}
+        final_folder(name).joinpath("real-test.json").write_text(json.dumps(test_record(663, extra)))
+    table = r.expdate_table()
+    assert cells(table, m2r.M1_ROW)["expiry found"] == "646/665, 97% (637–651)"
+    assert cells(table, m2r.M1_ROW)["expiry boxed at any confidence"] == "–"
+    assert cells(table, r.M2_ROW)["AP@0.5 date (ours)"] == "–"
+    store_row, m2_row = (cells(table, f"M2b (`n1280-ft`) at {t}") for t in ("threshold_store", "M2's rule's threshold"))
+    assert (store_row["expiry found"], m2_row["expiry found"]) == ("663/665, 100%", "660/665, 99%")
+    assert (store_row["threshold"], m2_row["threshold"]) == ("0.3000", "0.4000")
+    assert m2_row["precision"] == "0.990" and m2_row["expiry boxed at any confidence"] == "665/665, 100%"
+
+
+def test_the_final_check_names_a_wrong_threshold_hash_device_or_breakdown(records):
+    run_dir = scored_v2("m2b-n1280-ft-s0")
+    assert r.final_check().startswith("Every record in so far (1 of 30")
+    good = json.loads((run_dir / "store-v2.json").read_text())
+    for change, words in (({"threshold": 0.2001}, "threshold 0.2001, not 0.2"),
+                          ({"weights_sha256": "abc"}, "weights' SHA-256 'abc'"),
+                          ({"device": "mps"}, "device 'mps', not 'cpu'")):
+        (run_dir / "store-v2.json").write_text(json.dumps({**good, "scored": {**good["scored"], **change}}))
+        assert "**Warning:**" in r.final_check() and words in r.final_check()
+    bad = json.loads(json.dumps(good))
+    bad["by_cause"][final_test.MONTH_WORD]["iou0.5"]["expiry_found"] += 1
+    (run_dir / "store-v2.json").write_text(json.dumps(bad))
+    assert "its causes give 41/68, its counts 40/68" in r.final_check()
+
+
+def test_the_kept_boxes_give_each_records_counts_again(records, monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from bestbefore.samples import Box, Sample
+    monkeypatch.setattr(final_test, "RUNS_DIR", tmp_path / "v2-runs")
+    photo = Sample("testset2/a.jpeg", Path("a.jpeg"), 1200, 1600, (Box("expiry", (0.1, 0.5, 0.4, 0.52)),), tag="clean")
+    v2 = final_test.V2([photo], {photo.id: final_test.UNSEEN}, {photo.id: ["numbers: print 1.5 to 2.5%"]})
+    run_dir = final_folder("m2b-n1280-ft-s0")
+    threshold, sha = r.final_expected("m2b-n1280-ft-s0")
+    record = {"iou0.5": {"dates_found": 1, "expiry_found": 1, "boxes_kept": 2},
+              "scored": {"threshold": threshold, "weights_sha256": sha, "device": "cpu"}}
+    (run_dir / "store-v2.json").write_text(json.dumps(record))
+    assert "no per-photo boxes" in r.private_check(load=lambda: v2)
+    kept = runs.start_run("detector-store-v2-m2b-n1280-ft-s0", {}, root=final_test.RUNS_DIR)
+    boxes = {photo.id: [[0.1, 0.5, 0.4, 0.52, 0.9], [0.6, 0.6, 0.7, 0.7, 0.3], [0.0, 0.0, 0.1, 0.1, 0.1]]}
+    (kept / "predictions.json").write_text(json.dumps(boxes))
+    assert r.private_check(load=lambda: v2) == ("For all 1 v2 records in, the per-photo boxes kept in "
+                                                 "`data/store/v2/runs/` give the record's counts again.")
+    boxes[photo.id][1][4] = 0.1                                          # a box the record kept, now under the threshold
+    (kept / "predictions.json").write_text(json.dumps(boxes))
+    assert "boxes_kept 1 from its boxes, 2 in its record" in r.private_check(load=lambda: v2)
+
+    def unreadable():
+        raise RuntimeError("no store photos here")
+    assert "weren't checked here" in r.private_check(load=unreadable)
+
+
+def test_each_final_record_expects_its_own_gpu_threshold_and_its_milestones_hash(records):
+    from bestbefore import m1
+    for name, threshold in (("n640", 0.7279), ("m2-gen-rot-1280-s0", 0.3424), ("m2b-n1280-s0", 0.0055),
+                            ("m2b-n1280-ft-s0", 0.1641)):
+        final_folder(name, threshold=threshold)
+    assert r.final_expected("n640") == (0.7279, m1.BEST_PT_SHA256["n640"])
+    assert r.final_expected("m2-gen-rot-1280-s0") == (0.3424, m2.LAST_PT_SHA256["gen-rot-1280-s0"])
+    assert r.final_expected("m2b-n1280-s0") == (0.0055, m2.LAST_PT_SHA256["gen-rot-1280-s0"])    # the control: M2's
+    assert r.final_expected("m2b-n1280-ft-s0") == (0.1641, m2b.LAST_PT_SHA256["n1280-ft-s0"])
+    assert r.final_expected("m2b-s1280-s0") == (None, None)                                     # no such run here
