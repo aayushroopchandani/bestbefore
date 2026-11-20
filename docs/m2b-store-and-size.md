@@ -3844,6 +3844,22 @@ reads. What was found:
   overflow the 8 GB laptop, and what one photo a call needs by size; and
   other projects' jobs and held ones filling the account's job slots.
 
+**Changed 2026-11-20, before ExpDate test is scored (the owner's call):
+ExpDate test on the laptop, not the cluster.** The cluster's job couldn't
+be submitted (the account's slots full), and the laptop is where M2 S8
+scored M2's detector on ExpDate test, so the two compare on one machine.
+The M2b detector's 3 seeds, each at its threshold_store with
+threshold_m2's counts beside it, as the note above says; but:
+
+- **one photo a call**, the prediction and Ultralytics' validation alike
+  (`eval_detector.py --batch 1`, which now reaches the validation too), as
+  16 a call at 1,280 px overflow the laptop;
+- **in 3 parts, a seed each**, with 4 minutes' rest after each and v2's
+  stop rule (a footprint past 5 GB, or the swap grown by 512 MB);
+- **the cluster's job is dropped**: it is never submitted. Once the 3
+  records exist they are copied into the cluster's run folders as well, so
+  that `eval_detector.py` refuses a second score there too.
+
 ### S15. Report · laptop
 
 **Goal:** `results/m2b_detector.md`, the README, this plan closed.
