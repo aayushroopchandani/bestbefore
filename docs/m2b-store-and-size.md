@@ -34,11 +34,11 @@ gen-v2 helps its own strata only); S12 done 2026-11-17 (R3 `n1280-ft`:
 coarse to separate fine-tuned arms; kept by the rule, owner's call); S13
 done 2026-11-17 (R4 adopts nothing, nor does the what-if at 0.03: the M2b
 detector is `n1280-ft-s0` alone at 0.1641; on the laptop's CPU `n` takes
-175 ms a photo, `m` 4.7 times that); S14's store set v2 done 2026-11-19
-(the M2b detector finds 65 of v2's 68 expiries, M2's 46 and M1's 20, at
+175 ms a photo, `m` 4.7 times that); S14 done 2026-11-20 (store set v2:
+the M2b detector finds 65 of 68 expiries, M2's 46 and M1's 20, at
 precision 0.761; fine-tuning lifts unseen designs too, so it learned
-print), ExpDate test waiting for a free slot on the cluster. Next: S14's
-ExpDate test, then S15.
+print; ExpDate test, on the laptop: 664 of 665, nothing forgotten). Next:
+S15.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -3695,8 +3695,8 @@ call) and overheated the laptop. So, with v2 still on the laptop
   the same chip, and would be a third device to check before a test that
   is scored once.
 
-**Store set v2 done 2026-11-19; ExpDate test waiting for a free slot on
-the cluster.** The plan's note `60e16c8`; the code `ab36e47` (the weights'
+**Store set v2 done 2026-11-19** (ExpDate test after the change below).
+The plan's note `60e16c8`; the code `ab36e47` (the weights'
 hashes), `8666eba` (store set v2 as a scored-once set), `76ac042` (the
 ExpDate job), `3910228` (the tables); the change `0c3e94b` and its code
 `5240800` (one photo a call); then `experiments/m2b-final-test` and this
@@ -3760,6 +3760,11 @@ reads. What was found:
   records are whole; the arithmetic doesn't depend on speed. The owner had
   it resume; parts 6 to 12 stayed inside the limits (the swap up 198 MB at
   most).
+- **The records' trees**: the first 4 say clean and the other 26 dirty,
+  because this experiment's folder, untracked until its commit, was first
+  written during part 1 (its `summarise.py` at 20:12:03, the first dirty
+  record at 20:12:21). No tracked file changed from `5240800` until v2's
+  passes ended at 21:12, so all 30 ran that commit's code.
 - **The records hold**: every one cut at its own GPU record's threshold,
   exactly, by the weights hashed for it, one photo a call, on the laptop's
   CPU with 7 torch threads; its counts by cause and by design add up to its
@@ -3804,7 +3809,8 @@ reads. What was found:
   `jd-refresh` jobs (two running, to 04:38 and 08:53 on 11-20 at their
   limits) and M3's two held ones, so a sixth `sbatch` would be refused, and
   even a free submit slot would wait for a running one. The owner chose to
-  wait rather than run it outside the queue on the login node.
+  wait rather than run it outside the queue on the login node, then, on
+  2026-11-20, to score it on the laptop instead (the change below).
 - **Details fixed while writing**: `store-v2` is `eval_detector.py`'s alone
   (not in `sets.NAMES`), for the 30 records only, `--again` refused, and a
   run with kept boxes already refused (the boxes are written before the
@@ -3827,15 +3833,13 @@ reads. What was found:
   and the owner's email: no name and no id; a few common words of design
   ids inside plain English (`pack`, `training`, `clear`) and the format
   `YYYYMMDD`.
-- **Not checked:** ExpDate test (waiting for a slot); the laptop's
+- **Not checked:** the laptop's
   temperature (`pmset -g therm` reported no thermal level throughout, and
   reading the sensors needs admin rights); which program took memory in
   part 5; a v2 pass at 16 photos a call (only v1-val's device checks set
   the two side by side); MPS; the learnings guide (not written).
 - **For S15:** v2's tables are `m2b_results.final_test_block` (its parts
-  reusable for `results/m2b_detector.md`); ExpDate test's rows fill once
-  the job runs (`summarise.py --write` again, the three `real-test.json`
-  copied back and compared); the plan's "Code layout" and "Files at the
+  reusable for `results/m2b_detector.md`); the plan's "Code layout" and "Files at the
   end" lists still miss S13's and S14's new files (`m2b_inference.py`,
   `m2b_inference_cpu.sbatch`, `final_test.py`, `m2b_test_cpu.sbatch`,
   `experiments/m2b-final-test`), and its compute budget's v2 row the
@@ -3859,6 +3863,43 @@ threshold_m2's counts beside it, as the note above says; but:
 - **the cluster's job is dropped**: it is never submitted. Once the 3
   records exist they are copied into the cluster's run folders as well, so
   that `eval_detector.py` refuses a second score there too.
+
+**ExpDate test done 2026-11-20.** The change `0a96e46` and its code
+`14f718c` (`--batch` reaches Ultralytics' validation; the tables check
+ExpDate's records were made one photo a call); then this record and the
+experiment's results. 1,120 tests pass, none skipped (1,117 before: 3
+new), and `14f718c` passes alone, in a worktree with the laptop's data
+and nothing skipped (1,120; 3 min 45 s): the full suite on the final
+code, as this record's commit adds none a test reads. What was found:
+
+- **Before it**: the dry run on the laptop (3 of 3 ready, one photo a
+  call, weights matching their hashes); on the cluster, no M2b ExpDate
+  record and its job never submitted.
+- **The passes**: 3 parts, 12:07 to 12:25, 200 to 210 s a seed (its
+  prediction 114 to 124 s, 0.17 to 0.19 s a photo), at a 0.67 GB peak,
+  the swap not grown, 7 torch threads; every record at `14f718c` with a
+  clean tree, on the CPU M2 S8 used.
+- **The results** (`experiments/m2b-final-test`): the M2b detector finds
+  664 of 665 expiry dates (its arm 663.7, 663–664) and 731.7 of 733 dates
+  (the arm), against M2's 662.7 and 730.7 and M1's 646 and 707.3; every
+  seed boxes all 665 at some confidence, and mAP@0.5 for dates is 0.995,
+  as M2's (ours 0.995). **Nothing is forgotten.** Its store threshold costs
+  precision: 0.897 and 0.13 false boxes a photo for the arm, against M2's
+  0.986 and 0.02; at M2's rule's threshold, from the same pass, 661.7 at
+  0.950.
+- **The records on the cluster**: the first copy sent nothing. zsh
+  doesn't split an unquoted variable, so the three file names went to
+  `tar` as one, which found no such file; the receiving side extracted
+  nothing (0 ExpDate records there, checked), and the "same" its check
+  printed compared two empty lists. M2 S8's slip, met again. Copied
+  again with the names written out: the 3 records byte for byte the same
+  on both machines, and the cluster's dry run refuses all 3 as already
+  scored. Its checkout stays clean (`results/` is untracked).
+- **Deliberate bugs**: 3 (the validation left at 16 a call, the batch not
+  passed to the scoring, ExpDate's batch unchecked by the tables), all
+  caught, each file put back and compared by SHA-256.
+- **Not checked**: ExpDate test on the cluster's CPU (dropped); MPS; the
+  learnings guide (not written).
 
 ### S15. Report · laptop
 

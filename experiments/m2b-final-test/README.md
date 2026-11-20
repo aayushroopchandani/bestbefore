@@ -78,7 +78,10 @@ the generator's new layouts fill, so v2 is the first blind test of M2b.
   every control seed; not if they overlap.
 - **ExpDate test**: the M2b detector's 3 seeds at their threshold_store,
   with the counts at M2's rule's threshold from the same pass, beside M1's
-  and M2's own records (M2 S8).
+  and M2's own records (M2 S8). On the laptop's CPU too, where M2 S8
+  scored M2's (S14's change of 2026-11-20: the cluster's slots were full),
+  one photo a call, the validation included, a seed a part; the records
+  were then copied to the cluster, so it refuses a second score too.
 
 ## Result
 
@@ -95,7 +98,7 @@ python experiments/m2b-final-test/summarise.py --write
 |---|---:|---:|---:|---:|---:|---:|---:|
 | M1 (`n640`), seed 0 | 20/68, 29% | 25/68, 37% (20–30) | 0.956 | 0.02 | 0.440 | 637/665, 96% | 646/665, 97% (637–651) |
 | M2 (`gen-rot-1280-s0`) | 46/68, 68% | 48.7/68, 72% (46–51) | 0.871 | 0.17 | 0.703 | 662/665, 100% | 662.7/665, 100% (662–663) |
-| M2b (`n1280-ft-s0`) | 65/68, 96% | 64/68, 94% (62–65) | 0.761 | 0.60 | 0.895 | not yet | not yet |
+| M2b (`n1280-ft-s0`) | 65/68, 96% | 64/68, 94% (62–65) | 0.761 | 0.60 | 0.895 | 664/665, 100% | 663.7/665, 100% (663–664) |
 
 **The device checks** (v1-val on the laptop's CPU against each run's GPU suite, the GPU's count first; v2 is predicted on that CPU one photo a call):
 
@@ -320,10 +323,10 @@ our AP@0.5 for dates:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | M1 (`n640`) | 3/3 | 0.6864 (0.6643–0.7279) | 646/665, 97% (637–651) | – | 707.3/733, 96% (697–713) | 0.982 (0.974–0.987) | 0.02 (0.01–0.03) | 0.993 (0.992–0.993) | – |
 | M2 (`gen-rot-1280`) at M2's threshold | 3/3 | 0.3885 (0.3424–0.4243) | 662.7/665, 100% (662–663) | 664.7/665, 100% (664–665) | 730.7/733, 100% (730–731) | 0.986 (0.981–0.989) | 0.02 (0.01–0.02) | 0.995 | – |
-| M2b (`n1280-ft`) at threshold_store | 0/3 | not yet | not yet | not yet | not yet | not yet | not yet | not yet | not yet |
-| M2b (`n1280-ft`) at M2's rule's threshold | 0/3 | not yet | not yet | not yet | not yet | not yet | not yet | not yet | not yet |
+| M2b (`n1280-ft`) at threshold_store | 3/3 | 0.1711 (0.1280–0.2211) | 663.7/665, 100% (663–664) | 665/665, 100% | 731.7/733, 100% (731–732) | 0.897 (0.876–0.915) | 0.13 (0.10–0.15) | 0.995 (0.994–0.995) | 0.995 |
+| M2b (`n1280-ft`) at M2's rule's threshold | 3/3 | 0.3910 (0.2654–0.4836) | 661.7/665, 99% (660–663) | 665/665, 100% | 729/733, 99% (728–730) | 0.950 (0.926–0.968) | 0.06 (0.04–0.09) | 0.995 (0.994–0.995) | 0.995 |
 
-Every record in so far (30 of 30 on store set v2, 0 of 3 on ExpDate test) was scored on a CPU, at its own GPU record's threshold exactly, by the weights hashed for it; on v2, one photo a call, and its counts by cause and by design add up to its own.
+Every record in so far (30 of 30 on store set v2, 3 of 3 on ExpDate test) was scored on a CPU, at its own GPU record's threshold exactly, by the weights hashed for it, one photo a call; on v2 its counts by cause and by design add up to its own.
 
 For all 30 v2 records in, the per-photo boxes kept in `data/store/v2/runs/` give the record's counts again.
 
@@ -337,7 +340,11 @@ Store set v2 was scored on 2026-11-19 at `5240800`, on the laptop's CPU
 expiry dates in frame, 57 of them on packs of designs no run trained on,
 and 212 dates in all; one expiry is about 1.5 points of a rate. The two
 groups of designs v1 shares (4 and 7 expiries) are too small to read on
-their own. ExpDate test is waiting for the cluster (below).
+their own. Its first 4 records say a clean tree and the other 26 a dirty
+one: this experiment's folder, untracked until its commit, was first
+written during part 1 (at 20:12:03); no tracked file changed while v2 was
+scored, so all 30 ran `5240800`'s code. ExpDate test was scored on
+2026-11-20 at `14f718c`, clean, on the same laptop.
 
 - **The checks pass.** On v1-val the laptop's CPU found, for `n`, `s` and
   `m`, at 16 photos a call and at one, exactly what each GPU suite found:
@@ -398,15 +405,21 @@ their own. ExpDate test is waiting for the cluster (below).
 - **The unreadable expiry** (counted as one to find): M2's runs and the
   control find it at every seed, `n1280-ft` at 2 of 3 and `m1280-ft` at 1
   of 3, M1 at none; every M2b run boxes it at some confidence.
-- **ExpDate test**: not yet. Its job (`slurm/m2b_test_cpu.sbatch`) is
-  ready and dry-run on the cluster, and waits for a free slot: the
-  account's 2 running jobs are another project's.
+- **ExpDate test: nothing forgotten.** The M2b detector finds 664 of 665
+  expiry dates (its arm 663.7, 663–664) and 731.7 of 733 dates, against
+  M2's 662.7 and M1's 646; every seed boxes all 665 at some confidence,
+  and its mAP@0.5 for dates is M2's, 0.995. Its lower threshold costs
+  precision here too: 0.897 (0.13 false boxes a photo) against M2's 0.986
+  (0.02). At M2's rule's threshold, from the same pass, it finds 661.7 at
+  0.950. Each seed took 200 to 210 s on the laptop at a 0.67 GB peak.
 
 ## Decision
 
 Nothing changes: v2 decides nothing (S14's note). **The M2b detector stays
 `n1280-ft-s0` at `threshold_store` 0.1641.** On store photos no model had
 seen, it finds 65 of 68 expiry dates against M2's 46, on unseen pack
-designs too, at a cost in false boxes that M3's reader has to absorb.
+designs too, at a cost in false boxes that M3's reader has to absorb;
+and on ExpDate test it keeps what M2 had (663.7 of 665 for its arm against
+M2's 662.7, mAP@0.5 0.995 both), at precision 0.897 against 0.986.
 `m1280-ft` stays M3's fallback by the plan's own Later rule; v2's AP puts
 it first, as v1-val did, and that is recorded for M3, not acted on here.
