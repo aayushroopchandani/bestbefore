@@ -1106,8 +1106,8 @@ def final_check(root: Path | None = None) -> str:
             got = record.get("scored", {})
             checks = [("threshold", got.get("threshold"), threshold),
                       ("weights' SHA-256", got.get("weights_sha256"), sha), ("device", got.get("device"), "cpu")]
+            checks.append(("photos a call", got.get("batch"), final_test.BATCH))     # v2's and ExpDate test's
             if set_name == final_test.SET:
-                checks.append(("photos a call", got.get("batch"), final_test.BATCH))
                 problems += breakdown_problems(name, record)
             problems += [f"{name} on {set_name}: {what} {ours!r}, not {want!r}"
                          for what, ours, want in checks if ours != want]
@@ -1117,8 +1117,8 @@ def final_check(root: Path | None = None) -> str:
         return ""
     return (f"Every record in so far ({scored.get(final_test.SET, 0)} of {len(final_test.RUNS)} on store set v2, "
             f"{scored.get('real-test', 0)} of {len(final_test.EXPDATE_TEST)} on ExpDate test) was scored on a CPU, "
-            "at its own GPU record's threshold exactly, by the weights hashed for it; on v2, one photo a call, "
-            "and its counts by cause and by design add up to its own.")
+            "at its own GPU record's threshold exactly, by the weights hashed for it, one photo a call; on v2 "
+            "its counts by cause and by design add up to its own.")
 
 
 # Each size's device check on v1-val (score_suite.py --sets v1-val --out <run>/<folder>), the

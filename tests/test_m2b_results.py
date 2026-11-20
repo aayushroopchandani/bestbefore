@@ -696,3 +696,15 @@ def test_the_device_checks_at_16_and_at_one_photo_a_call(records):
     assert "**Warning:** a device check didn't pass: m2b-s1280-ft-s0 at 1 a call: fails." in r.device_checks_table()
     (run_dir / "device-check-cpu-batch1" / "suite-m2b.json").write_text(json.dumps(m2b_suite(0.95)))  # made at 16
     assert "made at 16 a call" in r.device_checks_table()
+
+
+def test_the_final_check_wants_expdate_test_one_photo_a_call_too(records):
+    run_dir = final_folder("m2b-n1280-ft-s0")
+    threshold, sha = r.final_expected("m2b-n1280-ft-s0")
+    record = {"iou0.5": level((663, 665), (731, 733)), "map50": {"date": 0.995},
+              "scored": {"threshold": threshold, "weights_sha256": sha, "device": "cpu", "batch": 1}}
+    (run_dir / "real-test.json").write_text(json.dumps(record))
+    assert r.final_check().startswith("Every record in so far (0 of 30 on store set v2, 1 of 3 on ExpDate test)")
+    record["scored"]["batch"] = 16
+    (run_dir / "real-test.json").write_text(json.dumps(record))
+    assert "m2b-n1280-ft-s0 on real-test: photos a call 16, not 1" in r.final_check()

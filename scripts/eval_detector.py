@@ -33,7 +33,9 @@ exists, or whose weights have no recorded SHA-256. Its record also holds
 the counts by pack design and by cause, and our AP (final_test.breakdown).
 Runs that share their weights (M2's and M2b's control) share one pass.
 v2 is predicted one photo a call (final_test.BATCH: 16 at 1,280 px overflow
-the 8 GB laptop), any other set 16 a call unless --batch says otherwise.
+the 8 GB laptop), any other set 16 a call unless --batch says otherwise;
+--batch reaches Ultralytics' validation too (ExpDate test, one a call on the
+laptop: M2b S14's change of 2026-11-20).
 
 The ExpDate test split and the store photos are each meant to be scored
 once (docs/m1-date-detector.md, decision 6; M2 decision 17). So a run
@@ -235,7 +237,8 @@ def score_run(run: Detector, set_name: str, samples, device: str, again: bool,
     scores = detector.score(run.weights, samples, run.imgsz, conf=run.threshold,
                             data=data, split=SPLITS.get(set_name),
                             project=run.checkpoints / "eval",
-                            device=device, predictions=preds)
+                            device=device, predictions=preds,
+                            **({} if batch == detector.PREDICT_BATCH else {"batch": batch}))
     if v2 is not None:
         scores |= final_test.breakdown(v2, preds, run.threshold)
     if run.threshold_m2 is not None and set_name in SPLITS:

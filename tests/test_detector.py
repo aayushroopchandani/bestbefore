@@ -353,3 +353,25 @@ def test_score_suite_pools_the_real_sets_and_marks_missing_ones(monkeypatch, tmp
                         lambda name: None if name == "real-val" else "not made yet")
     with pytest.raises(FileNotFoundError, match="real-val-rot, real-val-small not made yet"):
         detector.score_suite(tmp_path / "last.pt", 640, tmp_path)
+
+
+def test_score_sends_its_batch_to_the_predictions_and_the_validation(monkeypatch, tmp_path):
+    """M2b S14: ExpDate test one photo a call on the 8 GB laptop, Ultralytics' validation too;
+    16, the default, isn't passed at all, so older callers stay as they were."""
+    import sys
+    from types import SimpleNamespace
+
+    from bestbefore.detection_eval import Prediction
+    from bestbefore.samples import Box, Sample
+
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: "a model"))
+    photo = Sample("t.jpg", Path("/t.jpg"), 1000, 1000, (Box("exp", (0.1, 0.1, 0.3, 0.14)),))
+    asked = []
+    monkeypatch.setattr(detector, "predict_samples", lambda m, given, imgsz, device, batch=16: asked.append(
+        ("predict", batch)) or {"t.jpg": [Prediction("date", (0.1, 0.1, 0.3, 0.14), 0.9)]})
+    monkeypatch.setattr(detector, "_val_metrics", lambda *a, batch=16: asked.append(("val", batch)) or {
+        "map50": {"date": 1.0}, "map50_95": {"date": 0.8}, "ultralytics_date_recall_at_threshold": 1.0})
+    one = detector.score(Path("/w.pt"), [photo], 1280, conf=0.5, data=tmp_path / "d.yaml", split="test", batch=1)
+    detector.score(Path("/w.pt"), [photo], 1280, conf=0.5, data=tmp_path / "d.yaml", split="test")
+    assert asked == [("predict", 1), ("val", 1), ("predict", 16), ("val", 16)]
+    assert one["iou0.5"]["expiry_found"] == 1 and one["map50"]["date"] == 1.0

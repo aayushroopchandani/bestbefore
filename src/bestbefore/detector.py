@@ -197,7 +197,8 @@ def predict_checkpoint(checkpoint: Path, samples: list[Sample], imgsz: int,
 def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | None = None,
           data: Path | None = None, split: str | None = None,
           project: Path | None = None, device=None,
-          predictions: dict[str, list[Prediction]] | None = None) -> dict:
+          predictions: dict[str, list[Prediction]] | None = None,
+          batch: int = PREDICT_BATCH) -> dict:
     """Score a trained detector on labelled photos.
 
     With `conf` None (validation), the threshold is the one that maximises
@@ -208,11 +209,14 @@ def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | Non
 
     `predictions`, when given, are this checkpoint's for these samples
     (predict_samples), for a caller that keeps them: they aren't made twice.
+    `batch` photos go through each call, Ultralytics' validation's too
+    (M2b S14: one at a time for ExpDate test on the 8 GB laptop).
     """
     from ultralytics import YOLO
 
     model = YOLO(str(checkpoint))
-    preds = predictions if predictions is not None else predict_samples(model, samples, imgsz, device)
+    extra = {} if batch == PREDICT_BATCH else {"batch": batch}
+    preds = predictions if predictions is not None else predict_samples(model, samples, imgsz, device, **extra)
     at_05, at_03 = evaluate(samples, preds, 0.5), evaluate(samples, preds, 0.3)
     if conf is None:
         conf, f1 = best_threshold(at_05)
@@ -225,7 +229,7 @@ def score(checkpoint: Path, samples: list[Sample], imgsz: int, conf: float | Non
     if tags:
         out["by_tag"] = {t: _summaries(at_05, at_03, conf, {t}) for t in tags}
     if data is not None:
-        out.update(_val_metrics(model, data, split, imgsz, device, project, f"val-{split}", conf))
+        out.update(_val_metrics(model, data, split, imgsz, device, project, f"val-{split}", conf, **extra))
     return out
 
 

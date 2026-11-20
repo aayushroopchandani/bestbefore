@@ -306,3 +306,24 @@ def test_a_problem_with_any_run_stops_them_all_before_any_is_scored(load_script,
     assert run_main(ev, monkeypatch, "--set", "store-v2", "--runs", "m2b-n1280-ft-s0", "m2b-n1280-ft-s0") \
         == "a run is named twice"
     assert written(trained) == before
+
+
+def test_expdate_test_one_photo_a_call_reaches_the_validation(load_script, trained, monkeypatch):
+    ev = load_script("eval_detector")
+    sample = Sample(id="test_1.jpg", image=Path("test_1.jpg"), width=1000, height=1000,
+                    boxes=(Box("exp", (0.1, 0.5, 0.4, 0.55)),))
+    asked = []
+
+    def predict(*a, **k):
+        asked.append(("predict", k.get("batch")))
+        return {"test_1.jpg": [Prediction("date", (0.1, 0.5, 0.4, 0.55), 0.3)]}
+
+    def score(*a, conf, **k):
+        asked.append(("score", k.get("batch", 16)))
+        return {"threshold": round(conf, 4)}
+
+    monkeypatch.setattr(detector, "predict_checkpoint", predict)
+    monkeypatch.setattr(detector, "score", score)
+    monkeypatch.setattr(detector, "dataset_yaml", lambda *a, **k: Path("data.yaml"))
+    got = ev.score_run(ev.find("m2b-n1280-ft-s0"), "real-test", [sample], "cpu", False, batch=1)
+    assert asked == [("predict", 1), ("score", 1)] and got["scored"]["batch"] == 1
