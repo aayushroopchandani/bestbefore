@@ -283,6 +283,150 @@ split into tasks or processes writes the same files.
 
 ---
 
+## Generated data (M2b): gen-v2
+
+M2's generator with its second version's features on
+(`docs/m2b-store-and-size.md`, "The generator, v2", S7 to S9), drawn onto
+ExpDate's training photos as M2's were, so the same licence holds (CC BY
+4.0: cite the paper, credit KIST) and nothing is committed. Every new
+feature draws its random numbers only when it is on: M2's spec keeps its
+hash (`3fc14178…`) and M2's photos come out byte for byte as before
+(tests). gen-v2's new layouts come from store set v1's failures, seen in
+the store gallery, and its sizes from v1's training part only; nothing
+comes from store set v2, the test set.
+
+### What gen-v2 adds to M2's generator
+
+| Change | Rule | Share |
+|---|---|---|
+| upside-down blocks | 180° ±8° | 10% of blocks (upright 45%, tilted 15%, sideways 30%) |
+| a keyword glued to its date | `EXP.FEB 2027`: no space after a word ending in `:` or `.` | 30% of the words printed before a date |
+| two dates on one line | `MFG:FEB 2025 \| IMPORT: MAR 2025`, separated by ` \| `, two spaces, ` / ` or `, ` | kind line-pair, 10% |
+| dense panels | a pair plus 3 to 5 more lines at 1.0 to 1.2 em | kind dense-panel, 10% |
+| import dates | `IMPORT:`, `Imp.`, `Date of Import:` and the like, boxed `prod` | half of line-pairs and dense panels |
+| new distractors | 13-digit barcode numbers, unit prices (`USP Rs. 1.50/g`) | 40% of distractor lines |
+| nozzle rows | 1 or 2 whole rows of dots left out, the same in every line | 15% of dot-matrix blocks |
+| laser window | light strokes on a dark printed rectangle, slightly soft | style window, 10% |
+| worn patch | ink faded by 60 to 95% over 1 to 3 characters | 10% of inked blocks |
+| sizes like the store's | below | every untilted block |
+
+**Sizes.** M2's generated dates came out about 1.7 times bigger than the
+store's (median box 3.06% of the photo's long side, against 1.73%).
+gen-v2 draws each block so its first date's box, measured as the store
+measures it (the box's short side over the photo's long side), follows
+the deciles of v1-train's 169 dates (store sets v1's and v3's training
+parts; aggregate numbers, in `V2Spec`), clipped to M2's 0.6 to 4.5%: drawn
+once, measured, and drawn again to its target from the same draws, up to
+3 tries. **Only untilted blocks** (upright, sideways and upside-down) are
+sized that way. **A tilted block is sized by its digits** (its target
+over 1.3, the upright ratio) and drawn once: the store has no tilted date
+(none of v1-train's 169 is more than about 8° off level or vertical), and
+an upright box round tilted text measures the tilt, so drawing that box to
+the store's size had shrunk tilted digits to a third (changed 2026-11-06,
+S8). So gen-v2's sizes follow the store's on untilted dates, and are
+compared with the store's over those only:
+
+| Dates | n | Under 1.5% | 1.5–2.5% | 2.5% and up | Median |
+|---|---:|---:|---:|---:|---:|
+| v1-train (the target) | 169 | 35.5% | 42.0% | 22.5% | 1.736% |
+| gen-v2, untilted | 411,587 | 34.27% | 44.12% | 21.61% | 1.748% |
+| gen-v2, every date (tilted ones run big by design) | 483,566 | 29.73% | 39.88% | 30.39% | 1.899% |
+
+### What was made (job `73944`, 2026-11-12)
+
+| | gen-v2 | synth-val-v2 | gen-v2-sample |
+|---|---:|---:|---:|
+| photos | 200,000 | 2,400 (8 strata of 300) | 500 |
+| set seed | 4 | 5 | 6 |
+| backgrounds | as M2's `gen` | the validation photos | as M2's `gen` |
+| fonts | the 16 training families | the 4 held-out families | the 16 training families |
+| used for | training (M2b step 2's replay) | the M2b validation suite | looking at (S8), never training |
+| new dates | 483,566 (2.42 a photo) | 2,400 targets | 1,183 |
+| blocks placed | 276,849 | 2,400 | 687 |
+| blocks skipped: no free place, too faint | 1,604, 1,855 | 240, 3 | 3, 6 |
+| boxes, with the backgrounds' own: date / due / prod / code | 741,826 / 366,932 / 250,338 / 186,858 | | 1,821 / 918 / 602 / 507 |
+| JPEGs | 37.30 GB (186.5 kB each) | 0.43 GB | |
+| spec SHA-256 | `2c8b24d5…` (`GEN_V2`) | `2295a4bd…` (the strata) | `GEN_V2` |
+
+**synth-val-v2's strata** each take M2's `clean` stratum (`nozzle-rows`:
+M2's `dot-matrix`), drawn by gen-v2's code with every new feature off and
+M2's sizes kept, and change one thing: `upside-down`, `glued`,
+`line-pair`, `dense-panel`, `window`, `embossed`, `worn` and
+`nozzle-rows`. Each photo has one target date (in a line-pair or a dense
+panel, one of its dates, each equally likely), loaded as `exp`, as M2's
+synth-val.
+
+**The 180° sets** (`derive_sets.py --only rot180`): ExpDate's validation
+photos turned 180° (`real-val-rot180`, 165 photos, 187 dates) for the
+suite, and its training photos turned 180° for step 2's replay
+(`real_rot180` 937 photos, 1,057 dates; `synth_rot180` 11,844 photos,
+16,652 dates). Every box is turned exactly (worst error 0.0 px).
+
+The check (`generate.py --milestone m2b --check`) passed with no problem:
+every image opens whole, every label file equals the one rebuilt from its
+sidecar line, every share is within 0.6 points of the spec at 200,000
+photos, and the untilted sizes within the store's bands as above. The
+whole job took 26 min 41 s on 24 CPUs (170.6 ms a photo per worker, a
+worker peaking at 1.8 GB). The cluster and the laptop draw the same
+photos up to the last bits of floating-point work: about 90% of the
+photos are byte-identical, nearly all the rest differ by a few grey
+levels, and no block's size differs.
+
+```
+$GENERATED_DIR/m2b/
+├── gen/images/{gen_v2,synth_val_v2,gen_v2_sample}/NNNNNN.jpg
+├── gen/labels/{gen_v2,synth_val_v2,gen_v2_sample}/NNNNNN.txt
+├── gen/sidecars/                one JSON line per photo, and each task's record
+├── derived/{images,labels}/     the 180° sets
+├── lists/                       gen_v2, synth_val_v2, gen_v2_sample, real_val_rot180, real_rot180, synth_rot180
+└── manifests/{gen-v2,synth-val-v2,gen-v2-sample,derived}.json
+```
+
+```bash
+python scripts/fetch_fonts.py                          # on the cluster, on the login node
+sbatch slurm/m2b_generate.sbatch                       # or, anywhere:
+python scripts/generate.py --set gen-v2-sample --count 500 --workers 24
+python scripts/generate.py --milestone m2b --tasks 0-200 --workers 24
+python scripts/generate.py --milestone m2b --check --workers 24
+python scripts/derive_sets.py --only rot180 --workers 24
+```
+
+---
+
+## Store photos for training (M2b)
+
+Store sets v1 and v3, exported for training by
+`scripts/export_store_yolo.py` into `$STORE_TRAIN_DIR` (on the laptop
+`data/store/train/`, on the cluster `~/bestbefore-data/store/`, folders
+700 and files 600). They belong to the retailer: never committed, never
+published, and only counts appear here. Store set v2, the test set, never
+leaves the laptop: the export refuses a v2 photo, and refuses to run until
+v2's labels are frozen.
+
+- **Split by pack design** (`store_train.split_v1`, seed 0: about 30% of
+  each tag's designs to validation, so a design's photos fall on one side; a
+  v3 design already in v1 keeps its side): **80 photos train** (70 of v1,
+  10 of v3) and **34 validate** (29 and 5, `v1-val`); 31 designs train and
+  16 validate, none on both sides.
+- **Each photo** upright (its EXIF turn applied), in sRGB, shrunk with
+  PIL's BOX filter to at most 1,600 px, saved at JPEG quality 95 without
+  metadata (no EXIF, GPS position or colour profile), and numbered by set
+  (`v1-0001`, `v3-0001`, ...). The names map back only on the laptop
+  (`data/store/train_names.json`); designs are numbers (`d01` to `d47`).
+- **Training photos in 4 turns** (0°, 90°, 180°, 270°: 320 images, every
+  box turned with them); validation photos as they are (34).
+- **Labels**: every expiry, manufacture and other date as `date`, the
+  keyword boxes as `due`, `prod` and `code`. Training holds 169 dates (64
+  expiries), 92 `due`, 137 `prod` and 82 `code` boxes; validation 63 dates
+  (29 expiries), 31, 34 and 25. 4 dates that v1's frozen labels miss were
+  boxed in M2b's keyword review and are exported as dates; one box under
+  2 px across is left out.
+- **A manifest** holds the counts, each photo's part, design number, tag
+  and box labels, and every file's SHA-256 (710 files, 160 MB);
+  `export_store_yolo.py --check` checks a copy against it.
+
+---
+
 ## M3's pretrained models
 
 Fetched on the cluster's login node on 2026-11-12 (M3 S1) by
