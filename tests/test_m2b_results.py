@@ -708,3 +708,150 @@ def test_the_final_check_wants_expdate_test_one_photo_a_call_too(records):
     record["scored"]["batch"] = 16
     (run_dir / "real-test.json").write_text(json.dumps(record))
     assert "m2b-n1280-ft-s0 on real-test: photos a call 16, not 1" in r.final_check()
+
+
+# --- S15: the report's own blocks ---------------------------------------------------------------
+
+def add_v2(name: str, k: int = 0, unseen_ap: float = 0.7, **scored):
+    """A store-v2.json in a run's existing folder (one is made if there is
+    none), cut at its own record's threshold by its hashed weights."""
+    run_dir = r.final_run_dir(name) or final_folder(name)
+    threshold, sha = r.final_expected(name)
+    record = v2_record(k, unseen_ap, threshold, sha)
+    record["scored"] |= {"photos": 99, "predicted_by": name, "predict_seconds": 19.8} | scored
+    (run_dir / "store-v2.json").write_text(json.dumps(record))
+    return run_dir
+
+
+def add_test(name: str, found: int, m2b_pass: bool = False):
+    """A real-test.json: M1's and M2's as their milestones wrote them, the
+    M2b detector's with its counts at M2's rule's threshold and how it was
+    scored."""
+    record = {"threshold": 0.3, "iou0.5": level((found, 665), (found + 68, 733), precision=0.95, false=0.05),
+              "map50": {"date": 0.995}}
+    if m2b_pass:
+        record |= {"any_conf": level((665, 665), (733, 733)), "ap50_ours": {"date": 0.995},
+                   "at_threshold_m2": {"threshold": 0.4, "iou0.5": level((660, 665), (727, 733), precision=0.97)},
+                   "scored": {"photos": 665, "device": "cpu", "torch_threads": 7, "batch": 1, "predict_seconds": 118.0,
+                              "git_commit": "14f718c2952d"}}
+    (r.final_run_dir(name) or final_folder(name)).joinpath("real-test.json").write_text(json.dumps(record))
+
+
+def full_world(decided: bool = False):
+    """Every record the report reads: the suites and the chain's record (R3
+    at n1280-ft, band 0.10; made already if `decided`), the add-ons, v2's 30
+    records and ExpDate test's 9, and m1280-ft-s0's device checks."""
+    if not decided:
+        r3_decided()
+    arm("n1280-ft-gen50k", (0.90, 0.89, 0.91))
+    inference(APS)
+    for name in final_test.M1_RUNS:
+        add_v2(name, 0)
+    for name in final_test.M2_RUNS:
+        add_v2(name, 4)
+    for name in r.CONTROL_RUNS:
+        add_v2(name, 6, predicted_by=name.replace("m2b-n1280", "m2-gen-rot-1280"), predict_seconds=0.0)
+    for arm_name in m2b.STEP1:
+        for name in r.arm_names(arm_name):
+            add_v2(name, 5)
+    for arm_name in r.FINE_TUNED:
+        for name, k in zip(r.arm_names(arm_name), (8, 9, 10)):
+            add_v2(name, k, unseen_ap=0.8)
+    for name, found in zip(final_test.M1_RUNS, (637, 651, 650)):
+        add_test(name, found)
+    for name in final_test.M2_RUNS:
+        add_test(name, 662)
+    for name, found in zip(final_test.EXPDATE_TEST, (664, 663, 664)):
+        add_test(name, found, m2b_pass=True)
+    run_dir = m2b.finished_run("m1280-ft-s0")
+    for folder, minutes in (("device-check-cpu", 8.4), ("device-check-cpu-batch1", 0.7)):
+        (run_dir / folder).mkdir()
+        (run_dir / folder / "suite-m2b.json").write_text(json.dumps({"scored": {"minutes": minutes}}))
+
+
+def test_the_headline_is_m1_m2_and_m2b_each_at_its_own_threshold_with_m2s_weights_at_the_stores(records):
+    full_world()
+    v2 = r.progression_table()
+    assert cells(v2, "the M2b detector (`n1280-ft-s0`)")["expiry found"] == "48/68, 71%"
+    assert cells(v2, "M2b (`n1280-ft`), 3 seeds")["expiry found"] == "49/68, 72% (48–50)"
+    assert cells(v2, "M2b (`n1280-ft`), 3 seeds")["seeds"] == "3/3"
+    assert cells(v2, "the M2 detector (`gen-rot-1280-s0`)")["expiry found"] == "44/68, 65%"
+    assert cells(v2, "M2's weights at the store threshold (`n1280-s0`)")["expiry found"] == "46/68, 68%"
+    assert cells(v2, "the M1 detector (`n640`, 640 px)")["AP@0.5 date (ours)"] == "0.800"
+    test = r.progression_table("real-test")
+    assert "mAP@0.5 date (Ultralytics)" in test.splitlines()[0] and "AP@0.5 date (ours)" not in test
+    with pytest.raises(KeyError):                                  # the control was never scored on ExpDate test
+        cells(test, "M2's weights at the store threshold (`n1280-s0`)")
+    assert cells(test, "M1 (`n640`), 3 seeds")["expiry found"] == "646/665, 97% (637–651)"
+    at_m2 = cells(test, "the M2b detector at M2's rule's threshold")
+    assert (at_m2["threshold"], at_m2["expiry found"], at_m2["precision"]) == ("0.4000", "660/665, 99%", "0.970")
+    head = r.headline_block()
+    assert "**Store set v2** (99 photos, 68 expiry dates in frame, 212 dates;" in head
+    assert "**ExpDate test** (665 photos, 665 expiry dates in frame, 733 dates)" in head
+
+
+def test_what_it_shows_waits_for_every_record_then_reads_each_number_from_them(records):
+    r3_decided()
+    assert r.what_it_shows() == r.NOT_READY and r.expected_table() == r.NOT_READY
+    assert r.chart_data() is None and r.set_counts() == "not yet"
+    full_world(decided=True)
+    shows = r.what_it_shows()
+    assert "**Warning:**" not in shows
+    assert ("The M2b detector finds 48/68 against the M2 detector's 44/68 and the M1 detector's 40/68; its arm "
+            "49/68 (48–50)") in shows
+    assert "the threshold alone closes 40% of the gap to the M2b arm's 49/68 (48–50)" in shows
+    assert "On v2's designs that no run trained on, 5 of the 5 fine-tuned arms score an AP above every seed" in shows
+    assert "found by 0 of the M2b arm's 3 seeds" in shows             # no made-up record finds it
+    assert ("The M2b detector's 20 misses, by cause: month word (2), numbers: print under 1.5% (4), numbers: print "
+            "1.5 to 2.5% (5), numbers: print 2.5% and up (2), sideways (6), upside-down (1); by tag: sideways (7), "
+            "dot-matrix (8), small-print (1), clean (4); by design: seen in training (1), seen only in validation "
+            "(2), unseen (17).") in shows
+    assert "**R4 adopted nothing.**" in shows and "ensemble +0.0400, rotation +0.0300, imgsz-1536 +0.0100" in shows
+    assert "would keep ensemble, for the plan's Later. So the M2b detector is one pass a photo." in shows
+    assert "took 8.4 minutes at 16 a call against 0.7 at one" in shows
+    assert "its records say cpu, 7 torch threads, one photo a call, code `14f718c`" in shows
+    assert "Store set v2 holds 68 expiry dates in frame: one is 1.5 points of a rate" in shows
+    expected = r.expected_table()
+    s1 = [line for line in expected.splitlines() if line.startswith("| `s1280` (step 1) | v1-val mAP")]
+    assert s1 and "0.780 (0.760–0.800) against `n1280`'s 0.750 (0.700–0.800)" in s1[0]
+    assert ("5 of 5 fine-tuned arms above every control seed by AP (`n1280-ft` 0.800, the control 0.700)"
+            in expected)
+
+
+def test_misses_per_group_leave_out_groups_with_none():
+    record = {"by_tag": {"clean": {"iou0.5": {"expiry_dates": 24, "expiry_found": 22}},
+                         "other-face": {"iou0.5": {"dates": 11, "dates_found": 5}},
+                         "sideways": {"iou0.5": {"expiry_dates": 10, "expiry_found": 10}}}}
+    assert r.misses(record, "by_tag") == {"clean": 2}
+    assert r._listed({"clean": 2, "sideways": 1}) == "clean (2), sideways (1)"
+
+
+def test_the_laptop_table_counts_a_pass_the_control_shares_with_m2_once(records):
+    for name in final_test.M2_RUNS:
+        add_v2(name, predict_seconds=18.0)
+    for name in r.CONTROL_RUNS:
+        add_v2(name, predicted_by=name.replace("m2b-n1280", "m2-gen-rot-1280"), predict_seconds=0.0)
+    for name, seconds in zip(final_test.EXPDATE_TEST, (117.0, 120.0, 123.0)):
+        final_folder(name)
+        record = {"scored": {"photos": 665, "batch": 1, "predict_seconds": seconds}}
+        r.final_run_dir(name).joinpath("real-test.json").write_text(json.dumps(record))
+    table = r.laptop_table()
+    m2_row = [line for line in table.splitlines() if "the control is cut from these passes" in line][0]
+    assert "| 3 | 99 | 1 | 54.0 | 182 |" in m2_row
+    assert "| ExpDate test | n1280-ft | 3 | 665 | 1 | 360.0 | 180 (176–185) |" in table
+    assert "0.9 minutes of prediction for store set v2 and 6.0 for ExpDate test" in table
+    assert "the control's 3 records on v2 took no pass of their own" in table
+    assert "| m2b-m1280-ft-s0 | 16 | not yet |" in table
+
+
+def test_the_charts_rate_only_groups_of_three_or_more(records):
+    full_world()
+    data = r.chart_data()
+    assert list(data["tags"]) == ["every expiry", "sideways", "dot-matrix", "small-print", "clean"]
+    m2b_arm = data["tags"]["clean"]["M2b (n1280-ft)"]
+    assert (m2b_arm["mean"], m2b_arm["low"], m2b_arm["high"], m2b_arm["n"]) == (21.0, 20.0, 22.0, 24)
+    assert data["listed"] == {"curved": {"M1 (n640)": "1/1", "M2 (gen-rot-1280)": "1/1", "M2b (n1280-ft)": "1/1"}}
+    assert list(data["points"]) == ["M1 (n640)", "M2 at its threshold", "M2's weights at the store threshold",
+                                    "n1280-ft", "s1280-ft", "m1280-ft"]
+    assert data["points"]["n1280-ft"]["found"] == {"mean": 49.0, "low": 48.0, "high": 50.0, "n": 68}
+    assert data["points"]["M1 (n640)"]["precision"] == {"mean": 0.9, "low": 0.9, "high": 0.9}

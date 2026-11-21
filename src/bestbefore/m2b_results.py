@@ -1,5 +1,7 @@
 """M2b's results read back from the run records, as tables
-(docs/m2b-store-and-size.md, S11 on), for experiments/m2b-*/summarise.py.
+(docs/m2b-store-and-size.md, S11 on), for experiments/m2b-*/summarise.py
+and, from S15, scripts/m2b_report.py (results/m2b_detector.md) and the
+README's charts (scripts/readme_figures.py --m2b).
 
 Every rule comes from m2b.py, the code the chain applies on the cluster:
 each decision is worked out again with m2b.decisions() and compared with
@@ -1225,6 +1227,556 @@ def final_test_block(root: Path | None = None) -> str:
         "**ExpDate test** (665 expiry dates, 733 dates; the M2b detector's arm once, M1's and M2's as their "
         "milestones scored them):", expdate_table(root),
         final_check(root), private_check(root), record_check(root))
+
+
+# --- S15: the report's own blocks (results/m2b_detector.md, scripts/m2b_report.py) ----------
+
+def arm_names(arm: str) -> tuple[str, ...]:
+    """An M2b arm's three final-test records, by scripts/eval_detector.py's names."""
+    return tuple(f"m2b-{arm}-s{s}" for s in m2b.SEEDS)
+
+
+CONTROL_RUNS = arm_names(m2b.CONTROL)                   # M2's weights, cut at threshold_store
+DETECTOR_ARM = "n1280-ft"                               # R3's arm; the M2b detector is its seed 0
+# The headline's progression, each milestone's detector seed 0 at its own threshold, then its
+# arm's three seeds: (the detector's label, its arm's label, the records' names).
+PROGRESSION = (("the M1 detector (`n640`, 640 px)", "M1 (`n640`), 3 seeds", final_test.M1_RUNS),
+               ("the M2 detector (`gen-rot-1280-s0`)", "M2 (`gen-rot-1280`), 3 seeds", final_test.M2_RUNS),
+               ("M2's weights at the store threshold (`n1280-s0`)", "the same, 3 seeds", CONTROL_RUNS),
+               ("the M2b detector (`n1280-ft-s0`)", "M2b (`n1280-ft`), 3 seeds", arm_names(DETECTOR_ARM)))
+AT_M2_RULE = ("the M2b detector at M2's rule's threshold", "the same, 3 seeds", arm_names(DETECTOR_ARM))
+MIN_RATE = 3        # no rate for a group of one or two expiries (the README's charts and text)
+
+
+def records_of(names: Sequence[str], set_name: str = final_test.SET, root: Path | None = None) -> list[dict | None]:
+    return [final_record(n, set_name, root) for n in names]
+
+
+def cut(record: dict, at_m2: bool = False) -> dict:
+    """A final-test record at its own threshold, or (ExpDate test, the M2b
+    detector's pass) at M2's rule's threshold: its threshold and counts."""
+    return record["at_threshold_m2"] if at_m2 else record
+
+
+def progression_table(set_name: str = final_test.SET, root: Path | None = None) -> str:
+    """The headline: M1 → M2 → M2b, each detector (seed 0) at its own
+    threshold and its arm's three seeds, with M2's weights at the store
+    threshold on v2 so the threshold's share shows. On ExpDate test our AP
+    is in M2b's records only, so the column is Ultralytics' mAP@0.5 for all;
+    the control was never scored there, and the M2b detector at M2's rule's
+    threshold (the same pass) takes its place."""
+    test = set_name != final_test.SET
+    groups = [(one, many, names, False) for one, many, names in PROGRESSION if not (test and names == CONTROL_RUNS)]
+    if test:
+        groups.append((*AT_M2_RULE, True))
+    ap = ("mAP@0.5 date (Ultralytics)", lambda s: s["map50"]["date"]) if test else \
+         ("AP@0.5 date (ours)", lambda s: s["ap50"]["date"])
+    rows = []
+    for one, many, names, at_m2 in groups:
+        seeds = records_of(names, set_name, root)
+        for label, part in ((one, seeds[:1]), (many, seeds)):
+            rows.append({"detector": label, "seeds": seeds_cell(part),
+                         "threshold": value_cell(each(part, lambda s: cut(s, at_m2)["threshold"]), 4),
+                         "expiry found": rate_cell(each(part, lambda s: counted(cut(s, at_m2)["iou0.5"], "expiry"))),
+                         "all dates found": rate_cell(each(part, lambda s: counted(cut(s, at_m2)["iou0.5"]))),
+                         "precision": value_cell(each(part, lambda s: cut(s, at_m2)["iou0.5"]["precision"])),
+                         "false boxes / photo": value_cell(
+                             each(part, lambda s: cut(s, at_m2)["iou0.5"]["false_boxes_per_photo"]), 2),
+                         ap[0]: value_cell(each(part, ap[1]))})
+    return markdown_table(rows, left=("detector",))
+
+
+def set_counts(set_name: str = final_test.SET, root: Path | None = None) -> str:
+    """'99 photos, 68 expiry dates in frame, 212 dates', from the M2b
+    detector's record on a final-test set; "not yet" until it is in."""
+    record = final_record(final_test.DETECTOR, set_name, root)
+    if record is None:
+        return NOT_YET
+    got = record["iou0.5"]
+    return f"{record['scored']['photos']} photos, {got['expiry_dates']} expiry dates in frame, {got['dates']} dates"
+
+
+def headline_block(root: Path | None = None) -> str:
+    """The report's headline: the progression on store set v2, then on
+    ExpDate test."""
+    return paragraphs(
+        f"**Store set v2** ({set_counts(final_test.SET, root)}; no model trained or was tuned on them), scored "
+        "once on the laptop's CPU:", progression_table(final_test.SET, root),
+        f"**ExpDate test** ({set_counts('real-test', root)}), scored once per milestone:",
+        progression_table("real-test", root),
+        "M2's weights at the store threshold weren't scored on ExpDate test (the plan scored only the M2b "
+        "detector there); the M2b detector cut at M2's rule's threshold, from the same pass, shows what the "
+        "threshold does there instead.")
+
+
+# Getters for one final-test record: counts are (found, of n), as m2_results.counted gives them.
+def _expiry(level: str = "iou0.5") -> Callable[[dict], object]:
+    return lambda s: counted(s[level], "expiry")
+
+
+def _dates(level: str = "iou0.5") -> Callable[[dict], object]:
+    return lambda s: counted(s[level])
+
+
+def _group(key: str, group: str, level: str = "iou0.5", what: str = "expiry") -> Callable[[dict], object]:
+    """A breakdown's group (by_tag, by_cause or by_design)."""
+    return lambda s: counted(s[key][group][level], what)
+
+
+def _value(name: str, level: str = "iou0.5") -> Callable[[dict], object]:
+    return lambda s: s[level][name]
+
+
+def _mean_found(seeds: Seeds, get: Callable[[dict], object]) -> float:
+    return float(np.mean([k for k, _ in (p for p in each(seeds, get) if isinstance(p, tuple))]))
+
+
+def _v1(arm: str, root: Path | None = None) -> list[dict | None]:
+    """An arm's v1-val entry in each seed's M2b suite."""
+    return [suite_set(s, m2b.STORE_SET) for s in m2b.arm_suites(arm, root)]
+
+
+def _set_map(arm: str, name: str, root: Path | None = None) -> str:
+    return value_cell(each(m2b.arm_suites(arm, root), lambda s: date_map(suite_set(s, name))))
+
+
+def _size(arm: str, band: str, key: str = "found", root: Path | None = None) -> str:
+    return count_cell(each(_v1(arm, root), lambda v: (v["by_size"][band][key], v["by_size"][band]["dates"])))
+
+
+def _v1_tag(arm: str, tag: str, level: str = "iou0.5", root: Path | None = None) -> str:
+    return count_cell(each(_v1(arm, root), lambda v: counted(at(v["by_tag"][tag], level), "expiry")))
+
+
+def _points(a: float, b: float) -> str:
+    return f"{100 * (a - b):+.1f}"
+
+
+def _spread_points(values: Sequence) -> float:
+    got = [v for v in values if isinstance(v, (int, float))]
+    return 100 * (max(got) - min(got))
+
+
+def misses(record: dict, key: str) -> dict[str, int]:
+    """The expiry dates a record didn't find at its threshold, per group of
+    one breakdown (by_tag, by_cause or by_design), groups with none left out."""
+    out = {}
+    for group in GROUP_ORDER[key]:
+        entry = (record[key].get(group) or {}).get("iou0.5") or {}
+        missed = entry.get("expiry_dates", 0) - entry.get("expiry_found", 0)
+        if missed:
+            out[group] = missed
+    return out
+
+
+def per_call(batch: int) -> str:
+    return "one photo a call" if batch == 1 else f"{batch} photos a call"
+
+
+def _listed(counts: Mapping[str, int]) -> str:
+    """'sideways (1), clean (2)': each group with its count."""
+    return ", ".join(f"{g} ({k})" for g, k in counts.items())
+
+
+def report_ready(root: Path | None = None) -> bool:
+    """Every record the report's reading needs: the chain's decisions with
+    R3, every candidate's M2b suites, the add-ons' record, all 30 v2 records
+    and ExpDate test's 9 (M1's, M2's and the M2b detector's arm)."""
+    decided = m2b.decisions(root)
+    arms = (m2b.CONTROL, *m2b.STEP1, *STEP2_N, "s1280-ft", "m1280-ft")
+    names = (*final_test.M1_RUNS, *final_test.M2_RUNS, *final_test.EXPDATE_TEST)
+    return ("R3" in decided and all(complete(m2b.arm_suites(a, root)) for a in arms)
+            and inference_record(root) is not None
+            and all(final_record(n, root=root) for n in final_test.RUNS)
+            and all(final_record(n, "real-test", root) for n in names))
+
+
+NOT_READY = ("_Not yet: the report's reading needs every M2b suite, R3, the add-ons' record, store set v2's "
+             "30 records and ExpDate test's (S11 to S14)._")
+
+
+def what_it_shows(root: Path | None = None) -> str:
+    """Where M2b beats M2, where it doesn't or didn't do what was expected,
+    every number read from the records, as M2's report. The words around
+    them are judgments, written beside the numbers they rest on."""
+    if not report_ready(root):
+        return NOT_READY
+    v2 = {key: records_of(names, root=root) for key, names in (
+        ("m1", final_test.M1_RUNS), ("m2", final_test.M2_RUNS), ("ctl", CONTROL_RUNS),
+        ("ft", arm_names(DETECTOR_ARM)), ("s", arm_names("s1280-ft")), ("m", arm_names("m1280-ft")))}
+    test = {key: records_of(names, "real-test", root) for key, names in (
+        ("m1", final_test.M1_RUNS), ("m2", final_test.M2_RUNS), ("ft", final_test.EXPDATE_TEST))}
+
+    def c(seeds: Seeds, get) -> str:
+        return count_cell(each(seeds, get))
+
+    def v(seeds: Seeds, get, digits: int = 3) -> str:
+        return value_cell(each(seeds, get), digits)
+
+    one = {key: seeds[:1] for key, seeds in v2.items()}             # each milestone's detector, seed 0
+    t1 = {key: seeds[:1] for key, seeds in test.items()}
+    mw, mid, ud = final_test.MONTH_WORD, final_test.NUMBERS[1], final_test.UPSIDE_DOWN
+    unseen, seen, val = final_test.UNSEEN, final_test.SEEN, final_test.VALIDATION
+    precision, false = _value("precision"), _value("false_boxes_per_photo")
+    ap = lambda s: s["ap50"]["date"]                                                 # noqa: E731
+
+    # The threshold alone against fine-tuning: on v2 (expiries) and on v1-val (dates).
+    m2_found, ctl_found, ft_found = (_mean_found(v2[k], _expiry()) for k in ("m2", "ctl", "ft"))
+    share = 100 * (ctl_found - m2_found) / (ft_found - m2_found)
+    ctl_v1, ft_v1 = _v1(m2b.CONTROL, root), _v1(DETECTOR_ARM, root)
+    v1_m2 = count_cell(each(ctl_v1, lambda e: counted(e["at_threshold_m2"]["iou0.5"])))
+    v1_ctl, v1_ft = (count_cell(each(e, lambda x: counted(x["iou0.5"]))) for e in (ctl_v1, ft_v1))
+
+    # "Learned packs, not print": each fine-tuned arm against the control on unseen designs, by AP.
+    def unseen_ap(seeds: Seeds) -> list:
+        return each(seeds, lambda s: s["ap50"]["by_design"][unseen])
+
+    lifted = [arm for arm in FINE_TUNED if compare(unseen_ap(records_of(arm_names(arm), root=root)),
+                                                    unseen_ap(v2["ctl"])) == "lifted: ranges apart"]
+    seeds_ud = {key: sum(1 for s in v2[key] if s["by_cause"][ud]["iou0.5"]["expiry_found"])
+                for key in ("m1", "m2", "ctl", "ft")}
+
+    beats = "\n".join([
+        f"- **More of v2's expiry dates found, on photos no model trained or was tuned on.** The M2b detector "
+        f"finds {c(one['ft'], _expiry())} against the M2 detector's {c(one['m2'], _expiry())} and the M1 "
+        f"detector's {c(one['m1'], _expiry())}; its arm {c(v2['ft'], _expiry())}, against "
+        f"{c(v2['m2'], _expiry())} and {c(v2['m1'], _expiry())}. Of every date its arm finds "
+        f"{rate_cell(each(v2['ft'], _dates()))}, against {rate_cell(each(v2['m2'], _dates()))} and "
+        f"{rate_cell(each(v2['m1'], _dates()))}, and it boxes {c(v2['ft'], _expiry('any_conf'))} expiries at "
+        f"some confidence (M2 {c(v2['m2'], _expiry('any_conf'))}). By our AP@0.5 for dates, which no threshold "
+        f"moves, the three detectors score {v(one['ft'], ap)}, {v(one['m2'], ap)} and {v(one['m1'], ap)}.",
+        f"- **The gains are where M2 was weak**, the M2b arm against M2's at its own threshold: month words "
+        f"{c(v2['ft'], _group('by_cause', mw))} against {c(v2['m2'], _group('by_cause', mw))} (M2's weights at "
+        f"the store threshold {c(v2['ctl'], _group('by_cause', mw))}, M1 {c(v2['m1'], _group('by_cause', mw))}); "
+        f"clean print {c(v2['ft'], _group('by_tag', 'clean'))} against {c(v2['m2'], _group('by_tag', 'clean'))}; "
+        f"sideways {c(v2['ft'], _group('by_tag', 'sideways'))} against "
+        f"{c(v2['m2'], _group('by_tag', 'sideways'))}; dot-matrix {c(v2['ft'], _group('by_tag', 'dot-matrix'))} "
+        f"against {c(v2['m2'], _group('by_tag', 'dot-matrix'))}. v2's one upside-down expiry is found by "
+        f"{seeds_ud['ft']} of the M2b arm's 3 seeds, and by {seeds_ud['m1']}, {seeds_ud['m2']} and "
+        f"{seeds_ud['ctl']} of M1's, M2's and the control's.",
+        f"- **Fine-tuning, not the threshold alone.** M2's weights cut at the store threshold find "
+        f"{c(v2['ctl'], _expiry())} of v2's expiries at precision {v(v2['ctl'], precision)}, against "
+        f"{c(v2['m2'], _expiry())} at {v(v2['m2'], precision)} at M2's own threshold: the threshold alone closes "
+        f"{share:.0f}% of the gap to the M2b arm's {c(v2['ft'], _expiry())}, which keeps precision "
+        f"{v(v2['ft'], precision)}. On v1-val the same: {v1_m2} dates found at M2's threshold, {v1_ctl} at the "
+        f"store's, {v1_ft} fine-tuned.",
+        f"- **It learned print, not packs.** On v2's designs that no run trained on, {len(lifted)} of the "
+        f"{len(FINE_TUNED)} fine-tuned arms score an AP above every seed of the control's (ranges apart, the "
+        f"reading fixed before any score): the M2b arm {v(v2['ft'], lambda s: s['ap50']['by_design'][unseen])} "
+        f"against {v(v2['ctl'], lambda s: s['ap50']['by_design'][unseen])}. Its arm finds "
+        f"{c(v2['ft'], _group('by_design', unseen))} of those expiries, the control "
+        f"{c(v2['ctl'], _group('by_design', unseen))} and M2 at its own threshold "
+        f"{c(v2['m2'], _group('by_design', unseen))}.",
+        f"- **ExpDate kept.** On ExpDate test the M2b detector finds {c(t1['ft'], _expiry())} expiry dates (its "
+        f"arm {c(test['ft'], _expiry())}), the M2 detector {c(t1['m2'], _expiry())} ({c(test['m2'], _expiry())}) "
+        f"and the M1 detector {c(t1['m1'], _expiry())} ({c(test['m1'], _expiry())}). Every seed of the M2b arm "
+        f"boxes {c(test['ft'], _expiry('any_conf'))} at some confidence, and its mAP@0.5 for dates is "
+        f"{v(test['ft'], lambda s: s['map50']['date'])}, against M2's {v(test['m2'], lambda s: s['map50']['date'])}.",
+    ])
+
+    # Where it doesn't.
+    at_m2 = lambda s: s["at_threshold_m2"]["iou0.5"]                                  # noqa: E731
+    missed = {key: misses(v2["ft"][0], key) for key in ("by_cause", "by_tag", "by_design")}
+    n_missed = sum(missed["by_cause"].values())
+    band = m2b.decisions(root)["noise_store"]["band"]
+    v1_maps = {arm: each(m2b.arm_suites(arm, root), lambda s: date_map(suite_set(s, m2b.STORE_SET)))
+               for arm in ("n1280-ft", "s1280-ft", "m1280-ft")}
+    spreads = ", ".join(f"{_spread_points(vals):.2f}" for vals in v1_maps.values())
+    gap = 100 * (np.mean(v1_maps["m1280-ft"]) - np.mean(v1_maps["n1280-ft"]))
+    aps = {key: each(v2[key], ap) for key in ("ft", "s", "m")}
+    order = ("every `m1280-ft` seed above every `s1280-ft` seed, and every `s1280-ft` seed above every "
+             "`n1280-ft` seed" if compare(aps["m"], aps["s"]) == compare(aps["s"], aps["ft"]) == "lifted: ranges apart"
+             else "the seeds' ranges overlapping")
+    record = inference_record(root)
+    r4, what_if = record["R4"], record["what_if"]
+    gains = ", ".join(f"{s['addon']} {s['v1_val_gain']:+.4f}" for s in r4["steps"])
+    closest = max(what_if["steps"], key=lambda s: s["v1_val_gain"])
+    design_ap = {g: v(v2["ft"], lambda s, g=g: s["ap50"]["by_design"][g]) for g in final_test.DESIGN_GROUPS}
+    design_dates = {g: rate_cell(each(v2["ft"], _group("by_design", g, what="dates"))) for g in final_test.DESIGN_GROUPS}
+    n_expiries = {g: v2["ft"][0]["by_design"][g]["iou0.5"]["expiry_dates"] for g in final_test.DESIGN_GROUPS}
+    step1 = {arm: _set_map(arm, "real-val-rot180", root) for arm in (m2b.CONTROL, *m2b.STEP1)}
+    step2 = {arm: _set_map(arm, "real-val-rot180", root) for arm in ("n1280-ft", "s1280-ft", "m1280-ft")}
+    upside = {arm: count_cell(each(m2b.arm_suites(arm, root), lambda s: counted(
+        suite_set(s, "synth-val-v2")["by_tag"]["upside-down"]["any_conf"], "expiry"))) for arm in (m2b.CONTROL, *m2b.STEP1)}
+    device_16, device_1 = (device_minutes("m1280-ft-s0", folder, root) for folder, _ in DEVICE_CHECKS)
+    batches = sorted({s["scored"]["batch"] for seeds in (*v2.values(), test["ft"]) for s in seeds})   # M2b's passes
+    scored = test["ft"][0]["scored"]
+
+    falls_short = "\n".join([
+        f"- **Precision: the store threshold's cost.** On v2 the M2b detector keeps {v(one['ft'], false, 2)} false "
+        f"boxes a photo (precision {v(one['ft'], precision)}), the M2 detector {v(one['m2'], false, 2)} "
+        f"({v(one['m2'], precision)}) and the M1 detector {v(one['m1'], false, 2)} ({v(one['m1'], precision)}). "
+        f"On ExpDate test the M2b arm's precision is {v(test['ft'], precision)} ({v(test['ft'], false, 2)} false "
+        f"boxes a photo), M2's {v(test['m2'], precision)} ({v(test['m2'], false, 2)}); cut at M2's rule's "
+        f"threshold, from the same pass, it finds {c(test['ft'], lambda s: counted(at_m2(s), 'expiry'))} at "
+        f"{v(test['ft'], lambda s: at_m2(s)['precision'])}. A wrong date is worse than none, so M3's reader "
+        "has to reject those boxes.",
+        f"- **Numeric dates 1.5 to 2.5% of the photo didn't move**: {c(v2['ctl'], _group('by_cause', mid))} "
+        f"found by M2's weights at the store threshold and {c(v2['ft'], _group('by_cause', mid))} by the M2b "
+        f"arm, which boxes {c(v2['ft'], _group('by_cause', mid, 'any_conf'))} at some confidence. The M2b "
+        f"detector's {n_missed} misses, by cause: {_listed(missed['by_cause'])}; by tag: "
+        f"{_listed(missed['by_tag'])}; by design: {_listed(missed['by_design'])}.",
+        f"- **The noise band was too coarse to tell the fine-tuned arms apart.** It is the control's seed spread "
+        f"on v1-val, {band:.4f}; the fine-tuned arms' seeds spread {spreads} points (`n`, `s`, `m`), and "
+        f"`m1280-ft` sat {gap:.1f} points above `n1280-ft`, inside the band, so R3 took the cheapest, "
+        f"`n1280-ft`, as written. On v2, by our AP: `n1280-ft` {v(v2['ft'], ap)}, `s1280-ft` {v(v2['s'], ap)}, "
+        f"`m1280-ft` {v(v2['m'], ap)}, {order}. `m1280-ft` stays M3's fallback (the plan's Later).",
+        f"- **R4 adopted {', '.join(r4['adopted']) or 'nothing'}.** On the detector alone the add-ons gained "
+        f"{gains} on v1-val (our AP), against a band of {r4['band']:.4f}. " + (
+            f"The what-if, with the plan's floor of {what_if['band']:.2f}, adopts nothing either: "
+            f"{closest['addon']} came closest, {what_if['band'] - closest['v1_val_gain']:.4f} short."
+            if not what_if["adopted"] else
+            f"The what-if, with the plan's floor of {what_if['band']:.2f}, would keep "
+            f"{', '.join(what_if['adopted'])}, for the plan's Later.") + (
+            " So the M2b detector is one pass a photo." if not r4["adopted"] else ""),
+        f"- **Designs seen in training aren't above unseen ones**, against \"What we expect\": the M2b arm's AP is "
+        f"{design_ap[seen]} on designs seen in training ({n_expiries[seen]} expiries), {design_ap[val]} on those "
+        f"seen only in validation ({n_expiries[val]}) and {design_ap[unseen]} on unseen ones "
+        f"({n_expiries[unseen]}); it finds {design_dates[seen]}, {design_dates[val]} and {design_dates[unseen]} "
+        f"of their dates. With no store training, the M2 detector already finds "
+        f"{c(one['m2'], _group('by_design', seen))} of the trained designs' expiries: those few packs are easy "
+        "ones.",
+        f"- **Step 1 read upside-down print worse the bigger it was.** On real-val-rot180 (ExpDate's validation "
+        f"photos turned 180°), mAP@0.5 for dates: `n1280` {step1[m2b.CONTROL]}, `s1280` {step1['s1280']}, "
+        f"`m1280` {step1['m1280']}; synth-val-v2's upside-down targets boxed at any confidence "
+        f"{upside[m2b.CONTROL]}, {upside['s1280']} and {upside['m1280']}. Step 2, with ExpDate's 180° copies in "
+        f"the replay, turned it round: {step2['n1280-ft']}, {step2['s1280-ft']} and {step2['m1280-ft']}.",
+        f"- **`n1280-ft` lost a little on ExpDate turned a quarter**: real-val-rot {_set_map(DETECTOR_ARM, 'real-val-rot', root)} "
+        f"against the control's {_set_map(m2b.CONTROL, 'real-val-rot', root)}. The guard watches real-val and "
+        "synth-val only.",
+        f"- **The laptop's memory.** Store set v2 and ExpDate test were predicted "
+        f"{' or '.join(per_call(b) for b in batches)} (every record's `batch` is "
+        f"{', '.join(map(str, batches))}): at 16 a call, 1,280 px photos overflowed the laptop's 8 GB, and "
+        f"`m1280-ft-s0`'s device check took {device_16:g} minutes at 16 a call against {device_1:g} at one (its "
+        "memory is in the plan's S14 record).",
+        f"- **ExpDate test moved from the cluster to the laptop.** It was planned as a CPU job on the cluster; the "
+        f"account's job slots were full, so it was scored on the laptop's CPU, where M2 S8 scored M2's: its "
+        f"records say {scored['device']}, {scored['torch_threads']} torch threads, {per_call(scored['batch'])}, "
+        f"code `{scored['git_commit'][:7]}`.",
+    ])
+    n_v2 = v2["ft"][0]["iou0.5"]["expiry_dates"]
+    return paragraphs(
+        f"Every number here is read from the same records as the tables below. Store set v2 holds {n_v2} expiry "
+        f"dates in frame: one is {100 / n_v2:.1f} points of a rate, and two of its design groups hold "
+        f"{n_expiries[seen]} and {n_expiries[val]} expiries, so counts stand beside the rates.",
+        "**Where M2b beats M2:**", beats,
+        "**Where it doesn't, or didn't do what was expected:**", falls_short,
+        "**What we expected, written before any run, against what was measured.** Store columns are read on "
+        "v1-val, as the rules read them, but month words, which only v2's labels split out (S11); each run at "
+        "its own threshold unless a row says M2's.", expected_table(root))
+
+
+def expected_table(root: Path | None = None) -> str:
+    """The plan's "What we expect", cell by cell, against the records. The
+    verdicts are judgments, written here beside the numbers they rest on."""
+    if not report_ready(root):
+        return NOT_READY
+    ctl, ft, ft2, g50, s, m, sft, mft = (m2b.CONTROL, "n1280-ft", "n1280-ft2", "n1280-ft-gen50k", "s1280", "m1280",
+                                         "s1280-ft", "m1280-ft")
+    small = m2b.SIZE_BANDS[0][0]
+    mw = final_test.MONTH_WORD
+
+    def v1map(arm: str) -> str:
+        return _set_map(arm, m2b.STORE_SET, root)
+
+    def words(names: Sequence[str]) -> str:
+        return count_cell(each(records_of(names, root=root), _group("by_cause", mw)))
+
+    def falses(names: Sequence[str]) -> str:
+        return value_cell(each(records_of(names, root=root), _value("false_boxes_per_photo")), 2)
+
+    def rot180_found(arm: str, level: str) -> str:
+        return count_cell(each(m2b.arm_suites(arm, root),
+                               lambda x: counted(at(suite_set(x, "real-val-rot180"), level))))
+
+    def ap_design(names: Sequence[str], group: str) -> str:
+        return value_cell(each(records_of(names, root=root), lambda x: x["ap50"]["by_design"][group]))
+
+    def unseen_found(names: Sequence[str]) -> str:
+        return count_cell(each(records_of(names, root=root), _group("by_design", final_test.UNSEEN)))
+
+    band = m2b.decisions(root)["noise_store"]["band"]
+    m2_rows = ("`n1280` (M2's weights) at M2's threshold",)
+    lifted = sum(compare(each(records_of(arm_names(a), root=root), lambda x: x["ap50"]["by_design"][final_test.UNSEEN]),
+                         each(records_of(CONTROL_RUNS, root=root), lambda x: x["ap50"]["by_design"][final_test.UNSEEN]))
+                 == "lifted: ranges apart" for a in FINE_TUNED)
+    real = [date_map(suite_set(x, "real-val")) for a in (ctl, s, m, ft, ft2, g50, sft, mft)
+            for x in m2b.arm_suites(a, root)]
+    rows = [
+        (m2_rows[0], "v1-val mAP (dates)", "the baseline", v1map(ctl),
+         f"the baseline; its seeds' spread, {band:.4f}, is the noise band"),
+        (m2_rows[0], "store sideways", "low", f"{_v1_tag(ctl, 'sideways', 'at_threshold_m2', root)} expiries", "held"),
+        (m2_rows[0], "real-val-rot180", "about 0",
+         f"mAP {_set_map(ctl, 'real-val-rot180', root)}; {rot180_found(ctl, 'at_threshold_m2')} dates found",
+         "failed: M2's weights already find many"),
+        (m2_rows[0], "store month words", "doubted",
+         f"v2: {words(final_test.M2_RUNS)} found, {count_cell(each(records_of(final_test.M2_RUNS, root=root), _group('by_cause', mw, 'any_conf')))} "
+         "boxed at any confidence", "held"),
+        (m2_rows[0], "small store dates", "low", f"{_size(ctl, small, 'found_at_threshold_m2', root)} under 1.5%",
+         "held"),
+        ("`n1280` at a v1-val threshold", "v1-val mAP (dates)", "the same (mAP ignores the threshold)", v1map(ctl),
+         "held"),
+        ("`n1280` at a v1-val threshold", "store sideways", "a little up",
+         f"{_v1_tag(ctl, 'sideways', root=root)} (at M2's threshold {_v1_tag(ctl, 'sideways', 'at_threshold_m2', root)})",
+         "held"),
+        ("`n1280` at a v1-val threshold", "real-val-rot180", "about 0",
+         f"{rot180_found(ctl, 'iou0.5')} dates found (at M2's threshold {rot180_found(ctl, 'at_threshold_m2')})",
+         "failed"),
+        ("`n1280` at a v1-val threshold", "store month words", "more kept, more false boxes",
+         f"v2: {words(CONTROL_RUNS)} found (at M2's threshold {words(final_test.M2_RUNS)}); false boxes a photo "
+         f"{falses(CONTROL_RUNS)} (at M2's {falses(final_test.M2_RUNS)})", "held"),
+        ("`n1280` at a v1-val threshold", "small store dates", "more kept",
+         f"{_size(ctl, small, root=root)} under 1.5% (at M2's threshold {_size(ctl, small, 'found_at_threshold_m2', root)})",
+         "held"),
+        ("`s1280` (step 1)", "v1-val mAP (dates)", "a little up", f"{v1map(s)} against `n1280`'s {v1map(ctl)}",
+         "held: up, inside the band"),
+        ("`s1280` (step 1)", "store sideways", "a little up",
+         f"{_v1_tag(s, 'sideways', root=root)} against `n1280`'s {_v1_tag(ctl, 'sideways', root=root)}", "failed: not up"),
+        ("`s1280` (step 1)", "real-val-rot180", "about 0",
+         f"{_set_map(s, 'real-val-rot180', root)} against `n1280`'s {_set_map(ctl, 'real-val-rot180', root)}",
+         "failed: not 0, and below `n`"),
+        ("`s1280` (step 1)", "store month words", "a little up",
+         f"v2: {words(arm_names(s))} against `n1280`'s {words(CONTROL_RUNS)}", "failed: not up"),
+        ("`s1280` (step 1)", "small store dates", "a little up",
+         f"found {_size(s, small, root=root)} against {_size(ctl, small, root=root)}; boxed at any confidence "
+         f"{_size(s, small, 'boxed_at_any_confidence', root)} against "
+         f"{_size(ctl, small, 'boxed_at_any_confidence', root)}", "partly"),
+        ("`m1280` (step 1, probe)", "v1-val mAP (dates)", "about as `s`", f"{v1map(m)} against `s1280`'s {v1map(s)}",
+         "better than expected: R1 passed"),
+        ("`n1280-ft` (step 2)", "v1-val mAP (dates)", "clearly up",
+         f"{v1map(ft)} against `n1280`'s {v1map(ctl)}", "held: up by more than the band"),
+        ("`n1280-ft` (step 2)", "store sideways", "up",
+         f"{_v1_tag(ft, 'sideways', root=root)} against {_v1_tag(ctl, 'sideways', root=root)}", "held"),
+        ("`n1280-ft` (step 2)", "real-val-rot180", "up a lot",
+         f"{_set_map(ft, 'real-val-rot180', root)} against {_set_map(ctl, 'real-val-rot180', root)}", "held"),
+        ("`n1280-ft` (step 2)", "store month words", "up", f"v2: {words(arm_names(ft))} against {words(CONTROL_RUNS)}",
+         "held"),
+        ("`n1280-ft` (step 2)", "small store dates", "up",
+         f"{_size(ft, small, root=root)} against {_size(ctl, small, root=root)}", "held"),
+        ("`n1280-ft2` (two-stage)", "v1-val mAP (dates)", "as `ft`, perhaps lower",
+         f"{v1map(ft2)} against `ft`'s {v1map(ft)}", "held"),
+        ("`n1280-ft2` (two-stage)", "real-val", "as `n`, perhaps higher",
+         f"{_set_map(ft2, 'real-val', root)} against `n1280`'s {_set_map(ctl, 'real-val', root)}", "as `n`, not higher"),
+        ("`n1280-ft-gen50k` (side arm)", "v1-val mAP (dates)", "a little below `ft`",
+         f"{v1map(g50)} against `ft`'s {v1map(ft)}", "held, within the noise"),
+        ("`n1280-ft-gen50k` (side arm)", "real-val-rot180", "as `ft`",
+         f"{_set_map(g50, 'real-val-rot180', root)} against {_set_map(ft, 'real-val-rot180', root)}", "held"),
+        ("`n1280-ft-gen50k` (side arm)", "small store dates", "below `ft` (M2's sizes)",
+         f"{_size(g50, small, root=root)} against {_size(ft, small, root=root)}", "failed: level"),
+        ("`s1280-ft`", "v1-val mAP (dates)", "the highest",
+         f"{v1map(sft)}; `m1280-ft`, run by R1, {v1map(mft)}", "partly: the highest of the arms planned"),
+        ("`s1280-ft`", "small store dates", "up the most",
+         f"{_size(sft, small, root=root)} against `n1280-ft`'s {_size(ft, small, root=root)} (`m1280-ft` "
+         f"{_size(mft, small, root=root)})", "held, barely"),
+        ("every arm", "real-val", "0.995, as `n`", f"mAP@0.5 for dates {min(real):.3f} to {max(real):.3f} (every seed)",
+         "held"),
+        ("store set v2", "designs seen in training against unseen ones", "well above",
+         f"`n1280-ft`'s AP {ap_design(arm_names(ft), final_test.SEEN)} seen in training, "
+         f"{ap_design(arm_names(ft), final_test.VALIDATION)} seen only in validation, "
+         f"{ap_design(arm_names(ft), final_test.UNSEEN)} unseen", "failed"),
+        ("store set v2", "unseen designs against M2's detector", "still above",
+         f"`n1280-ft` {unseen_found(arm_names(ft))} expiries against M2's {unseen_found(final_test.M2_RUNS)}", "held"),
+        ("store set v2", "fine-tuning on unseen designs", "lifts them, or it learned packs, not print",
+         f"{lifted} of {len(FINE_TUNED)} fine-tuned arms above every control seed by AP (`n1280-ft` "
+         f"{ap_design(arm_names(ft), final_test.UNSEEN)}, the control {ap_design(CONTROL_RUNS, final_test.UNSEEN)})",
+         "it learned print"),
+    ]
+    return markdown_table([{"run": a, "what": w, "expected": e, "measured": x, "verdict": y} for a, w, e, x, y in rows],
+                          left=("run", "what", "expected", "measured", "verdict"))
+
+
+# --- Compute on the laptop: the final test's passes ------------------------------------------
+
+def device_minutes(run: str, folder: str, root: Path | None = None) -> float | None:
+    """A device check's minutes on the laptop (its suite's own record)."""
+    run_dir = m2b.finished_run(run, root)
+    here = m2.read_json(run_dir / folder / m2b.SUITE_FILE) if run_dir else None
+    return here["scored"]["minutes"] if here else None
+
+
+LAPTOP_GROUPS = ((m2r.M1_ROW + ", 640 px", final_test.M1_RUNS),
+                 ("M2 (`gen-rot-1280`); the control is cut from these passes", final_test.M2_RUNS),
+                 *((arm, arm_names(arm)) for arm in (*m2b.STEP1, *FINE_TUNED)))
+
+
+def laptop_table(root: Path | None = None) -> str:
+    """The final test's passes on the laptop's CPU, from each record's own
+    predict_seconds: store set v2 arm by arm (a pass the control shares with
+    M2's run counted once), ExpDate test, and the device checks' minutes."""
+    def stats(records: Sequence[dict | None]) -> dict[str, str]:
+        got = [x["scored"] for x in records if x]
+        if not got:
+            return dict.fromkeys(("passes", "photos a pass", "photos a call", "seconds", "ms a photo"), NOT_YET)
+        ms = [1000 * g["predict_seconds"] / g["photos"] for g in got]
+        return {"passes": str(len(got)), "photos a pass": ", ".join(sorted({str(g["photos"]) for g in got})),
+                "photos a call": ", ".join(sorted({str(g.get("batch", 16)) for g in got})),
+                "seconds": f"{sum(g['predict_seconds'] for g in got):.1f}",
+                "ms a photo": value_cell(ms, 0)}
+
+    rows = [{"set": "store set v2", "weights": name, **stats(records_of(names, root=root))}
+            for name, names in LAPTOP_GROUPS]
+    rows.append({"set": "ExpDate test", "weights": DETECTOR_ARM,
+                 **stats(records_of(final_test.EXPDATE_TEST, "real-test", root))})
+    shared = sum(1 for n in final_test.RUNS
+                 if (x := final_record(n, root=root)) and x["scored"].get("predicted_by", n) != n)
+    checks = []
+    for run in DEVICE_CHECK_RUNS:
+        for folder, batch in DEVICE_CHECKS:
+            minutes = device_minutes(run, folder, root)
+            checks.append({"run": f"m2b-{run}", "photos a call": str(batch),
+                           "minutes": NOT_YET if minutes is None else f"{minutes:g}"})
+    def minutes(set_name: str) -> float:
+        return sum(float(r["seconds"]) for r in rows if r["set"] == set_name and r["seconds"] != NOT_YET) / 60
+
+    return paragraphs(markdown_table(rows, left=("set", "weights")),
+                      f"In all, {minutes('store set v2'):.1f} minutes of prediction for store set v2 and "
+                      f"{minutes('ExpDate test'):.1f} for ExpDate test on the laptop's CPU; the control's {shared} "
+                      "records on v2 took no pass of their own.",
+                      "The device checks on v1-val (34 photos), each run's own record:",
+                      markdown_table(checks, left=("run",)))
+
+
+# --- The README's two charts: their numbers, from the records ---------------------------------
+
+CHART_MODELS = (("M1 (n640)", final_test.M1_RUNS), ("M2 (gen-rot-1280)", final_test.M2_RUNS),
+                ("M2b (n1280-ft)", arm_names(DETECTOR_ARM)))
+CHART_POINTS = (("M1 (n640)", final_test.M1_RUNS), ("M2 at its threshold", final_test.M2_RUNS),
+                ("M2's weights at the store threshold", CONTROL_RUNS),
+                *((f"{arm}", arm_names(arm)) for arm in ("n1280-ft", "s1280-ft", "m1280-ft")))
+
+
+def _spread(values: Sequence[float]) -> dict[str, float]:
+    return {"mean": float(np.mean(values)), "low": float(min(values)), "high": float(max(values))}
+
+
+def chart_data(root: Path | None = None) -> dict | None:
+    """The numbers behind the README's two charts, from store set v2's
+    records (None until they are all in). `tags`: expiry dates found at each
+    run's threshold, every expiry first, then each failure tag holding at
+    least MIN_RATE of them, for M1's, M2's and the M2b detector's arms: the
+    3-seed mean, its range and n. `listed`: the tags with one or two
+    expiries, as counts only (no rate). `points`: each arm's expiries found
+    and precision, mean and range."""
+    records = {label: records_of(names, root=root) for label, names in (*CHART_MODELS, *CHART_POINTS)}
+    if not all(all(seeds) for seeds in records.values()):
+        return None
+    first = records[CHART_MODELS[-1][0]][0]
+    sizes = {t: first["by_tag"][t]["iou0.5"].get("expiry_dates", 0) for t in store.TAGS if t in first["by_tag"]}
+    charted = [t for t, n in sizes.items() if n >= MIN_RATE]
+    listed = [t for t, n in sizes.items() if 0 < n < MIN_RATE]
+
+    def found(seeds: Seeds, get) -> dict:
+        pairs = [get(s) for s in seeds]
+        return {**_spread([k for k, _ in pairs]), "n": pairs[0][1]}
+
+    tags = {"every expiry": {label: found(records[label], _expiry()) for label, _ in CHART_MODELS}}
+    tags |= {t: {label: found(records[label], _group("by_tag", t)) for label, _ in CHART_MODELS} for t in charted}
+    return {"tags": tags,
+            "listed": {t: {label: count_cell(each(records[label], _group("by_tag", t))) for label, _ in CHART_MODELS}
+                       for t in listed},
+            "points": {label: {"found": found(records[label], _expiry()),
+                               "precision": _spread([s["iou0.5"]["precision"] for s in records[label]])}
+                       for label, _ in CHART_POINTS}}
 
 
 def main() -> None:
