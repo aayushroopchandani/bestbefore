@@ -3913,6 +3913,63 @@ comparison, as the store has no tilted date (S8's record).
 **Commits:** `feat: m2b report script`, `docs: m2b results report`,
 `docs: readme for m2b`, `docs: m2b plan done`
 
+**Added 2026-11-21, before S15's code** (the owner's brief; no rule,
+threshold, record or run changes, and none is scored again):
+
+- **The report's new blocks go in `m2b_results.py`, with tests**, as S11
+  to S14's tables did, and `scripts/m2b_report.py` puts them beside the
+  existing ones (`results/m2b_detector.md`, from the records alone, as M2
+  S9's). New:
+  - **the headline**: the M1 → M2 → M2b progression on store set v2 and
+    ExpDate test, each milestone's detector seed 0 at its own threshold
+    (M1's `n640` reads 640 px), its arm's 3 seeds beside it, with M2's
+    weights at the store threshold (the control's seed 0) as a row of its
+    own, so the threshold's share shows. Found, precision and AP beside
+    every count. v2 and ExpDate test only, never v1 (M2b trained on it).
+    On ExpDate test only M2b's records hold our AP, so that column is
+    Ultralytics' mAP@0.5 for all three; and the control was never scored on
+    ExpDate test (the plan scored only the M2b detector there), so its cells
+    there are "–", and the M2b detector at M2's rule's threshold, from the
+    same pass, shows the threshold's part instead;
+  - **"What it shows"**: where M2b beats M2 and where it doesn't, every
+    number read from the records, as M2's report; the verdicts are
+    judgments, written in the code beside the numbers they rest on;
+  - **"What we expect" against what happened**: the table written before
+    any run, row by row, with the measured cells from the records and a
+    verdict, and v2's paragraph on seen and unseen designs;
+  - **the laptop's passes**: v2's and ExpDate test's prediction time from
+    each record's `predict_seconds` (a pass the control shares with M2's
+    run counted once);
+  - **the charts' numbers** (below), so the figures and their alt text
+    read the same cells.
+- **Two README charts** (the owner's request; the plan had none):
+  `scripts/readme_figures.py --m2b`, from the records alone, light and dark
+  PNGs in `docs/assets/` like the existing ones, each with alt text holding
+  its key numbers. (a) v2's expiry dates found by failure tag, M1, M2 and
+  the M2b detector's arm (the 3-seed mean, its seed range, the count on
+  every mark, `28/28`); (b) v2's expiry dates found against precision, one
+  point per arm with its seed range on both axes: M1, M2 at its threshold,
+  M2's weights at the store threshold, `n1280-ft`, `s1280-ft`, `m1280-ft`.
+  No group of one or two gets a rate (v2's one curved expiry is listed
+  beside the chart, not charted). No store photo in any figure.
+- **The README's M2b numbers come from the report**, checked by a script
+  (as M2 S9).
+- **`docs/datasets.md` has no gen-v2 entry yet**: it gains gen-v2 (with
+  synth-val-v2, gen-v2-sample and the 180° sets) and the store training
+  export, counts only, from S6, S8 and S9's records; gen-v2's sizes follow
+  the store's on untilted blocks only (the S8 note above).
+- **Out of date, and closed in this slice:** [Report](#report)'s list of
+  experiments lacks `m2b-final-test` (S14's); "the M2b detector with its
+  add-ons" ([The final test](#the-final-test)) and the compute budget's v2
+  row are history (R4 adopted none; S14 predicted one pass a photo); the
+  budget gets its measured column; "Code layout" and "Files at the end"
+  get S13's, S14's and S15's files, checked against git as built.
+- **Commits** (7, not 4: one logical change each): this note; `feat: m2b
+  report script` (the blocks, their tests, the script); `docs: m2b results
+  report`; `feat: m2b charts for the readme, from the run records`; `docs:
+  gen-v2 and the store training export in datasets.md`; `docs: readme for
+  m2b` (the README and the four PNGs); `docs: m2b plan done`.
+
 ---
 
 ## Order and sessions
