@@ -1,6 +1,6 @@
 # M2b: Store photos, the generator's gaps and a bigger detector
 
-Planned 2026-10-31. Status: **in progress**; S1 done 2026-10-31 (GPU jobs
+Planned 2026-10-31. Status: **done 2026-11-21**; S1 done 2026-10-31 (GPU jobs
 A `73831` and B `73832` held, before any code); changed 2026-10-31, before
 any code: gen-v2 draws sizes like the store's (Cause 4, decision 15) and
 worn patches (Cause 2); S2 done 2026-11-02 (job A released, B held for
@@ -37,8 +37,11 @@ detector is `n1280-ft-s0` alone at 0.1641; on the laptop's CPU `n` takes
 175 ms a photo, `m` 4.7 times that); S14 done 2026-11-20 (store set v2:
 the M2b detector finds 65 of 68 expiries, M2's 46 and M1's 20, at
 precision 0.761; fine-tuning lifts unseen designs too, so it learned
-print; ExpDate test, on the laptop: 664 of 665, nothing forgotten). Next:
-S15.
+print; ExpDate test, on the laptop: 664 of 665, nothing forgotten); S15
+done 2026-11-21 (`results/m2b_detector.md` from the records alone, the
+README with two charts, `docs/datasets.md`'s gen-v2 and store export, this
+plan closed). **M2b is done**; next: M3 (`docs/m3-date-reader.md`), which
+reads from the M2b detector.
 
 **Goal.** Find more of the store's expiry dates than M2 does, without
 forgetting ExpDate's, in four ways at once: train on the store photos
@@ -798,9 +801,15 @@ Once, on the laptop's CPU, after R3 and R4:
   tag, cause and design, compute and images per second per run.
 - Experiments, each with a README and a `summarise.py`:
   `m2b-store-look` (S3), `m2b-model-size`, `m2b-fine-tune`, `m2b-gen-v2`,
-  `m2b-inference`.
+  `m2b-inference`, **and `m2b-final-test` (S14; added in S15, the list had
+  lacked it)**. `m2b-store-look` has `measure.py`, not a `summarise.py`.
 - `README.md`: M2b's section and headline, including where it doesn't beat
   M2. `CLAUDE.md`'s milestone table gains M2b (with the owner's OK, S2).
+- **(added 2026-11-21, S15's note)** The headline is the M1 → M2 → M2b
+  progression on store set v2 and ExpDate test, with M2's weights at the
+  store threshold beside it; two README charts from the records
+  (`scripts/readme_figures.py --only m2b`); `docs/datasets.md` gains
+  gen-v2 and the store training export. **Done in S15** (its record).
 
 ---
 
@@ -812,24 +821,31 @@ src/bestbefore/
   m2b.py            layout, sizes, step-1 and step-2 arms, the mix, the recipe, rules R1–R4
   store_train.py    designs, the v1 and v3 splits, keyword boxes, the YOLO export (S4–S6)
   ensemble.py       weighted boxes fusion, test-time rotation (S13)
-  m2b_results.py    the tables (S11 on)
+  m2b_results.py    the tables (S11 on), the report's blocks and the charts' numbers (S15)
+  final_test.py     store set v2's groups: causes, designs, the scored-once records (S14)
   synth/            spec.py (V2Spec, GEN_V2, SYNTH_VAL_V2), text.py, render.py, warp.py,
                     compose.py, make.py, batch.py: v2's features, off for M2's spec (S7–S9)
   detection_eval.py average_precision (S13); store.py: DESIGNS_SHA256 (S4), V3 (S5b)
 scripts/
-  m2b_chain.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
-  draft_keywords.py, import_store_keywords.py, store_designs.py, store_heic.py,
-  store_sizes.py
+  m2b_chain.py, m2b_inference.py (S13), m2b_report.py (S15), export_store_yolo.py,
+  propose_keywords.py, draft_keywords.py, import_store_keywords.py, store_designs.py,
+  store_heic.py, store_sizes.py
   changed: train_detector.py (--milestone m2b), score_suite.py (--suite m2b),
-  eval_detector.py (store-v2, m2b runs, add-ons), generate.py, derive_sets.py,
-  fetch_pretrained.py (yolo11m), pull_cluster_results.sh (m2b runs)
+  eval_detector.py (store-v2, m2b runs, one photo a call), generate.py, derive_sets.py,
+  fetch_pretrained.py (yolo11m), pull_cluster_results.sh (m2b runs),
+  readme_figures.py (--only m2b, S15)
 slurm/
-  m2b_gpu.sbatch (S1), m2b_chain.sh, m2b_generate.sbatch
+  m2b_gpu.sbatch (S1), m2b_chain.sh, m2b_generate.sbatch, m2b_smoke_cpu.sbatch (S2, S10),
+  m2b_inference_cpu.sbatch (S13), m2b_test_cpu.sbatch (S14, never submitted)
 tests/
   test_chain.py, test_m2b_rules.py, test_store_train.py, test_synth_v2.py,
-  test_ensemble.py, test_m2b_results.py; changed: test_eval_detector.py,
+  test_ensemble.py, test_m2b_results.py, test_final_test.py (S14),
+  test_readme_figures.py (S15); changed: test_eval_detector.py,
   test_detection_eval.py, test_detector.py
 ```
+
+**(S15)** As built, the full list is in [Files at the end of
+M2b](#files-at-the-end-of-m2b).
 
 `$STORE_TRAIN_DIR` joins `.env.example`. M2b's generated and derived data go
 to `$GENERATED_DIR/m2b/` (`gen/`, `derived/`, `lists/`, `manifests/`), so
@@ -3970,6 +3986,138 @@ threshold, record or run changes, and none is scored again):
   gen-v2 and the store training export in datasets.md`; `docs: readme for
   m2b` (the README and the four PNGs); `docs: m2b plan done`.
 
+**Done 2026-11-21.** The note `af8c728`; the code `ebbc510` (the report's
+blocks in `m2b_results.py`, their tests, `scripts/m2b_report.py`); the
+report `8b60a11`; the charts' code `0d3be51`; `datasets.md` `5fd0bb3`;
+the README and its four PNGs `7accbe2`; then this record and the plan's
+closing sections. 1,128 tests pass, none skipped (1,120 before: 8 new,
+5 in `tests/test_m2b_results.py` and 3 in the new
+`tests/test_readme_figures.py`), and each code commit passes alone, in a
+worktree with the laptop's data, absolute `.env` paths, `PYTHONPATH` on
+its `src` and nothing skipped: `ebbc510` 1,125 in 4 min 2 s, `0d3be51`
+1,128 in 3 min 54 s; the full suite on the final code, in this checkout,
+1,128 in 3 min 56 s (at `7accbe2`, with only this plan changed). Every run's 3 warnings come from M3's CRNN tests (torch's
+oneDNN notice). The three runs went one at a time, with rests between.
+Nothing was scored again, and no rule,
+threshold, record or run changed: S15 only read them. What was found:
+
+- **The state, checked first** (2026-11-21): HEAD `ae1ce7d`, level with
+  GitHub, so **the brief's "the last 5 commits weren't pushed" was out of
+  date**, as S13's and S14's briefs had been; 1,120 tests collected;
+  `m2b-decisions.json` still `66b8411c…` and equal to `m2b.decisions()`;
+  each of the five `summarise.py` scripts exits 0 and prints its README's
+  block byte for byte (`m2b-store-look`'s `measure.py`, which reads store
+  photos, wasn't run).
+- **The report is the records'.** `python scripts/m2b_report.py`, run
+  twice, wrote the same `results/m2b_detector.md` byte for byte (SHA-256
+  `64dcb2c1…`, 713 lines, 1.4 s on the laptop) with no warning: the
+  chain's record equals `m2b.decisions()`, every final-test record was cut
+  at its own GPU record's threshold by its hashed weights one photo a call,
+  and v2's 30 records' kept boxes give their counts again. Every table is
+  an `m2b_results` block, S11 to S14's or S15's new ones: the headline
+  (`progression_table`, `headline_block`), "What it shows"
+  (`what_it_shows`, `expected_table`), the laptop's passes (`laptop_table`)
+  and the charts' numbers (`chart_data`), each waiting for its records
+  ("not yet") and tested on made-up ones (5 tests; 6 deliberate bugs, one
+  at a time, all caught, the file put back and compared by SHA-256 after
+  each: a detector row reading seed 1, misses kept for groups with none,
+  a group of one charted, the control's shared passes counted, the
+  threshold's share taken from the detectors not the arms, the control
+  kept on ExpDate test).
+- **The headline, as the report gives it** (each detector seed 0 at its
+  own threshold; its arm's mean): store set v2, M1 20 of 68 (25),
+  precision 0.956, AP 0.440; M2 46 (48.7), 0.871, 0.703; M2's weights at
+  the store threshold 58 (58.3), 0.418, 0.703; M2b 65 (64), 0.761,
+  0.895. ExpDate test: 637 (646), 662 (662.7) and 664 (663.7) of 665,
+  precision 0.987, 0.988 and 0.898, Ultralytics' mAP 0.993, 0.995 and
+  0.995; the M2b detector at M2's rule's threshold 660 at 0.968. **On
+  ExpDate test only M2b's records hold our AP**, so that column is
+  Ultralytics' mAP for all; and the control was never scored there.
+- **New readings, from the records:**
+  - **the threshold alone closes 63% of the gap** in v2's expiries found,
+    from M2 at its threshold (48.7) through M2's weights at the store
+    threshold (58.3) to the M2b arm (64); S14 said "about half". On
+    v1-val's dates it is 50% (31.3, 45.7, 60), S11's half;
+  - **`s1280`'s store month words, which S12 left to v2: 17.7 of 25,
+    against the control's 19**, both at the store threshold: not "a little
+    up". The expected table's 32 rows: 21 held (the baseline row among
+    them), 7 failed, 3 partly, 1 better than expected (`m1280` on v1-val,
+    R1);
+  - the M2b detector's 3 misses by cause, tag and design read from its
+    own record (2 numeric 1.5–2.5%, 1 sideways; 2 clean, 1 sideways; all 3
+    on unseen designs), as S14 had them from the kept boxes;
+  - the laptop's prediction time from each record: v2's 27 passes 18.2
+    minutes, ExpDate test's 3 passes 5.9; `m1280-ft-s0`'s device check
+    8.4 minutes at 16 photos a call against 0.7 at one (its own record).
+- **One figure of S12's, read again:** the fine-tuned arms' v1-val seed
+  spreads are 1.52, 1.15 and 0.99 points (`n`, `s`, `m`); S12 rounded
+  `s`'s 1.15 to 1.2. The report prints two decimals.
+- **The charts** (`scripts/readme_figures.py --only m2b`; the dataviz
+  skill loaded first, as the owner asked):
+  - **form**: (a) horizontal grouped bars, so the count at each bar's tip
+    never collides with its neighbour's, every expiry first, then each tag
+    of 3 or more expiries; curved (1 expiry) is listed under the chart,
+    not charted, and no group of one or two gets a rate; (b) a scatter, one
+    dot per arm with its seed range on both axes, each named beside it,
+    with arrows from M2's threshold to the store threshold (the same
+    weights) and on to fine-tuning;
+  - **colour**: one blue ramp ordered by milestone (M1 light to M2b dark;
+    flipped on the dark surface), checked with the skill's
+    `validate_palette.js --ordinal` in both modes: monotone lightness,
+    steps at least 0.06 apart, one hue, its near end 2.06:1 on the light
+    surface and 2.15:1 on the dark, so every mark is also labelled. Text in
+    the ink colours only; hairline grid; bars with a rounded data end and a
+    2 px gap;
+  - **looked at** in both themes, as the skill asks: three rounds of fixes
+    (whisker halos cut white gaps into the bars; a label ran off the plot
+    and two sat on their own whiskers; an arrow ran through a label), then
+    none seen. 1,200 × 780 px, byte-identical on a second run;
+  - **alt text** made by the same code from the same numbers.
+- **The README** (`7accbe2`): its opening bullet; the roadmap and the
+  milestone table (M2b done, M3 now); M2b's section, retitled as a result:
+  its flowchart gains what R1 to R4 chose and the scored-once numbers, and
+  the section gains the headline table (the three detectors, with M2's
+  weights at the store threshold between them, each at its own threshold,
+  M1 at 640 px), both charts, what it shows and where it doesn't beat M2,
+  every point from the report; M2b's reproduce steps; the report and the
+  final-test experiment in the docs list.
+- **The README's numbers**: 98 distinct numbers in its M2b section and
+  opening bullet, 96 of them in the report (a scratch script). The other
+  two: "42", M2's 81 less 39 (M2's own report), and a colour in a diagram
+  class. The intro's 39, 81, 30, 12 and 1.7 are carried over from the
+  earlier README text (M2's report and this plan's Causes 1 and 4).
+- **Mermaid**: all 13 diagrams checked on Mermaid 10.9.1 and 11.4.1, light
+  and dark, in the built-in browser (a temporary static-server entry beside
+  `label-studio` in `.claude/launch.json`, removed afterwards, the file's
+  SHA-256 as before): every one renders, none says "Unsupported markdown";
+  the two changed (the roadmap, M2b's flowchart) were looked at. No `@` in
+  M2b's labels, no label line over 25 characters.
+- **`docs/datasets.md`** gained gen-v2 (with synth-val-v2, gen-v2-sample
+  and the 180° sets) and the store training export, counts only, from S6,
+  S8 and S9's records; gen-v2's sizes follow the store's on untilted
+  blocks only, as S8's note asked.
+- **Found out of date elsewhere, not changed here:** `CLAUDE.md` still
+  says store set v2's labels are "still to do" (frozen 2026-11-03, M0 D6);
+  M3's plan's status line still says M2b is in progress, and its decision
+  21 waits for M2b's detector, now `n1280-ft-s0` at 0.1641.
+- **Privacy**: every line each commit adds (the code, tests, report,
+  README, `datasets.md` and this plan) searched against 548 terms: v1's,
+  v2's and v3's photo names (181) and their 132 stems of 5 characters or
+  more, v3's 15 HEIC names, all 92 design ids and their 126 words of 4
+  characters or more, the cluster's user name and the owner's email: no
+  name and no id; common words of design ids inside plain English only
+  (`pack`, `training`, `colour`, `white`, `clear` in "clearly"). No store
+  photo is in either chart.
+- **Not checked:** the README as GitHub renders it (the diagrams were
+  checked locally on two Mermaid versions; the charts' dark and light swap
+  wasn't seen on GitHub); the report's v2 tables are S14's blocks, which
+  give a rate even for a group of one (curved, upside-down), left as S14
+  wrote them, with a line saying so (the README and the charts give none);
+  the learnings guide (not written, the owner's call). **The push** wasn't
+  asked and Claude ran none: S15's first six commits (`af8c728` to
+  `7accbe2`) reached GitHub at 14:42 from this checkout (its reflog: "update
+  by push"), during the full suite's run; this record's commit is after them.
+
 ---
 
 ## Order and sessions
@@ -4003,29 +4151,43 @@ needs a GPU. If A finishes stage 1 before S10, it exits; B keeps its place.
 
 ## Compute budget
 
-| GPU work | Runs | Each | GPU hours |
-|---|---:|---|---:|
-| smoke | 1 | 5 min | 0.1 |
-| `s1280` step 1 | 3 | 4 h | 12 |
-| `m1280` step 1, probe | 1 | 7 h | 7 |
-| M2-suite scores (step 1) | 4 | 10 min | 0.7 |
-| M2b-suite scores (controls, step 1) | 7 | 15 min | 1.8 |
-| `n` step 2 (3 arms) | 9 | 0.4 h + 15 min scoring | 6 |
-| `s` step 2 | 3 | 0.5 h + 15 min | 2.3 |
-| **without `m`'s extra seeds** | | | **about 30** |
-| `m` by R1: 2 seeds, then step 2 ×3 | 5 | 7 h; 0.8 h + 15 min | 17 |
-| **with them** | | | **about 47** |
+**(S15)** The measured columns are summed from every run's `run.json` and
+its suites' records (`python -m bestbefore.m2b_results` prints them run
+by run; `results/m2b_detector.md`'s Compute section has the table), and
+the jobs' times from Slurm, as each slice recorded them. Training minutes
+include a run's setup; images a second count epochs 2 to the last but one.
 
-| CPU work | Size | Estimate |
-|---|---|---|
-| gen-v2 + synth-val-v2 | 202,400 photos | about 32 min on 24 CPUs (M2 S6's 150 ms a photo per worker, plus half: S8 measured +50%, not the tenth first planned) |
-| 180° sets | 13,000 photos written | minutes |
-| store export | 99 photos, 70 × 4 turns | seconds, laptop |
-| v2 scoring | about 25 configurations × 99 photos | under an hour on the laptop; with ensemble and rotation, 12 passes a photo |
+| GPU work | Runs | Each | GPU hours | Measured |
+|---|---:|---|---:|---|
+| smoke | 1 | 5 min | 0.1 | 2.5 min training, 2.6 min scoring on M2's suite (job A) |
+| `s1280` step 1 | 3 | 4 h | 12 | 230.3 to 239.4 min each at 185 to 186 images/s: 11.67 h (job A) |
+| `m1280` step 1, probe | 1 | 7 h | 7 | 395.6 min at 108 images/s: 6.59 h (job A) |
+| M2-suite scores (step 1) | 4 | 10 min | 0.7 | 7 scores: the smoke's, `s1280`'s 3 and `m1280-s0`'s in job A (9.5 min), `m1280-s1` and `-s2`'s in job B (8.6 min): 0.30 h |
+| M2b-suite scores (controls, step 1) | 7 | 15 min | 1.8 | 7 in job B, 1.8 to 2.3 min each, the first 5.4 (cold): 17.3 min, 0.29 h |
+| `n` step 2 (3 arms) | 9 | 0.4 h + 15 min scoring | 6 | 21.1 to 25.4 min each at 203 to 204 images/s, scored in 1.7 to 1.8: 3.36 + 0.27 = 3.63 h |
+| `s` step 2 | 3 | 0.5 h + 15 min | 2.3 | 23.1 to 23.3 min at 189 to 190 images/s, scored in 1.9 to 2.0: 1.26 h |
+| **without `m`'s extra seeds** | | | **about 30** | **23.6 h** |
+| `m` by R1: 2 seeds, then step 2 ×3 | 5 | 7 h; 0.8 h + 15 min | 17 | seeds 1 and 2: 388.8 and 392.4 min at 110 images/s, scored on both suites in 16.6 min; step 2: 40.5 to 43.0 min at 110 to 111 images/s, scored in 2.4: 13.30 + 2.20 = 15.50 h |
+| **with them** | | | **about 47** | **39.1 h** on one H100 at a time: job A (`73831`, `cn6`) 18.5 h of training and scoring in its 18 h 30 min (2026-11-08 16:55 to 11-09 11:25); job B (`73832`, `cn5`) 20.67 h in its 20 h 44 min (2026-11-13 09:09 to 11-14 05:53). The two never ran together; A's spare (`73906`) never ran and was cancelled (S12) |
+
+| CPU work | Size | Estimate | Measured |
+|---|---|---|---|
+| gen-v2 + synth-val-v2 | 202,400 photos | about 32 min on 24 CPUs (M2 S6's 150 ms a photo per worker, plus half: S8 measured +50%, not the tenth first planned) | job `73944` (`short`, `cn1`, 24 CPUs, 48 GB): the photos in 24.1 min at 170.6 ms a photo per worker, the check in 99.7 s; 26 min 41 s in all with the render sheet, gen-v2-sample and the 180° sets, 8 h 50 min of CPU time, 40.5 GB written; a worker peaked at 1.8 GB. A first job (`73943`) crashed after 4 min 17 s on a photo only the cluster draws (fixed, S9) |
+| 180° sets | 13,000 photos written | minutes | about 35 s in job `73944` (synth_rot180's 11,844 photos in 33.4 s); 23 s on the laptop's 4 workers (S9) |
+| store export | 99 photos, 70 × 4 turns | seconds, laptop | 17 s on the laptop for v1 and v3 (114 photos, 354 images written); copied to the cluster in 11 s (S6) |
+| CPU smokes (S2, S10) | | 5 min (S2) | job `73859`: 10 min 50 s on 24 CPUs, 30.5 GB by `sacct`'s sample; job `73951` (step 2's two smokes and an M2b suite): 19 min 15 s, 17.1 GB |
+| the add-ons' passes (S13) | 24 passes a photo | | real-val's 3,960 in job `73981` (`cn4`, 24 CPUs): 5.16 min by its record, 34 CPU-minutes, 0.86 GB by `sacct`'s sample; v1-val's 816 on the laptop in 3.06 min |
+| device checks (S13, S14) | v1-val, `n`, `s`, `m` | | on the laptop at 16 photos a call: 0.4, 1.4 and 8.4 min (`m` swapped: S14's change); at one a call: 0.2, 0.4 and 0.7 min |
+| v2 scoring | about 25 configurations × 99 photos | under an hour on the laptop; with ensemble and rotation, 12 passes a photo | **history: R4 adopted no add-on (S13).** 30 records from 27 passes, one photo a call: 18.2 min of prediction (each record's own time), in 12 parts with rests, 20:11 to 21:12 on 2026-11-19 |
+| ExpDate test (S14) | 3 × 665 photos | a `short` CPU job (S14's note) | **never submitted** (the account's slots were full): on the laptop, 5.9 min of prediction, 200 to 210 s a seed with the validation, 12:07 to 12:25 on 2026-11-20 |
 
 **Storage** on the cluster: gen-v2 about 37 GB, synth-val-v2 0.45 GB, the
 180° sets about 3 GB, the store export under 0.5 GB, checkpoints under 2 GB
-(`m` is about 40 MB a run). About 43 GB, against 950 GB.
+(`m` is about 40 MB a run). About 43 GB, against 950 GB. **Measured
+(S6, S9, S12):** gen-v2's photos 37.30 GB (186.5 kB each), synth-val-v2's
+0.43 GB, the joined sidecars 386 and 3.2 MB, the store export 166 MB; the
+generation job wrote 40.5 GB, the quota going from 142.0 to 182.1 GB used;
+a `last.pt` is 5.6 MB for `n` and 40.6 MB for `m`.
 
 **Optimisations, fixed now:**
 
@@ -4045,21 +4207,38 @@ needs a GPU. If A finishes stage 1 before S10, it exits; B keeps its place.
 
 ## Files at the end of M2b
 
+As built (checked in S15 with `git diff --name-status 7a9e801^..HEAD`, the
+plan's first commit to its last, M3's files left out; M0 Part D's freeze of
+v2, done in the same weeks, is M0's). The plan's list lacked S13's to
+S15's files and `test_derive_sets.py`, `m2b_smoke_cpu.sbatch` and the
+changed `detector.py`, `sets.py`, `render_sheet.py`, `score_suite.py`'s
+tests and `m2_results.py`; and it named `import_store_labels.py` as
+changed, which it wasn't (it took `--version` from M0 on; v3 came through
+`store.SETS`).
+
 ```
-docs/              m2b-store-and-size.md; datasets.md gains gen-v2 and the store training export
-src/bestbefore/    chain.py, m2b.py, store_train.py, ensemble.py, m2b_results.py;
-                   changed: synth/{spec,text,render,warp,compose,make,batch}.py, detection_eval.py, store.py
-scripts/           m2b_chain.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
+docs/              m2b-store-and-size.md; datasets.md gains gen-v2 and the store training export (S15);
+                   assets/m2b_v2_by_tag_{light,dark}.png, assets/m2b_v2_found_precision_{light,dark}.png (S15)
+src/bestbefore/    chain.py, m2b.py, store_train.py, ensemble.py, m2b_results.py, final_test.py;
+                   changed: synth/{spec,text,render,warp,compose,make,batch}.py, detection_eval.py,
+                   detector.py, sets.py, store.py, store_import.py, m1.py and m2.py (the weights' hashes),
+                   m2_results.py, config.py, runs.py, slurm.py (on chain.py)
+scripts/           m2b_chain.py, m2b_inference.py, m2b_report.py, export_store_yolo.py, propose_keywords.py,
                    draft_keywords.py, import_store_keywords.py, store_designs.py, store_heic.py,
-                   store_sizes.py; changed: train_detector.py, import_store_labels.py,
-                   freeze_store_test_set.py (v3),
-                   score_suite.py, eval_detector.py, generate.py, derive_sets.py,
-                   fetch_pretrained.py, pull_cluster_results.sh, m2_chain.py (on chain.py)
-slurm/             m2b_gpu.sbatch, m2b_chain.sh, m2b_generate.sbatch
-experiments/       m2b-store-look/, m2b-model-size/, m2b-fine-tune/, m2b-gen-v2/, m2b-inference/
+                   store_sizes.py; changed: train_detector.py, freeze_store_test_set.py (v3),
+                   score_suite.py, eval_detector.py, generate.py, derive_sets.py, render_sheet.py,
+                   fetch_pretrained.py, pull_cluster_results.sh, m2_chain.py (on chain.py),
+                   readme_figures.py
+slurm/             m2b_gpu.sbatch, m2b_chain.sh, m2b_generate.sbatch, m2b_smoke_cpu.sbatch,
+                   m2b_inference_cpu.sbatch, m2b_test_cpu.sbatch (never submitted)
+experiments/       m2b-store-look/, m2b-model-size/, m2b-fine-tune/, m2b-gen-v2/, m2b-inference/,
+                   m2b-final-test/
 tests/             test_chain.py, test_m2b_rules.py, test_store_train.py, test_synth_v2.py,
-                   test_ensemble.py, test_m2b_results.py
+                   test_ensemble.py, test_m2b_results.py, test_final_test.py, test_derive_sets.py,
+                   test_readme_figures.py; changed: test_eval_detector.py, test_detection_eval.py,
+                   test_detector.py, test_score_suite.py, test_store.py, test_synth_batch.py
 results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed; runs/ is not)
+also               README.md, CLAUDE.md, .env.example (STORE_TRAIN_DIR), pyproject.toml (the ensemble extra)
 ```
 
 ## Risks
@@ -4152,3 +4331,8 @@ results/           m2b_detector.md, store_designs.md, store_set_v3.md (committed
   which the 15 sideways expiries are.
 - From M2, still open: tiled inference; oriented boxes; a realism
   classifier for generated crops; superscript ordinals and Hindi words.
+- **(S15) Counts only for a group of one or two** in S14's v2 tables
+  (`m2b_results.rate_cell` gives `1/1, 100%` for curved and upside-down
+  print): the README and its charts already give no rate there
+  (`m2b_results.MIN_RATE`); changing the tables would rewrite S14's
+  experiment block, so it waits for a reason to touch them.
