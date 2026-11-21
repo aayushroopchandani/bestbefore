@@ -13,9 +13,10 @@ The project covers the full pipeline, from data to deployment:
 
 - **Date detector:** trained on the public ExpDate dataset, then on a custom
   synthetic generator that draws what public data misses, across 200,000+
-  generated photos. Fine-tuning on real photos of Indian products is under
-  way: the bigger models are trained, and the store runs are next in the
-  GPU queue.
+  generated photos, then fine-tuned on real photos of Indian products. On
+  a new set of store photos, held out from all training, it finds 65 of 68
+  expiry dates (the first detector found 20), and still 664 of ExpDate
+  test's 665; the price is more false boxes for the reader to reject.
 - **Date reader:** reads each date as day / month / year and tells
   the expiry from the manufacture date. Three readers are compared: a
   CRNN written from scratch, PP-OCRv6 small fine-tuned for the phone, and
@@ -330,8 +331,8 @@ flowchart LR
     M2b --> M3["M3<br/>Date<br/>reader"]
     M3 --> M4["M4<br/>Readability<br/>checker"]
     M4 --> M5["M5<br/>On the<br/>phone"]
-    class M0,M1,M2 done
-    class M2b,M3 now
+    class M0,M1,M2,M2b done
+    class M3 now
     class M4,M5 planned
     classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef now fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
@@ -343,8 +344,8 @@ flowchart LR
 | M0 | Data and test set | baseline table on ExpDate and on the store photos, by tag | **done** 2026-10-21 |
 | M1 | Date detector | recall and mAP@0.5 on ExpDate test; expiry found on store photos | **done** 2026-10-21 |
 | M2 | Synthetic generator | an ablation showing what synthetic data adds on the store photos | **done** 2026-10-28 |
-| M2b | Store photos and a bigger detector | the M2b detector scored once on store set v2, by tag, cause and seen or unseen pack design, next to M1 and M2 | **in progress** |
-| M3 | Date reader | end-to-end date accuracy vs baselines A, B and C, by tag | **in progress**, alongside M2b |
+| M2b | Store photos and a bigger detector | the M2b detector scored once on store set v2, by tag, cause and seen or unseen pack design, next to M1 and M2 | **done** 2026-11-21 |
+| M3 | Date reader | end-to-end date accuracy vs baselines A, B and C, by tag | **in progress** |
 | M4 | Readability checker | AUROC on held-out copies; SmartDoc-QA and SPAQ agreement; store photos | planned |
 | M5 | On the phone | size, latency per frame, accuracy kept after quantising | planned |
 
@@ -572,45 +573,50 @@ arm by tag and by cause:
 slice's record:
 [`docs/m2-synthetic-generator.md`](docs/m2-synthetic-generator.md).
 
-### M2b, in progress: the store photos, gen-v2 and a bigger detector
+### M2b result: store photos find 65 of 68 new store expiries, with more false boxes
 
 The M2 detector finds 39 of the store's 81 expiry dates. Of the other 42,
 30 get a box below its threshold and 12 none at all. The store gallery
 showed why: a threshold chosen on ExpDate, layouts the generator never
 drew, generated dates about 1.7 times bigger than the store's, and a few
 pack designs behind many of the photos. Since the retailer's owner
-allowed training on the store photos (2026-10-28), M2b goes after all of
+allowed training on the store photos (2026-10-28), M2b went after all of
 it at once: it fine-tunes on the store photos themselves, draws the
 missing layouts, tries bigger models and picks the threshold on store
-photos.
+photos. Rules written before any run chose on validation photos; then a
+new store set, v2 (99 photos, frozen before any training on store photos
+and never copied to the cluster), and ExpDate test were each scored once.
 
 ```mermaid
 flowchart TD
     subgraph step1["Step 1: public data"]
         N1["n1280<br/>M2's winning arm,<br/>reused"]
         S1["s1280<br/>yolo11s,<br/>3 seeds"]
-        M1P["m1280<br/>yolo11m,<br/>1-seed probe"]
+        M1P["m1280<br/>yolo11m probe;<br/>R1 gave it<br/>3 seeds"]
     end
     subgraph step2["Step 2: store photos"]
         MIX["Each epoch:<br/>20% store photos,<br/>design-balanced,<br/>turned 4 ways;<br/>80% replay: ExpDate,<br/>turned copies, gen-v2"]
-        RECIPES["Recipes on n:<br/>ft, or ft2 in<br/>two stages;<br/>side arm: ft-gen50k"]
+        RECIPES["Recipes on n:<br/>ft, or ft2 in<br/>two stages; R2: ft<br/>side arm: ft-gen50k"]
     end
     CTRL["Control: no training<br/>M2's weights, with a<br/>threshold set on<br/>store photos; its<br/>seeds set the band"]
     step1 --> step2
     step2 --> RULES{{"Rules R1 to R3<br/>best on v1-val,<br/>nothing forgotten;<br/>within the noise<br/>band, the cheapest"}}
     CTRL --> RULES
-    RULES --> ADD["Rule R4: add-ons kept<br/>only if they earn it<br/>3-seed ensemble,<br/>test-time rotation,<br/>1,536 px input"]
-    ADD --> FINAL["Scored once, on the<br/>laptop: store set v2<br/>by tag, cause and<br/>seen or unseen design;<br/>ExpDate test"]
+    RULES --> ADD["R3 chose n1280-ft;<br/>R4 kept no add-on:<br/>3-seed ensemble,<br/>test-time rotation,<br/>1,536 px input"]
+    ADD --> FINAL["The M2b detector<br/>n1280-ft, seed 0,<br/>scored once on<br/>the laptop<br/>store set v2: 65 of 68<br/>ExpDate test: 664 of 665<br/>M2's detector:<br/>46 and 662"]
     class CTRL control
+    class FINAL win
     classDef control stroke-dasharray:5 4
+    classDef win fill:#fef3c7,stroke:#d97706,stroke-width:3px,color:#78350f
 ```
 
-The generator's second version draws what the store gallery showed and
-M2 never drew, and sizes each untilted block from the store's own date
-sizes. A tilted block is sized by its digits instead, since the store has
-no tilted dates to copy and a box round tilted text measures the tilt.
-Every new feature is off in M2's spec, which keeps its hash, so M2's
-photos still come out byte for byte (tests check it).
+The generator's second version, gen-v2, draws what the store gallery
+showed and M2 never drew, and sizes each untilted block from the store's
+own date sizes. A tilted block is sized by its digits instead, since the
+store has no tilted dates to copy and a box round tilted text measures
+the tilt. Every new feature is off in M2's spec, which keeps its hash, so
+M2's photos still come out byte for byte (tests check it). Details:
+[`docs/datasets.md`](docs/datasets.md).
 
 ```mermaid
 mindmap
@@ -632,27 +638,93 @@ mindmap
       Drawn from the store's own date sizes
 ```
 
-Where it stands (2026-11-14):
+Each milestone's detector is seed 0 of its arm, declared before any run,
+and each is cut at its own threshold: M1's chosen on ExpDate validation
+(M1 also reads 640 px, the others 1,280 px), M2's on ExpDate's real
+validation sets, and M2b's on the store's validation photos. The table
+compares them on store set v2 and ExpDate test only: store set v1 trained
+M2b, so it can't judge it.
 
-- **The data is ready.** Store set v2, 99 new photos, is labelled and
-  frozen as the new test set. Store sets v1 and v3 are split by pack
-  design (80 photos train, 34 validate), boxed for keywords and exported
-  to the cluster.
-- **gen-v2 is made:** 200,000 training photos and 2,400 validation photos
-  in 24 minutes on one 24-CPU job, plus the 180°-turned sets, all checked.
-  The job first crashed on a photo the laptop draws fine (floating-point
-  results differ in their last bits between the two machines); the fix
-  came with a test that reproduces it.
-- **Step 1 has trained** (18.5 hours on one H100): `yolo11s` with three
-  seeds and the `yolo11m` probe, which ran 107 images a second in 30.8 GB
-  of GPU memory. The next GPU job scores them on the store's validation
-  photos before step 2 starts.
-- **Step 2 is written and smoke-tested** on a CPU node of the cluster:
-  store fine-tuning with replay, the two-stage recipe, the M2b validation
-  suite and decision rules R1 to R3. Its GPU job was released on
-  2026-11-12, first in line for the next H100 to free up.
+| Expiry dates found | Store set v2 | precision | AP | ExpDate test | precision | mAP@0.5 |
+|---|---:|---:|---:|---:|---:|---:|
+| the M1 detector (`n640`) | 20 of 68 | 0.956 | 0.440 | 637 of 665 | 0.987 | 0.993 |
+| the M2 detector (`gen-rot-1280-s0`) | 46 of 68 | 0.871 | 0.703 | 662 of 665 | 0.988 | 0.995 |
+| M2's weights at the store threshold | 58 of 68 | 0.418 | 0.703 | not scored | | |
+| **the M2b detector** (`n1280-ft-s0`) | **65 of 68** | 0.761 | **0.895** | **664 of 665** | 0.898 | 0.995 |
 
-Plan and every slice's record:
+<sub>Precision is the share of kept boxes that are dates, over all the
+dates on the photos. AP@0.5 for dates is the project's own; it agrees with
+Ultralytics' mAP within 0.0005 on ExpDate validation, and no threshold
+moves it. M2's weights at the store threshold are the M2 detector's own
+network cut where M2b's rule cuts, so that row is what the threshold alone
+does; it wasn't scored on ExpDate test. Means of 3 seeds on store set v2:
+M1 25, M2 48.7, M2's weights at the store threshold 58.3 and M2b 64 of 68;
+on ExpDate test 646, 662.7 and 663.7 of 665.</sub>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/m2b_v2_by_tag_dark.png">
+  <img alt="Horizontal bars of store set v2's expiry dates found by failure tag, mean of 3 seeds for M1 (n640), M2 (gen-rot-1280) and M2b (n1280-ft), each at its own threshold: every expiry M1 25/68, M2 48.7/68, M2b 64/68; sideways M1 0/10, M2 6.3/10, M2b 9.3/10; dot-matrix M1 16.7/28, M2 26.7/28, M2b 28/28; small print M1 0.7/5, M2 3/5, M2b 5/5; clean M1 7.7/24, M2 12.7/24, M2b 20.7/24. The curved group has one or two expiries and isn't charted (M1 0/1, M2 0/1, M2b 1/1)." src="docs/assets/m2b_v2_by_tag_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/m2b_v2_found_precision_dark.png">
+  <img alt="Scatter of store set v2's expiry dates found against precision, one point per arm, mean of 3 seeds: M1 (n640) 25/68 at 0.957; M2 at its threshold 48.7/68 at 0.903; M2's weights at the store threshold 58.3/68 at 0.550; n1280-ft, the M2b detector's arm 64/68 at 0.774; s1280-ft 63/68 at 0.884; m1280-ft 60.7/68 at 0.971. Lowering M2's threshold alone moves right and down; fine-tuning moves right and back up." src="docs/assets/m2b_v2_found_precision_light.png">
+</picture>
+
+<sub>Both charts are drawn from the run records by
+`scripts/readme_figures.py --only m2b`; no store photo is in either.</sub>
+
+What it shows (means of 3 seeds unless a detector is named):
+
+- **It finds what M2 doubted or missed**, on photos no model trained or
+  was tuned on: month words 24 of 25 (M2 14), clean print 20.7 of 24 (M2
+  12.7), sideways 9.3 of 10 (M2 6.3), dot-matrix all 28, and the one
+  upside-down date, which no seed of M1 or M2 found.
+- **Fine-tuning, not just the threshold.** M2's own weights cut at the
+  store threshold find 58.3 of 68 at precision 0.550: the threshold alone
+  closes 63% of the gap, at a cost in precision that fine-tuning doesn't
+  pay (64 of 68 at 0.774).
+- **It learned print, not packs.** On the 57 expiries of pack designs no
+  run trained on, every fine-tuned arm's AP is above every seed of M2's
+  weights (0.909 against 0.726 for the M2b detector's arm), the reading
+  fixed before any score.
+- **Nothing forgotten on ExpDate:** 664 of 665 test expiries, and
+  mAP@0.5 0.995, as M2's.
+
+Where it doesn't beat M2, or didn't do what was expected:
+
+- **Precision.** The store threshold keeps more false boxes: 0.60 a photo
+  on store set v2 (precision 0.761) against the M2 detector's 0.17
+  (0.871), and on ExpDate test precision 0.897 against M2's 0.986. A wrong
+  date is worse than none, so M3's reader has to reject them.
+- **Numeric dates printed 1.5 to 2.5% of the photo's size didn't move:**
+  13 of 15, as M2's weights already found at the store threshold. Two of
+  the M2b detector's 3 misses are these; the third is sideways.
+- **The noise band couldn't tell the fine-tuned sizes apart.** It is the
+  spread of M2's seeds on the store's validation photos, 0.1414 in mAP, so
+  `n`, `s` and `m` all tied and the rule took the cheapest, `n`. Yet
+  `m1280-ft` scored higher on every seed (validation 0.987 against 0.942,
+  store set v2's AP 0.948 against 0.897), at 4.68 times the CPU time a
+  photo. It stays M3's fallback.
+- **No inference add-on was kept.** The seed ensemble, test-time rotation
+  and a 1,536 px input gained 0.0141 to 0.0256 in AP on validation, far
+  inside the band.
+- **Pack designs seen in training aren't found better than unseen ones**,
+  against the prediction: AP 0.864 seen, 0.865 seen only in validation,
+  0.909 unseen. M2's detector, with no store training, already finds the
+  4 expiries of the trained designs: those few packs are easy ones.
+- **Bigger read upside-down print worse at step 1:** on ExpDate's
+  validation photos turned 180°, mAP 0.435, 0.295 and 0.234 for `n`, `s`
+  and `m`, until store fine-tuning, with turned copies in its replay,
+  brought it to 0.953, 0.970 and 0.983.
+- **The laptop's memory.** At 16 photos a call, 1,280 px photos
+  overflowed its 8 GB, so store set v2 and ExpDate test were predicted one
+  photo a call; ExpDate test, planned as a cluster job, ran on the laptop
+  too, when the cluster's job slots were full.
+
+Full report, with every run by tag, cause and pack design, the add-ons
+and compute: [`results/m2b_detector.md`](results/m2b_detector.md). The
+plan and every slice's record:
 [`docs/m2b-store-and-size.md`](docs/m2b-store-and-size.md).
 
 ### M3, in progress: the date reader
@@ -896,9 +968,26 @@ python experiments/m2-ablation/summarise.py   # and the other m2-* experiments
 python scripts/m2_report.py                   # writes results/m2_detector.md
 ```
 
-M2b and M3 run on the cluster too: their job scripts are
-`slurm/m2b_*.sbatch` and `slurm/m3_*.sbatch`, and their steps are in each
-plan. M3's crop experiment is summarised on the laptop by
+M2b runs on the cluster the same way: `slurm/m2b_generate.sbatch` makes
+gen-v2 and the 180° sets, then two `slurm/m2b_gpu.sbatch` jobs share one
+work queue (`scripts/m2b_chain.py`), train step 1 and step 2, score every
+run on the M2b validation suite and apply the rules (steps in
+[`docs/m2b-store-and-size.md`](docs/m2b-store-and-size.md)). Back on the
+laptop, with the scored runs' `last.pt` copied and checked against their
+hashes, the add-ons (`scripts/m2b_inference.py`, the plan's S13) and the
+final test: store set v2 is scored once (`scripts/eval_detector.py --set
+store-v2` refuses a second score), on the laptop only.
+
+```bash
+pip install -e ".[train,synth,ensemble]"
+scripts/pull_cluster_results.sh               # run records, suites, the chain's decisions
+python experiments/m2b-final-test/summarise.py   # and the other m2b-* experiments
+python scripts/m2b_report.py                  # writes results/m2b_detector.md
+python scripts/readme_figures.py --only m2b   # the two M2b charts in this README
+```
+
+M3 runs on the cluster too: its job scripts are `slurm/m3_*.sbatch`, and
+its steps are in its plan. M3's crop experiment is summarised on the laptop by
 `experiments/m3-crop-reading/summarise.py`, once its run folder is
 copied from the cluster (its README has the steps). The readers need
 two more extras: `pip install -e ".[read,vlm]"`.
@@ -970,6 +1059,12 @@ flowchart TD
   results, from the validation suite to the store photos
 - [`docs/m2b-store-and-size.md`](docs/m2b-store-and-size.md): the M2b
   plan: store fine-tuning, gen-v2, model size and every slice's record
+- [`results/m2b_detector.md`](results/m2b_detector.md): the M2b results,
+  from the validation suite and its rules to store set v2 and ExpDate test
+- [`experiments/m2b-final-test`](experiments/m2b-final-test/README.md):
+  store set v2 scored once, by tag, cause and pack design, beside
+  `m2b-fine-tune`, `m2b-gen-v2`, `m2b-model-size`, `m2b-inference` and
+  `m2b-store-look`
 - [`results/store_designs.md`](results/store_designs.md): store pack
   designs and the v1 split, as counts only
 - [`results/store_test_set_v2.md`](results/store_test_set_v2.md) and
