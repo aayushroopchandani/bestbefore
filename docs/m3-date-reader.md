@@ -13,10 +13,12 @@ text frozen: 232 date boxes and 10 shelf-life phrases; the store's
 piles, job `73965`: 410 crops, owner-only); S5 done 2026-11-16 (the
 CTC decoder and CER, ONNX parity 1.0, the visibility cut-off 3.0 set by
 eye on job `73966`'s sheets, the CRNN smoke passed in float32, job
-`73971`; bf16 training on the CPU gives NaN, oneDNN's). Next: S6. M2b is still in
-progress (S11 next there: job B `73832` ended 2026-11-14 with nothing
-left for a GPU job); every slice here that needs one of M2b's
-outputs says so. The learnings
+`73971`; bf16 training on the CPU gives NaN, oneDNN's). **Paused
+2026-11-22 for M2c** (`docs/m2c-live-boxes.md`: live date boxes on the
+phone, time-boxed to three sessions); its GPU jobs stay held. Next, when
+it resumes: S6. M2b is done (2026-11-21): the M2b detector is
+`n1280-ft-s0` at `threshold_store` 0.1641; every slice here that needs
+one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
 
 **Goal.** Read the expiry date on a photo: find every date (M2b's
