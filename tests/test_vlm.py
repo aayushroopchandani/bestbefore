@@ -312,3 +312,134 @@ def test_store_answers_match_the_frozen_labels():
             assert str(answer.expiry) == lab["expiry"], number
             assert how == ("derived" if lab["derived"] else "printed"), number
         assert answer.mfg is None or str(answer.mfg) == lab["mfg"], number
+
+
+# --- The training loop's pieces, on a tiny random Qwen3-VL ----------------------------------------
+
+def _qwen_files():
+    from bestbefore.config import checkpoint_dir
+    folder = checkpoint_dir() / "pretrained" / "Qwen3-VL-2B-Instruct"
+    if not (folder / "tokenizer.json").exists():
+        pytest.skip("Qwen3-VL's processor files aren't here")
+    return folder
+
+
+@pytest.fixture(scope="module")
+def processor():
+    transformers = pytest.importorskip("transformers")
+    return transformers.AutoProcessor.from_pretrained(_qwen_files())
+
+
+@pytest.fixture
+def tiny_model():
+    """Qwen3-VL-2B's config shrunk to 2 layers a tower (its vocabulary and
+    image geometry kept), random weights: the real code paths in a second."""
+    torch = pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    cfg = transformers.AutoConfig.from_pretrained(_qwen_files())
+    tc, vc = cfg.text_config, cfg.vision_config
+    tc.hidden_size, tc.num_hidden_layers, tc.num_attention_heads = 64, 2, 4
+    tc.num_key_value_heads, tc.head_dim, tc.intermediate_size = 2, 16, 128
+    tc.rope_parameters = {**tc.rope_parameters, "mrope_section": [4, 2, 2]}
+    vc.depth, vc.hidden_size, vc.num_heads, vc.intermediate_size = 2, 64, 4, 128
+    vc.out_hidden_size, vc.deepstack_visual_indexes = 64, [0]
+    torch.manual_seed(0)
+    return transformers.Qwen3VLForConditionalGeneration(cfg)
+
+
+def _image(seed=0, size=(320, 256)):
+    rng = np.random.default_rng(seed)
+    return Image.fromarray(rng.integers(0, 255, (size[1], size[0], 3), dtype=np.uint8))
+
+
+def test_the_loss_falls_on_the_answers_tokens_only(processor):
+    answer = vlm.Answer(Expiry(2027, 3), None)
+    with_answer = vlm.model_inputs(processor, _image(), answer)
+    prompt = vlm.model_inputs(processor, _image())
+    n = prompt["input_ids"].shape[1]
+    assert with_answer["input_ids"][0, :n].tolist() == prompt["input_ids"][0].tolist()
+    labels = with_answer["labels"][0]
+    assert (labels[:n] == vlm.IGNORE).all() and (labels[n:] != vlm.IGNORE).all()
+    assert processor.tokenizer.decode(labels[n:]) == '{"expiry": "2027-03", "mfg": null}<|im_end|>'
+    assert with_answer["mm_token_type_ids"][0, n:].sum() == 0
+    # the image's visual tokens: one per 32 x 32 px
+    assert (prompt["input_ids"][0] == processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")).sum() == 10 * 8
+
+
+def test_a_batch_is_padded_on_the_right(processor):
+    a = vlm.model_inputs(processor, _image(0, (320, 256)), vlm.Answer(None, None))
+    b = vlm.model_inputs(processor, _image(1, (640, 256)), vlm.Answer(Expiry(2027, 3, 1), Expiry(2025, 3, 1)))
+    batch = vlm.collate([a, b], pad_id=processor.tokenizer.pad_token_id)
+    na, nb = a["input_ids"].shape[1], b["input_ids"].shape[1]
+    assert batch["input_ids"].shape == (2, max(na, nb)) and nb > na
+    assert batch["attention_mask"][0, na:].sum() == 0 and (batch["labels"][0, na:] == vlm.IGNORE).all()
+    assert batch["input_ids"][0, :na].tolist() == a["input_ids"][0].tolist()
+    assert batch["pixel_values"].shape[0] == a["pixel_values"].shape[0] + b["pixel_values"].shape[0]
+    assert batch["image_grid_thw"].tolist() == [[1, 16, 20], [1, 16, 40]]
+
+
+def test_an_image_off_its_model_size_is_refused(processor):
+    with pytest.raises(ValueError):
+        vlm.model_inputs(processor, _image(0, (300, 250)))
+
+
+def test_lora_trains_the_language_model_only(tiny_model, load_script):
+    pytest.importorskip("peft")
+    train_vlm = load_script("train_vlm")
+    model = train_vlm.with_lora(tiny_model, seed=0)
+    trainable = [n for n, p in model.named_parameters() if p.requires_grad]
+    assert trainable and all("lora_" in n and ".language_model.layers." in n for n in trainable)
+    wrapped = {n.split(".lora_")[0] for n in trainable}
+    assert len(wrapped) == 2 * 7          # 2 layers, q k v o gate up down
+    assert not any("visual" in n for n in trainable)
+
+
+def test_a_few_steps_lower_the_loss_on_their_examples(tiny_model, processor, load_script):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("peft")
+    train_vlm = load_script("train_vlm")
+    model = train_vlm.with_lora(tiny_model, seed=0)
+    items = [vlm.model_inputs(processor, _image(i), vlm.Answer(Expiry(2027, i + 1), None)) for i in range(2)]
+    batch = vlm.collate(items, processor.tokenizer.pad_token_id)
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=5e-3)
+    model.train()
+    losses = []
+    for _ in range(4):
+        loss = model(**batch).loss
+        loss.backward()
+        opt.step()
+        opt.zero_grad()
+        losses.append(loss.item())
+    assert losses[-1] < losses[0]
+
+
+def test_the_learning_rate_warms_up_then_falls_to_zero(load_script):
+    lr_at = load_script("train_vlm").lr_at
+    steps = 100
+    lrs = [lr_at(s, steps, 1e-4, 0.03) for s in range(steps)]
+    assert lrs[0] == pytest.approx(1e-4 / 3) and lrs[2] == pytest.approx(1e-4)
+    assert all(a >= b for a, b in zip(lrs[2:], lrs[3:])) and lrs[-1] < 1e-6
+
+
+def test_a_greedy_answer_comes_with_each_tokens_probability(tiny_model, processor):
+    said = vlm.answer_with(tiny_model, processor, _image(), max_new_tokens=6)
+    assert 1 <= len(said["tokens"]) <= 6 and all(0 < p <= 1 for _, p in said["tokens"])
+    assert said["text"] == "".join(t for t, _ in said["tokens"])
+    assert said["answer"] == {"expiry": None, "mfg": None} and said["problems"]     # random weights write no JSON
+
+
+def test_answers_are_scored_field_by_field():
+    truth = vlm.Answer(Expiry(2027, 3, 1), None)
+    assert vlm.score_answer(truth, {"expiry": "2027-03-01", "mfg": None}) == {"expiry": "right", "mfg": "null"}
+    assert vlm.score_answer(truth, {"expiry": "2027-03-02", "mfg": "2025-01"}) == {"expiry": "wrong", "mfg": "claimed"}
+    assert vlm.score_answer(truth, {"expiry": None}) == {"expiry": "none", "mfg": "null"}
+    assert vlm.score_answer(None, {"expiry": "2027-03"}) == {}
+
+
+def test_kinds_are_read_from_the_records_heads(tmp_path):
+    from bestbefore.reader import shards
+    jpeg = vlm.encode(Image.new("RGB", (64, 64)).resize((256, 256)))
+    with vlm.Writer(tmp_path / "s") as w:
+        for kind in ("store", "gen", "negative-mfg"):
+            w.add(jpeg, vlm.Answer(None, None), kind, "x")
+    assert vlm.kinds(shards.open_pile(tmp_path / "s")) == ["store", "gen", "negative-mfg"]

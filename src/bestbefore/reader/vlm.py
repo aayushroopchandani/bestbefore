@@ -629,3 +629,117 @@ def val_photos(name: str) -> list[ValPhoto]:
                                  "month": entry.get("month")}))
         return out
     raise ValueError(f"unknown validation set {name!r}; one of {', '.join(VAL_SETS)}")
+
+
+# --- The model's inputs: training and answering (S7's loop, scripts/train_vlm.py) -----------
+
+# LoRA on the language model's attention and MLP projections only; the
+# vision tower and its merger stay frozen (decision 18).
+LORA_TARGETS = r"model\.language_model\.layers\.\d+\.(self_attn\.(q|k|v|o)_proj|mlp\.(gate|up|down)_proj)"
+LORA = {"r": 16, "lora_alpha": 32, "lora_dropout": 0.05}
+IGNORE = -100           # a label the loss skips
+
+
+def prompt_text(processor) -> str:
+    """The chat as Qwen's template writes it, up to the assistant's turn:
+    '<|im_start|>user\\n<|vision_start|><|image_pad|><|vision_end|>PROMPT<|im_end|>\\n<|im_start|>assistant\\n'."""
+    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": PROMPT}]}]
+    return processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+
+
+def answer_ids(processor, answer: Answer) -> list[int]:
+    """The answer's tokens as the model should write them: its JSON, then
+    <|im_end|>, which ends its turn."""
+    return processor.tokenizer(answer.json() + "<|im_end|>", add_special_tokens=False)["input_ids"]
+
+
+def model_inputs(processor, image: Image.Image, answer: Answer | None = None) -> dict:
+    """One image's inputs: the prompt's tokens with the image's visual
+    tokens (the processor told not to resize: the image is at its model
+    size), and, given an answer, its tokens after them with `labels` that
+    are IGNORE everywhere else: the loss falls on the answer only."""
+    import torch
+    if image.size != model_size(*image.size):
+        raise ValueError(f"{image.size} isn't a model size")
+    out = dict(processor(text=[prompt_text(processor)], images=[image], return_tensors="pt", do_resize=False))
+    if answer is None:
+        return out
+    ids = torch.tensor([answer_ids(processor, answer)], dtype=out["input_ids"].dtype)
+    n = out["input_ids"].shape[1]
+    out["input_ids"] = torch.cat([out["input_ids"], ids], 1)
+    out["attention_mask"] = torch.cat([out["attention_mask"], torch.ones_like(ids)], 1)
+    if "mm_token_type_ids" in out:                  # 1 on visual tokens, 0 on text
+        out["mm_token_type_ids"] = torch.cat([out["mm_token_type_ids"], torch.zeros_like(ids)], 1)
+    labels = torch.full_like(out["input_ids"], IGNORE)
+    labels[:, n:] = ids
+    out["labels"] = labels
+    return out
+
+
+def collate(items: Sequence[dict], pad_id: int) -> dict:
+    """Examples into one batch: token rows padded on the right (pad tokens,
+    attention 0, labels IGNORE), every image's patches stacked in order."""
+    import torch
+    width = max(it["input_ids"].shape[1] for it in items)
+    fill = {"input_ids": pad_id, "attention_mask": 0, "labels": IGNORE, "mm_token_type_ids": 0}
+    out = {}
+    for name, value in fill.items():
+        if name in items[0]:
+            out[name] = torch.cat([torch.nn.functional.pad(it[name], (0, width - it[name].shape[1]), value=value)
+                                   for it in items])
+    out["pixel_values"] = torch.cat([it["pixel_values"] for it in items])
+    out["image_grid_thw"] = torch.cat([it["image_grid_thw"] for it in items])
+    return out
+
+
+def answer_with(model, processor, image: Image.Image, max_new_tokens: int = 64) -> dict:
+    """The model's greedy answer to one image: its text, each token with the
+    probability the raw logits gave it (a plain softmax, as llama.cpp gives
+    with a negative temperature), the parsed answer and the seconds taken."""
+    import time
+    import torch
+    t0 = time.perf_counter()
+    inputs = {k: v.to(model.device) for k, v in model_inputs(processor, image).items()}
+    with torch.inference_mode():
+        out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, temperature=None,
+                             top_p=None, top_k=None, output_logits=True, return_dict_in_generate=True)
+    new = out.sequences[0, inputs["input_ids"].shape[1]:].tolist()
+    tokens = []
+    for tok, logits in zip(new, out.logits):
+        prob = torch.softmax(logits[0].float(), -1)[tok].item()
+        if tok in (processor.tokenizer.eos_token_id, processor.tokenizer.pad_token_id):
+            break
+        tokens.append((processor.tokenizer.decode([tok]), prob))
+    text = "".join(t for t, _ in tokens)
+    parsed = parse_answer(text)
+    return {"text": text, "tokens": tokens, "answer": parsed.answer.as_dict(), "problems": list(parsed.problems),
+            "confidence": value_confidence(tokens), "prompt_tokens": inputs["input_ids"].shape[1],
+            "seconds": round(time.perf_counter() - t0, 3)}
+
+
+def kinds(env: lmdb.Environment) -> list[str]:
+    """Every record's kind, in key order, reading only each record's head
+    (LMDB maps the values: the JPEGs behind them are never touched)."""
+    out = []
+    with env.begin(buffers=True) as txn:
+        for i in range(shards.count(env)):
+            value = txn.get(key_of(i).encode())
+            (n,) = struct.unpack(">I", bytes(value[:4]))
+            out.append(json.loads(bytes(value[4:4 + n]))["kind"])
+    return out
+
+
+def score_answer(truth: Answer | None, said: dict) -> dict:
+    """An answer against its truth, field by field: right, wrong or none
+    (scoring.score: the day only where the truth prints one); a field whose
+    truth is null scores "claimed" when the model gave a date (a date where
+    none is in view is a wrong read) and "null" when it gave none. No truth:
+    nothing scored."""
+    from .. import scoring
+    if truth is None:
+        return {}
+    out = {}
+    for f in FIELDS:
+        read, want = to_expiry(said.get(f)), getattr(truth, f)
+        out[f] = scoring.score(want, read) if want is not None else ("claimed" if read is not None else "null")
+    return out
