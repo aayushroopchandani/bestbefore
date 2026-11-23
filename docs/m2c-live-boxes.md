@@ -3,9 +3,11 @@
 Planned 2026-11-22, after a discussion with the owner the same day (a live
 camera page before M3 resumes; the detector run on a throttled, gated
 stream, never on a frame shrunk below 1,280 px; a React app built like
-Scanify's frontend, so it can move into Scanify later). Status: **S1's
-laptop part done** (2026-11-22, [its record](#s1-the-model-files-and-their-parity--laptop-then-a-cpu-job--submits-1-cpu-job));
-its CPU job waits for campus. Next: S2. M3 waits at S6 meanwhile
+Scanify's frontend, so it can move into Scanify later). Status: **S1
+done** (the laptop 2026-11-22, the cluster's job 2026-11-23,
+[its records](#s1-the-model-files-and-their-parity--laptop-then-a-cpu-job--submits-1-cpu-job)):
+R0 passes, R1 fails (the app pads square), and R2's accuracy half keeps
+float32 on WebAssembly. Next: S2. M3 waits at S6 meanwhile
 (`docs/m3-date-reader.md`); its two GPU jobs stay held and keep their
 place in the queue. The learnings guide (`learnings/m2c.md`) is written
 separately, later, as for M2 and M3.
@@ -745,6 +747,106 @@ compute node (the laptop's 3.1 s a photo for Percentile suggests about 10
 minutes); ONNX Runtime's threads inside a job's cgroup; whether the
 cluster's main venv imports everything the job needs (onnxruntime 1.31.1
 and onnx 1.23.2 came with M3 S1). Not S1's: float16's accuracy (S2).
+(All but float16's were checked the next day, below.)
+
+**Record (2026-11-23, the cluster).** From campus. The state was checked
+first, not taken from the laptop's record. The owner had already made and
+pushed S1's three commits (`6f55f32`, `98e5683`, `33a306a`). The
+cluster's checkout was clean at `5240800` (M2b S14) and was pulled
+fast-forward to `33a306a`. The pull touched nothing M3's two held jobs
+run: they are placeholders that start `slurm/m3_chain.sh`, not yet
+written. The three float files and the manifest went by `scp` into an
+owner-only `$CHECKPOINT_DIR/m2c/` (folder 700, files 600), their SHA-256
+the laptop's. On the login node first: `export_live.py check` passed (the
+cluster's own M2b `last.pt` matches `m2b.py`), and the M2c and detector
+tests gave 31 passed and 11 skipped (the onnxslim ones, as designed), in
+95 s. Before submitting, our only jobs were M3's two held ones, and
+`short` had 2 idle nodes. **Job 74149** (`m2c_cpu.sbatch parity`,
+commit `33a306a`) started at once on `cn1` and completed in 22 min 15 s,
+exit 0, with nothing in its run or model folder open to others. The
+records and the int8 files came back with `tar` over `ssh`. On the laptop
+all five files pass `check`; the cluster's manifest keeps the float
+entries as they were and adds `int8`; and the laptop's `rules` on the
+fetched records gives the job's `rules.json` byte for byte.
+
+AP@0.5 for dates, and dates found at 0.1641 (expiries on v1-val), run
+`20261123-165009-m2c-parity`:
+
+| Set | PyTorch square | float32 square | float32 tight | int8 square | int8 tight | int8-pct square | int8-pct tight |
+|---|---|---|---|---|---|---|---|
+| v1-val (63 dates, 29 expiries) | 0.9601 · 60 · 29 | 0.9601 · 60 · 29 | 0.9404 · 58 · 27 | 0.9306 · 57 · 27 | 0.9117 · 52 · 25 | 0.9402 · 58 · 28 | 0.9170 · 56 · 28 |
+| real-val (187) | 0.9949 · 187 | 0.9949 · 187 | 0.9949 · 187 | 0.9884 · 187 | 0.9921 · 187 | 0.9944 · 187 | 0.9949 · 187 |
+| real-val-rot (187) | 0.9850 · 187 | 0.9850 · 187 | 0.9872 · 186 | 0.9730 · 186 | 0.9757 · 186 | 0.9813 · 187 | 0.9829 · 187 |
+| real-val-small (186) | 0.9845 · 184 | 0.9845 · 184 | 0.9845 · 184 | 0.9819 · 183 | 0.9819 · 183 | 0.9808 · 184 | 0.9808 · 184 |
+| real-val-rot180 (187) | 0.9504 · 177 | 0.9504 · 177 | 0.9492 · 175 | 0.9444 · 177 | 0.9403 · 178 | 0.9410 · 177 | 0.9315 · 177 |
+
+The readings:
+
+- **R0 passes on all five sets.** PyTorch square and ONNX float32 square
+  find the same dates with the same AP (difference 0.000000 on each set),
+  the same false boxes, and confidences at most 4.9e-6 apart. PyTorch's
+  counts are M2b's suite's on the cluster (v1-val 60 of 63, 29 of 29
+  expiries, 0.4706 false boxes a photo; real-val 187 of 187, 0.097). Its
+  v1-val AP is 0.9601 here and 0.9596 on the laptop.
+- **R1 fails, so the app pads square.** On v1-val tight is 0.0197 under
+  square, with 2 dates fewer and **2 expiries lost**; on real-val-rot180 it
+  finds 2 dates fewer. It passes real-val (AP within 0.0001), real-val-rot
+  (0.0022 up, one fewer) and real-val-small (the same). Decision 7's
+  departure from M1 D3 isn't taken, and O1 is out: a 16:9 frame keeps
+  square padding's 78% more pixels than tight. The laptop's early look at
+  v1-val found 59 dates and 28 expiries; the cluster's is 58 and 27.
+- **R2's accuracy half keeps float32 on WebAssembly.** At square (R1's
+  padding), int8 (MinMax) fails on v1-val (0.0295 under, 3 dates fewer)
+  and on real-val-rot (0.0120 under). Its fallback, int8-pct, also fails
+  on v1-val (0.0199 under, 2 dates fewer). Both pass the other sets. So
+  R2 gives float32, whatever their speed: S4's WebAssembly benches need
+  float32 only (and W1's threads), and int8's speed on the phone is at
+  most a side reading. Tight, int8 is worse still on v1-val (52 dates, 25
+  expiries).
+- **Against what we expected**: R0 as written. R1 not: AP within 0.01
+  was expected, and v1-val lost 0.020 and 2 expiries. int8 MinMax was
+  expected to lose 0.5 to 2 points, real-val-small the most. It lost 2.9
+  on v1-val, the store's photos, the set that matters most, and 0.3 on
+  real-val-small. Percentile, its range symmetric, did better than MinMax
+  on three sets of five (v1-val, real-val, real-val-rot), at both
+  paddings.
+
+The job's other findings:
+
+- **The int8 calibration** on `cn1`, 24 threads: 200 photos (80 store,
+  120 ExpDate, list `06fcc883…`) letterboxed tight into 20 shapes, from
+  704 × 1,280 to 1,280 × 1,280. MinMax took 62 s and Percentile 266 s (1.3
+  s a photo against the laptop's 3.1), 2.65 GB at peak. Both calibration
+  sessions and every scoring session were made with 24 threads, checked
+  by the scripts, and no pinning error was printed. `det-int8.onnx` is
+  `b72ff22c…`, `det-int8-pct.onnx` `5b1179aa…`, each 3.4 MB and 1,210
+  nodes.
+- **The job's log lost its first lines**: `tee /dev/stderr` reopened it
+  truncated. A job's stderr is its log, and on Linux `/dev/stderr` opens
+  the file afresh; reproduced on `mn1`. The laptop's dry run couldn't show
+  it, its stderr a terminal. The start line, the check and the
+  calibration's output went; the manifest holds the calibration's record.
+  Fixed: the run's output now tees into a `mktemp` file (CLAUDE.md, HPC).
+- **The ONNX passes took about 4 times too long**: 164 to 327 ms a call
+  over the six ONNX variants (float32 square 281 to 301), against
+  PyTorch's 33 to 42 ms. Three short diagnosis jobs (74150 to
+  74152, [experiments/m2c-cpu-threads](../experiments/m2c-cpu-threads/README.md))
+  found ONNX Runtime's inference takes 52 ms. Ultralytics' torch pre- and
+  post-processing around it crawled, because libgomp's spinning threads
+  fight ONNX Runtime's on the same CPUs. With `OMP_WAIT_POLICY=PASSIVE`,
+  or torch on one thread, a call takes 72 ms. Denormal floats were tested
+  and ruled out. The job script now exports `PASSIVE`. Job 74149's ONNX
+  times aren't quoted anywhere; its boxes and scores stand. Ultralytics
+  set torch to 8 threads at its first prediction in a 24-CPU job, its rule
+  now measured (CLAUDE.md).
+- The run folder holds 35 parity records, `run.json` and `rules.json`:
+  4.6 MB (estimated about 10).
+
+Not checked: float16's accuracy (S2, in the browser). Nor ONNX Runtime's
+times over whole sets with `PASSIVE` (the diagnosis timed 12 real-val
+photos, float32 square), nor int8's speed on x86, which R2 no longer
+needs. The full test suite wasn't run; the cluster ran the M2c and
+detector tests, and the laptop each commit's.
 
 ### S2. The app: camera, worker, boxes, benches · laptop, then the phone
 
@@ -814,7 +916,9 @@ runs on every other frame (recorded).
 **Goal:** R2's speed half, R3 and R4 applied; the app's defaults set.
 
 - The phone's speed benches: float32 and float16 on WebGPU, float32 and
-  int8 on WebAssembly, W1's threads; R2 and R3.
+  int8 on WebAssembly, W1's threads; R2 and R3. (S1's job: int8 and
+  int8-pct fail R2's accuracy half, so WebAssembly runs float32 and
+  int8's speed is at most a side reading.)
 - O3 (`live.py` adds the uint8 input; a test checks it gives the plain
   model's outputs on random frames), O4 (graph capture with GPU buffers),
   O5 only by its rule; each benched, R4 applied in order.
