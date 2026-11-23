@@ -81,6 +81,14 @@ class Examples:
         ex = vlm.get(self.env, self.order[i])
         return vlm.model_inputs(self.processor, ex.image(), ex.answer)
 
+    def close(self) -> None:
+        """Close the LMDB. One the main process leaves open is inherited by
+        every loader worker forked after it, and LMDB then refuses the
+        worker's own open ("already open in this process")."""
+        if self.env is not None:
+            self.env.close()
+            self.env = None
+
 
 def loader(dataset: Examples, micro: int, workers: int, pad_id: int):
     import torch
@@ -133,6 +141,7 @@ def probe_loss(model, dataset: Examples, pad_id: int) -> float:
         for i in range(len(dataset)):
             batch = {k: v.to(model.device) for k, v in vlm.collate([dataset[i]], pad_id).items()}
             losses.append(model(**batch).loss.item())
+    dataset.close()
     model.train()
     return float(np.mean(losses))
 
@@ -263,6 +272,7 @@ def train(args) -> None:
             runs.update_run(record, log=log, evals=evaluated)
     took = time.time() - t_train
     if args.smoke:
+        data.dataset.close()            # held by this process only when the loader has no workers
         probe["after"] = probe_loss(model, Examples(root, probe_order, processor), pad_id)
         print(f"probe loss after: {probe['after']:.4f}", flush=True)
     memory = {"cuda_peak_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2)} if device == "cuda" else {}

@@ -494,3 +494,21 @@ def test_readers_are_compared_photo_by_photo(load_script):
     assert (got["same_text"], got["same_answer"], got["same_expiry"]) == (1, 2, 2)
     assert got["expiry_confidence_max_diff"] == pytest.approx(0.05) and got["differ"] == [1]
     assert got["token_prob_max_diff"] == pytest.approx(0.02)
+
+
+def test_the_probe_closes_the_set_before_the_loader_forks(tmp_path, processor, load_script):
+    """The smoke's probe reads the set in the main process before the
+    loader's workers fork. A forked worker inherits LMDB's record of what
+    its parent has open and is refused the same folder ("already open in
+    this process"), as one process opening it twice is: so the probe closes it."""
+    import lmdb
+    train_vlm = load_script("train_vlm")
+    with vlm.Writer(tmp_path / "set") as w:
+        for i in range(2):
+            w.add(vlm.encode(_image(i)), vlm.Answer(Expiry(2027, i + 1), None), "gen", f"g{i}")
+    probe = train_vlm.Examples(tmp_path / "set", [0], processor)
+    probe[0]
+    with pytest.raises(lmdb.Error, match="already open"):
+        train_vlm.Examples(tmp_path / "set", [1], processor)[0]
+    probe.close()
+    assert train_vlm.Examples(tmp_path / "set", [1], processor)[0]["input_ids"].shape[0] == 1
