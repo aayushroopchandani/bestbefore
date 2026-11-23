@@ -7,9 +7,11 @@ Scanify's frontend, so it can move into Scanify later). Status: **S1
 done** (the laptop 2026-11-22, the cluster's job 2026-11-23,
 [its records](#s1-the-model-files-and-their-parity--laptop-then-a-cpu-job--submits-1-cpu-job)):
 R0 passes, R1 fails (the app pads square), and R2's accuracy half keeps
-float32 on WebAssembly. Next: S2. M3 waits at S6 meanwhile
-(`docs/m3-date-reader.md`); its two GPU jobs stay held and keep their
-place in the queue. The learnings guide (`learnings/m2c.md`) is written
+float32 on WebAssembly. Next: S2, on home days. **Since 2026-11-23 M2c
+and M3 alternate** (Decision 1): campus days, when the cluster is
+reachable, go to M3's cluster slices (from S6, `docs/m3-date-reader.md`),
+home days to M2c's laptop and phone slices; M3's two GPU jobs stay held
+until its S9. The learnings guide (`learnings/m2c.md`) is written
 separately, later, as for M2 and M3.
 
 **Goal.** A React web app that opens the phone's camera and draws M2b's
@@ -451,6 +453,12 @@ Each with its reason. **(new)** marks a choice not written down before;
    time-boxed to three sessions. M3 waits at S6; its held GPU jobs keep
    their place, since a held job keeps its submit time (CLAUDE.md).
    CLAUDE.md's milestone table gains M2c, with the owner's OK (S5).
+   **Changed 2026-11-23, after S1, at the owner's word:** M2c and M3
+   alternate. S2 to S5 need only the laptop and the phone, and none of
+   them feeds M3 (M3 reads with its own Python ONNX path, not the app);
+   M3's slices need the cluster, reachable only on campus. So campus
+   days go to M3, home days to M2c. The three-session box still holds,
+   counting M2c's sessions only.
 2. **(new) A React web app, not a native app**, built like Scanify's
    frontend (the same libraries and versions, the same HTTPS and `/api`
    pattern): one codebase for Android and iPhone, and a detector module
@@ -955,7 +963,7 @@ S2 app, benches (needs S1's float32 and float16 files only) ─► S3 loop ─�
 |---|---|---|
 | 1 | S1's laptop part, S2 | the export smoked, boxes on the phone, the first benches |
 | 2 | S1's job (on campus), S3, S4 | R0 to R4 and G read, the defaults set |
-| 3 | S5 | M2c's results; M3 resumes at S6 |
+| 3 | S5 | M2c's results (M3 resumed on campus days from 2026-11-23, Decision 1) |
 
 At home: S1's laptop part, S2 and S3. Nothing in them waits for the job:
 the app runs float32 until R1 and R2 say otherwise.

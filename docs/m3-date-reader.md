@@ -15,8 +15,10 @@ CTC decoder and CER, ONNX parity 1.0, the visibility cut-off 3.0 set by
 eye on job `73966`'s sheets, the CRNN smoke passed in float32, job
 `73971`; bf16 training on the CPU gives NaN, oneDNN's). **Paused
 2026-11-22 for M2c** (`docs/m2c-live-boxes.md`: live date boxes on the
-phone, time-boxed to three sessions); its GPU jobs stay held. Next, when
-it resumes: S6. M2b is done (2026-11-21): the M2b detector is
+phone, time-boxed to three sessions); its GPU jobs stay held. **Resumed
+2026-11-23, alternating with M2c** (M2c's S1 done; its Decision 1):
+campus days, when the cluster is reachable, go to M3, home days to M2c's
+laptop and phone slices. Next: S6. M2b is done (2026-11-21): the M2b detector is
 `n1280-ft-s0` at `threshold_store` 0.1641; every slice here that needs
 one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
