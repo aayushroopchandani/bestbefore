@@ -42,6 +42,11 @@ vlm = ["transformers==5.22.2", "peft==0.21.2", "accelerate==1.15.0"]
 # numba when loaded (its NMS variants) and lists pandas. Laptop only, added
 # with every installed package held (CLAUDE.md's constraints method).
 ensemble = ["ensemble-boxes==1.0.9"]
+# M2c's export (docs/m2c-live-boxes.md, S1): Ultralytics simplifies the ONNX
+# graph with onnxslim, which it would otherwise pip-install by itself.
+# 0.1.99 is the release of 2026-11-04. Laptop only: the cluster scores the
+# files, it doesn't export them. ONNX Runtime comes from the read extra.
+live = ["onnxslim==0.1.99"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
