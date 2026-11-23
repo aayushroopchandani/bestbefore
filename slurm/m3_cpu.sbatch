@@ -54,12 +54,18 @@
 #         m3.ppocr_route, into m3-decisions.json. Torch runs beside ONNX
 #         Runtime here, so OpenMP's idle threads sleep (OMP_WAIT_POLICY=PASSIVE:
 #         spinning ones slowed M2c S1's CPU passes several times).
+#   vlm-set
+#         S7: the VLM's training set (scripts/make_vlm_set.py): store photos in
+#         4 turns, ExpDate's by the keyword rule, gen-v2 panels, negatives, one
+#         LMDB at the model's sizes in $GENERATED_DIR/m3/vlm-set/; then --check,
+#         the size and the entries open to others (0: it holds store photos).
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #   cd ~/bestbefore && sbatch --cpus-per-task=4 --mem=8G --time=00:30:00 slurm/m3_cpu.sbatch store-crops
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=16G --time=00:30:00 slurm/m3_cpu.sbatch visibility
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=02:00:00 slurm/m3_cpu.sbatch smoke-crnn
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=64G --time=02:00:00 slurm/m3_cpu.sbatch ppocr-route
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=01:00:00 slurm/m3_cpu.sbatch vlm-set
 #SBATCH --job-name=m3-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -174,8 +180,17 @@ ppocr-route)
         --no-amp || echo "the PP-OCRv6 smoke failed: its run.json says why"
     $MAIN scripts/ppocr_route.py decide
     ;;
+vlm-set)
+    umask 077                   # the set holds store photos: owner-only (CLAUDE.md)
+    ROOT="$($MAIN -c 'from bestbefore.config import generated_dir; print(generated_dir())')/m3/vlm-set"
+    $MAIN scripts/make_vlm_set.py --workers "$SLURM_CPUS_PER_TASK"
+    $MAIN scripts/make_vlm_set.py --check --workers "$SLURM_CPUS_PER_TASK"
+    du -sh "$ROOT"
+    open=$(find "$ROOT" -perm /077 | wc -l)
+    echo "entries open to others in the set: $open"
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn, ppocr-route"
+    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn, ppocr-route, vlm-set"
     exit 2
     ;;
 esac
