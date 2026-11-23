@@ -153,20 +153,24 @@ def epochs_run(best: Path) -> int | None:
     return max(0, len(csv.read_text().strip().splitlines()) - 1)
 
 
-def predict(model, images: list, imgsz: int, device=None) -> list[list[Prediction]]:
+def predict(model, images: list, imgsz: int, device=None, rect: bool = False) -> list[list[Prediction]]:
     """Boxes for a batch of upright PIL images, in 0..1 coordinates.
 
     Always given images from load_upright, never file paths: a phone photo
     with an EXIF rotation flag must be seen the same way as its labels.
 
-    `rect=False` pads every photo to the same imgsz square. Ultralytics'
-    default pads a batch of same-shaped photos less, which changes the
-    confidences (by up to 0.15 on one validation date), so a threshold
-    chosen on mixed-shape validation batches would mean something else on
-    the store photos, which share a few shapes (docs/learnings/m1.md, §3.4).
+    `rect=False`, every score's padding since M1, pads every photo to the
+    same imgsz square. Ultralytics' default pads a batch of same-shaped
+    photos less, which changes the confidences (by up to 0.15 on one
+    validation date), so a threshold chosen on mixed-shape validation
+    batches would mean something else on the store photos, which share a
+    few shapes (docs/learnings/m1.md, §3.4). `rect=True` pads tight, to a
+    multiple of the stride: M2c's camera frames, measured by its R1
+    (docs/m2c-live-boxes.md). With an ONNX file it is tight only if the
+    file's height and width are dynamic.
     """
     results = model.predict(source=images, imgsz=imgsz, conf=PREDICT_CONF,
-                            device=device, rect=False, verbose=False)
+                            device=device, rect=rect, verbose=False)
     out = []
     for r in results:
         b = r.boxes
