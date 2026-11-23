@@ -47,6 +47,11 @@ cd ~/bestbefore
 module load Python/3.11.11      # the venv needs the module's libpython
 source .venv/bin/activate
 export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"   # PyTorch's threads: the job's CPUs, not the node's
+# Torch's OpenMP threads sleep rather than spin between steps. Ultralytics'
+# ONNX backend pre- and post-processes with torch, and spinning OpenMP
+# threads beside ONNX Runtime's own made a 52 ms inference a 328 to 491 ms
+# call on 24 CPUs of cn1; passive, 72 ms (S1, jobs 74149 to 74152).
+export OMP_WAIT_POLICY=PASSIVE
 export YOLO_OFFLINE=1                           # compute nodes have no internet: never try
 export YOLO_AUTOINSTALL=false                   # and never pip-install: a missing package fails loudly
 
@@ -57,7 +62,13 @@ parity)
     MODELS=$(python -c 'from bestbefore import live; print(live.models_dir())')
     python scripts/export_live.py check
     python scripts/export_live.py int8 --threads "$SLURM_CPUS_PER_TASK"
-    RUN=$(python scripts/live_parity.py run --threads "$SLURM_CPUS_PER_TASK" | tee /dev/stderr | tail -n 1)
+    # The run's output into the log and a file, whose last line is the run's
+    # folder. Not `tee /dev/stderr`: in a job stderr is this log, and tee
+    # reopens it truncated (job 74149 lost its first lines).
+    OUT=$(mktemp)
+    python scripts/live_parity.py run --threads "$SLURM_CPUS_PER_TASK" | tee "$OUT"
+    RUN=$(tail -n 1 "$OUT")
+    rm -f "$OUT"
     python scripts/live_parity.py rules "$RUN"
     open=$(find "$RUN" "$MODELS" -perm /077 | wc -l)
     echo "entries open to others in the run and the model folder: $open"

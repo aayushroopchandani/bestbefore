@@ -57,6 +57,9 @@ def test_the_job_checks_the_files_first_and_keeps_everything_owner_only():
     assert (settings["partition"], settings["cpus-per-task"], settings["mem"], settings["time"]) == \
         ("short", "24", "32G", "02:00:00")
     assert "set -euo pipefail" in text and "squeue --me" in text
+    code = [line for line in task.splitlines() if not line.strip().startswith("#")]
+    assert not [line for line in code if "/dev/stderr" in line]      # in a job, it reopens the log truncated
+    assert "export OMP_WAIT_POLICY=PASSIVE" in text       # spinning OpenMP beside ONNX Runtime: 4-7x slower calls
 
 
 def test_the_parity_scripts_rules_read_each_set_and_wait_for_all_five(load_script, tmp_path):
