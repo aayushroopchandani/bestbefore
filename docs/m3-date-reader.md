@@ -21,7 +21,11 @@ campus days, when the cluster is reachable, go to M3, home days to M2c's
 laptop and phone slices. S6 done 2026-11-23 (PP-OCRv6's route is PyTorch,
 all three conditions held, job `74157`; its ONNX path reads S2's crops as
 PaddleOCR did on 96.6%, PaddleX's own processing on 100%: M3's rules kept
-by the owner). Next: S7. M2b is done (2026-11-21): the M2b detector is
+by the owner). S7 done 2026-11-23 but for two jobs' results (the VLM set,
+23,685 examples, job `74160`; the loop's CPU smoke and its adapter through
+llama.cpp, job `74164`; our GGUF byte-identical to the official one; the
+50-photo comparison `74163` and the untrained validation `74165` to read).
+Next: S7's two results, then S8. M2b is done (2026-11-21): the M2b detector is
 `n1280-ft-s0` at `threshold_store` 0.1641; every slice here that needs
 one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
@@ -2070,6 +2074,234 @@ milliseconds a crop on the laptop (S10); the whole suite at `c482135`
 **Commits:** `feat: the vlm set, answers as json`,
 `feat: vlm lora training loop`, `feat: vlm scored as gguf through llama.cpp`,
 `docs: m3 plan, S7's gguf check`
+
+**Record (2026-11-23): everything done but two jobs' results**, which
+land after the owner left campus and are read on the next campus day: the
+50-photo comparison (job `74163`) and the untrained validation (job
+`74165`, queued behind it). The set is made and checked (job `74160`); the
+training loop's CPU smoke passed and its adapter reached llama.cpp with the
+same answers (job `74164`); our conversion is byte-identical to the
+official GGUF; the laptop read a photo on Metal.
+
+Departures: `scripts/score_vlm.py` (files compared tensor by tensor,
+readers photo by photo, every validation photo, the laptop's one photo),
+which the layout doesn't name; three CPU tasks, `vlm-set`, `vlm-gguf` and
+`vlm-smoke`, plus `vlm-val` for the untrained rows; a CPU smoke of the
+training loop, which the slice didn't ask for, so that a trained adapter,
+not only the untrained model, is shown to reach llama.cpp; and four `fix:`
+commits, each for something a job found (below). `negative-mfg` holds 573
+examples, not the table's 1,000, and `expdate-real` 1,792, not 1,874.
+
+Before the code:
+
+- **The state:** the laptop clean at `4adc089`, pushed; the cluster's
+  checkout the same, clean. `squeue --me`: only M3's `73946` and `73947`,
+  held; nothing running; 3 submit slots free; `short` had 2 idle nodes.
+- **The converter's Python needs** (S1 left them unchecked). At `b12017`
+  `convert_hf_to_gguf.py` is a 325-line front to a `conversion/` package
+  (Qwen3-VL in `conversion/qwen3vl.py`); its requirements file asks for
+  torch 2.11.0, **transformers 4.57.6**, numpy ~2.2.6, sentencepiece and
+  protobuf < 5. The main venv has transformers 5.22.2, numpy 2.4.6 and
+  protobuf 7.36.2, yet the converter runs there: a vocabulary-only
+  conversion on the login node failed only on `import sentencepiece`
+  (on a Qwen model `conversion/qwen.py` tries a SentencePiece vocabulary
+  first and falls back to BPE only on `FileNotFoundError`, not on a
+  missing module). **sentencepiece 0.2.3 went into the main venv** by the
+  constraints method: 1 package added, nothing moved, `pip check` clean
+  (records in `~/bestbefore-data/env/m3-s7/`); the `vlm` extra pins it. The
+  conversion then took 10 s, and its tokenizer metadata equals the
+  official GGUF's: tokens, merges, token types, pre-tokenizer, chat
+  template, special ids. **No separate venv was needed.** The converter
+  takes its `gguf` package from the tree's `gguf-py`.
+- **The laptop's venv** got peft 0.21.2 and accelerate 1.15.0 (the
+  cluster's), the same way: 2 added, nothing moved. Qwen's processor and
+  tokenizer files (9 files, 11 MB, no weights) were copied from the
+  cluster; their SHA-256s match `docs/datasets.md`.
+- **llama.cpp on the laptop:** the project's own release for the same tag,
+  `llama-b12017-bin-macos-arm64.tar.gz` (16.5 MB, its SHA-256 checked
+  against GitHub's), in `~/opt/llama.cpp-b12017/` at the owner's word;
+  `llama-server --version` names commit `5047748`, the cluster's build.
+
+What the set needed (`reader/vlm.py`):
+
+- **Images at the model's size.** Every image is stored at Qwen's
+  `smart_resize` size (sides multiples of 32, at most 1,920,000 pixels;
+  `vlm.model_size`, tested against transformers' own function on 307
+  sizes). Told not to resize, the processor reads it exactly as it would
+  after its own resize (a test), and llama.cpp's own resize (bicubic,
+  Python's rounding, `--image-min-tokens 64 --image-max-tokens 1875`)
+  leaves it alone. Scoring hands llama.cpp a PNG, so both readers decode the
+  same pixels.
+- **ExpDate's marks sit on every side of their dates.** In real-train
+  without real-val, beside a date: `due` to its right 263 times (Korean
+  "까지" after the date), left 188, above 133, below 30; `prod` right 47,
+  left 24, above 6. In synth `due` left 5,390, right 642, below 400; `prod`
+  left 2,663 and above 940, its left gaps up to 10 date-heights at the
+  90th percentile (label columns). So the keyword rule takes each date's
+  nearest mark on its line, left or right within **12 date-heights**, or
+  above or below within 2 (`vlm.LINE_GAP`, `ABOVE_GAP`; S8's `beside()`
+  for the store is separate). At 4 heights 27 real-train photos fell back
+  to "the latest date", at 12, 14.
+- **A date of two bare numbers is dropped** (`vlm.TWO_NUMBERS`): the frozen
+  parser reads `01.31` as January 2031 and `02.18` as February 2018 (month
+  and two-digit year, its rule for a whole crop), where ExpDate's are month
+  and day with no year. 26 real-train dates (24 photos), 5 real-val (1
+  that parses) and about 1,585 synth.
+- **A photo is also dropped** when a date doesn't parse, when two dates
+  take one role, or when the mfg comes after the expiry (synth's dates are
+  random: 111 such photos).
+- **The store's answers match the frozen labels on all 114 exported
+  photos** (a test, laptop only: it needs the names): training 64 printed
+  expiries, 8 derived (mfg plus the boxed shelf life), 8 none, exactly the
+  `other-face` photos; validation 29, 1 and 4. No exported photo is flagged
+  unreadable.
+- **The laptop's trial** (`--trial`, 12 of each kind): planned, cut and
+  checked in 2 s. A sheet of its generated panels, regions and synth
+  photos was looked at: each panel holds its block with the background's
+  dates cut away; `negative-mfg` regions show the production date alone
+  (one keeps a bare "BEFORE" at its edge, its date cut off); empty regions
+  hold no date. One generated panel is very dark: S5's visibility cut-off
+  isn't applied to panels (it drops 0.17% of gen crops).
+
+**The set** (job `74160`, `short`, `cn1`, 24 CPUs; 1 min 14 s: planned in
+6.5 s, cut and written in 52 s, read back in 7.1 s; 2.95 GiB; 0 entries
+open to others):
+
+| Kind | Examples | Listed in an epoch | Visual tokens (median) | Expiry null | Mfg given |
+|---|---:|---:|---:|---:|---:|
+| store (80 photos × 4 turns) | 320 | 960 | 1,850 | 32 | 296 |
+| expdate-real (896 photos, upright and turned) | 1,792 | 1,792 | 910 | 16 | 116 |
+| expdate-synth | 5,000 | 5,000 | 374 | 86 | 503 |
+| gen (panels) | 15,000 | 15,000 | 140 | 727 | 11,240 |
+| negative-empty | 1,000 | 1,000 | 96 | 1,000 | 0 |
+| negative-mfg | 573 | 573 | 77 | 573 | 573 |
+| **all** | **23,685** | **24,325** | | | |
+
+- ExpDate real kept 896 of 937 photos (478 by a `due` mark, 396 the only
+  date, 14 the latest, 8 an mfg date only; dropped 24 for two bare
+  numbers, 12 two dates in one role, 3 mfg after expiry, 2 unparsed);
+  synth 7,050 of 11,844 were eligible, 5,000 drawn.
+- **`negative-mfg` fell short: 573 of 1,000.** Only that many training
+  photos have a date beside a `prod` mark that a region can hold alone
+  (206 more were tried and failed). Recorded, not made up from elsewhere.
+- gen: 112 drawn photos had no block; every block took a panel. 6,621
+  expiries print no day; 721 relative blocks' expiries are worked out.
+- About 8.6 million visual tokens in the set, 9.7 million in an epoch with
+  the store's repeats, about 2.6 million text tokens on top: well under
+  the plan's 25,000 × 700.
+- **A miscount, fixed (`fde983b`):** the manifest says 144 gen photos sit
+  on a real-val background. ExpDate's real and synth photos share file
+  names; counted by their list, none does (all 1,706 matches over gen-v2's
+  200,000 are synthetic backgrounds), as M2's guard ensures. The set is
+  unchanged and was not made again.
+
+The loop (`scripts/train_vlm.py`), as decision 18 sets it: LoRA (r 16,
+alpha 32, dropout 0.05) on the 196 projections of the language model's 28
+layers, 17,432,576 weights; everything else frozen (a test refuses any
+other trainable weight); the loss on the answer's tokens and `<|im_end|>`
+only. Choices the plan left open, written into the loop: weight decay 0,
+gradient clipping at 1.0, the last adapter kept (one epoch, no checkpoint
+chosen).
+
+**The smoke** (job `74164`, `cn1`, 24 CPUs, float32, 22 threads, 2 loader
+workers, at `3bee8d2`; 4 min 48 s in all):
+
+- **The loop learns:** 6 steps of 2 examples (lr 1e-4 after one warmup
+  step); the training loss 1.206, 0.901, 0.764, 0.680, 0.603, 0.510; the
+  loss on 8 examples held apart **0.665 before, 0.152 after**. 64 tokens a
+  second (0.13 examples a second), the loader waiting under 1% of the time.
+  Its 2 photos of each validation set, answered by the HF model in the loop:
+  plain JSON already, no code fence (the untrained model fences every
+  answer); 5.5 s a real-val photo, 8.6 s a store-val one.
+- **A trained adapter takes the same path:** merged in float32 and saved
+  in bf16 in 6 s, converted (Q8_0 in 21 s, the projector in 5 s; the
+  untrained model's Q8_0 took 174 s, its bf16 16 s).
+  Against the untrained conversion, **exactly the 196 tensors LoRA trains
+  differ** (attention q, k, v, output and the MLP's gate, up and down, in
+  each of 28 layers; by at most 0.0062), the other 114 are byte-identical,
+  and so are all 316 of the projector's (the vision tower frozen). The
+  merged GGUF lacks 4 name keys the base's README gave the first
+  (`general.basename`, `finetune`, `license`, `tags`).
+- **The merged HF model and its GGUF wrote the same text on 4 of 4
+  real-val photos**, the expiry's confidence within 0.039; 4.6 s a photo
+  for the HF model in float32, 6.7 s for llama.cpp (4.8 to 13.9 s).
+
+**The GGUF path on the untrained model:**
+
+- **Our files are the official files' weights, byte for byte** (job
+  `74161`'s first step, `score_vlm.py tensors`): all 310 of the language
+  model's tensors and all 316 of the projector's are byte-identical, at
+  the same types and shapes. The metadata differs only in names
+  (`Qwen3-VL` against `qwen3vl`), and ours carries 7 keys the older
+  converter didn't write: 4 sampling defaults (temperature 0.7, top-k 20,
+  top-p 0.8, repeat penalty 1.0; every request overrides them) and
+  `add_eos_token` false, `clean_spaces` false, `normalizer.nfc` true (the
+  prompt is ASCII). Ours is 288 bytes larger, its projector 160. So ours
+  and the official GGUF must answer alike; the photos check the rest.
+- Converted on `cn1` (job `74161`, beside the set's job): Q8_0 in 174 s,
+  bf16 in 16 s, the projector in 5 s.
+- **The 50 real-val photos** (a sample fixed by seed 0), each read by the
+  HF model in float32, the official GGUF, ours and ours in bf16: job
+  `74161` lost its answers at the first GGUF reader (the media marker,
+  below); job `74163` (`3bee8d2`) reads them again. Its HF pass gave the
+  same texts as the first job's, 3 to 10 s a photo; the GGUF readers take
+  about 4 to 11 s. **Result pending** (read next campus day: does each
+  pair agree, and where not, why). The untrained model fences every
+  answer in a code block, often copies the expiry into `mfg`, and
+  sometimes writes `24-12-21`, which the parser rightly counts as no
+  date.
+
+**On the laptop** (`score_vlm.py one`, run `20261123-220300`): real-val's
+`img_00938.jpg` through our Q8_0 pair on Metal (all layers, 4 threads):
+the server ready in 7.8 s; the photo, 1,458 prompt tokens with its image,
+read in **20.5 s cold and 9.8 s warm** (8.4 s on the prompt and image, 23
+tokens in 0.6 s); the server's resident memory at most **2.37 GiB** by
+`ps` (Metal's own buffers aren't broken out in its log). It answered
+2022-02-04, right, inside a code fence.
+
+**Untrained, on validation** (job `74165`, `--dependency=afterok:74163`,
+`short`, 24 CPUs, 32 GB, 3 h): our Q8_0 on every real-val and store-val
+photo, field by field and by tag; store answers in an owner-only folder
+under `$CHECKPOINT_DIR/m3/vlm/`. **Result pending.** If the comparison
+shows ours and the HF model disagreeing, these numbers wait until that is
+explained.
+
+Found on the way, each fixed in its own commit:
+
+- **llama-server draws a random media marker each start** (b12017), so a
+  prompt can't smuggle one in, and publishes it at `/props`
+  (`media_marker`), or takes one pinned by `LLAMA_MEDIA_MARKER`. A prompt
+  holding the documented `<__media__>` got HTTP 400 ("number of media
+  markers in text (0) does not match number of bitmaps (1)"): job `74161`
+  failed there after its HF pass, and so did the laptop's first try. The
+  client reads the marker from `/props` (`3bee8d2`).
+- **LMDB refuses a forked loader worker** when the main process already
+  has the folder open (the probe's): the worker inherits the parent's
+  record of it, "already open in this process" (job `74162`, before its
+  first step). The probe closes it (`65203c0`).
+- **`shutil.copy` carries the source's mode:** `merge` copied the base's
+  `chat_template.json` and `generation_config.json` at 664 into the
+  smoke's owner-only folder (inside 700 folders, so never reachable; set to
+  600 at once). `copyfile` now (`8bb328b`).
+- On the laptop a backward pass of the tiny test model spends 3.6 of 3.7 s
+  in one matrix multiply (arm64; its 151,936-word head), so its test runs 4
+  steps, not 8.
+
+Tests: `tests/test_vlm.py`, 55 (the set's answers, panels and regions;
+lenient answers; the loss mask, batching and LoRA's reach on a tiny random
+Qwen3-VL; the reply from llama-server; the probe's LMDB). The whole suite
+on the login node at `e937f32`, niced: **1,209 passed, 18 skipped** in 6 min
+16 s (the store-label test skips there: it needs the photos' names).
+
+**Not checked:** the loop on the GPU (bf16, micro-batches of 4, its memory
+and speed, the 20% validations in full): S9's chain runs it first; the
+keyword rule against ExpDate's own marks (S13, on test); S5's visibility
+cut-off for generated panels; the set's store examples by eye (the
+export's turned copies are M2b's, checked then); Metal's memory beyond
+the server's resident size; whether `--image-min-tokens 1024`, which
+llama.cpp suggests for Qwen-VL's grounding, changes any answer (both
+readers here see the same pixels at 64 minimum); the whole suite at the
+fix commits (their tests pass on the laptop).
 
 ### S8. Roles, the strip and the pipeline · laptop
 
