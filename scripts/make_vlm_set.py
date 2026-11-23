@@ -163,7 +163,9 @@ def plan_gen(n: int, list_name: str, rng, counts: Counter) -> list[Job]:
         if line["image"] != path.name:
             sys.exit(f"{list_name}: line {i} is {line['image']}, the list has {path.name}")
         background = line.get("background") or {}
-        if background.get("image") in val:
+        # ExpDate's real and synth photos share names (img_00382.jpg): only a
+        # train_real background can be a real-val photo (M2's guard forbids it)
+        if background.get("list") == "train_real" and background.get("image") in val:
             counts["gen background is a real-val photo"] += 1
         w, h = line["size"]
         places = [(b["place"][0], b["place"][1], b["place"][0] + b["place"][2], b["place"][1] + b["place"][3])
