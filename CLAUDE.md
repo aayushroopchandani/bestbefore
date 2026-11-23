@@ -299,7 +299,11 @@ this repo.
   included. Float32 passed (job 73971, `cn4`): CPU smokes run as
   `m3_cpu.sbatch smoke-crnn fp32`. The CRNN (4.55M parameters) trains
   at 161 crops a second there in float32 on 22 threads; ONNX Runtime
-  reads a crop in 8.4 ms on 22 threads. `torch.onnx.export` in torch
+  reads a crop in 8.4 ms on 22 threads. PP-OCRv6 small (5.28M, a
+  head of 18,710 classes) fine-tunes at 67 crops a second on `cn1` (batch
+  128, float32, 22 threads, 2 loader workers waiting 15% of the time);
+  its job's MaxRSS 28.2 GB by `sacct`'s sample (M3 S6, job 74157, 64 GB
+  asked). `torch.onnx.export` in torch
   2.11 needs the `onnx` package even with `dynamo=False`, and puts the
   module it is given back in that module's own mode: export a wrapper
   already in eval mode (a fresh one is in training mode, which leaves
@@ -315,7 +319,16 @@ this repo.
   jobs from a cluster smoke. Loading the three PaddleX models took 56 s
   cold. The reads themselves matched the laptop's: 156 of 156 texts
   identical, scores within 0.0002. A `short` job of 8 CPUs and 16 GB
-  started at once with one GPU job of ours running.
+  started at once with one GPU job of ours running. In M3 S6 (job 74158,
+  `cn1`, 8 CPUs) PaddleOCR's recogniser alone took **15 ms** a crop (1,122
+  in 17 s) with `OMP_WAIT_POLICY=PASSIVE` and nothing else in the
+  process, against S2's 87 to 102 ms beside RapidOCR's ONNX Runtime
+  sessions without it; which of the two made the difference wasn't
+  checked. It reproduced S2's 1,122 reads exactly, and PP-OCRv6's
+  official ONNX file through PaddleX's own processing read them exactly
+  as Paddle did: on x86 ONNX Runtime and Paddle agree to the last read.
+  The laptop's arm64 ONNX Runtime differed on 4 of 240, all upside-down
+  reads of low confidence.
 - **Storage:** home is on a shared 114 TB parallel filesystem
   (`/fs1/home`). **Quota: 950 GB** (hard limit 1 TB), no limit on the
   number of files; about 65 GB was already used on 2026-10-14. It is
@@ -439,7 +452,7 @@ this repo.
   constraints.txt ...` (`--dry-run --report r.json` first shows what would
   come); M3 S1 added 28 packages that way and changed none. The whole test
   suite (737 tests) takes 3 to 5 minutes on the login node, niced (955 in
-  3 minutes, M3 S4). An `ssh` link can drop mid-run and take the run
+  3 minutes, M3 S4; 1,173 in 6 min 21 s, M3 S6). An `ssh` link can drop mid-run and take the run
   with it (`Broken pipe`, M3 S4): start anything longer than a minute
   under `nohup`, its output to an owner-only file.
 - **Building code** on the login node: it is shared, so a few threads
