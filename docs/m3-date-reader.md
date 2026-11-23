@@ -21,11 +21,11 @@ campus days, when the cluster is reachable, go to M3, home days to M2c's
 laptop and phone slices. S6 done 2026-11-23 (PP-OCRv6's route is PyTorch,
 all three conditions held, job `74157`; its ONNX path reads S2's crops as
 PaddleOCR did on 96.6%, PaddleX's own processing on 100%: M3's rules kept
-by the owner). S7 done 2026-11-23 but for two jobs' results (the VLM set,
+by the owner). S7 done 2026-11-23 but for one job's result (the VLM set,
 23,685 examples, job `74160`; the loop's CPU smoke and its adapter through
-llama.cpp, job `74164`; our GGUF byte-identical to the official one; the
-50-photo comparison `74163` and the untrained validation `74165` to read).
-Next: S7's two results, then S8. M2b is done (2026-11-21): the M2b detector is
+llama.cpp, job `74164`; our GGUF byte-identical to the official one and,
+in bf16, reading 50 of 50 real-val photos as the HF model, job `74163`; the
+untrained validation `74165` to read). Next: S7's validation rows, then S8. M2b is done (2026-11-21): the M2b detector is
 `n1280-ft-s0` at `threshold_store` 0.1641; every slice here that needs
 one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
@@ -2075,13 +2075,13 @@ milliseconds a crop on the laptop (S10); the whole suite at `c482135`
 `feat: vlm lora training loop`, `feat: vlm scored as gguf through llama.cpp`,
 `docs: m3 plan, S7's gguf check`
 
-**Record (2026-11-23): everything done but two jobs' results**, which
-land after the owner left campus and are read on the next campus day: the
-50-photo comparison (job `74163`) and the untrained validation (job
-`74165`, queued behind it). The set is made and checked (job `74160`); the
+**Record (2026-11-23): everything done but the untrained validation**
+(job `74165`, started 22:28 behind the comparison), which finishes after
+the owner left campus and is read on the next campus day. The set is made and checked (job `74160`); the
 training loop's CPU smoke passed and its adapter reached llama.cpp with the
 same answers (job `74164`); our conversion is byte-identical to the
-official GGUF; the laptop read a photo on Metal.
+official GGUF, reads exactly as it on 50 real-val photos, and in bf16
+exactly as the HF model (job `74163`); the laptop read a photo on Metal.
 
 Departures: `scripts/score_vlm.py` (files compared tensor by tensor,
 readers photo by photo, every validation photo, the laptop's one photo),
@@ -2241,15 +2241,30 @@ workers, at `3bee8d2`; 4 min 48 s in all):
 - Converted on `cn1` (job `74161`, beside the set's job): Q8_0 in 174 s,
   bf16 in 16 s, the projector in 5 s.
 - **The 50 real-val photos** (a sample fixed by seed 0), each read by the
-  HF model in float32, the official GGUF, ours and ours in bf16: job
-  `74161` lost its answers at the first GGUF reader (the media marker,
-  below); job `74163` (`3bee8d2`) reads them again. Its HF pass gave the
-  same texts as the first job's, 3 to 10 s a photo; the GGUF readers take
-  about 4 to 11 s. **Result pending** (read next campus day: does each
-  pair agree, and where not, why). The untrained model fences every
-  answer in a code block, often copies the expiry into `mfg`, and
-  sometimes writes `24-12-21`, which the parser rightly counts as no
-  date.
+  HF model in float32, the official GGUF, ours and ours in bf16 (job
+  `74163`, `3bee8d2`, 22:04 to 22:28 on `cn1` beside the smoke; job `74161`
+  had lost its answers at its first GGUF reader, the media marker below):
+
+  | Pair | Same text | Same answer | Same expiry | Expiry confidence moves at most |
+  |---|---:|---:|---:|---:|
+  | official vs ours (Q8_0) | **50** | 50 | 50 | 0.0 |
+  | HF vs ours in bf16 | **50** | 50 | 50 | 0.023 |
+  | HF vs ours (Q8_0), and HF vs official | 46 | 48 | 49 | 0.142 |
+
+  **The path is proved, and the one gap is explained:** ours reads exactly
+  as the official file; in bf16 the GGUF path (conversion, the pixels, the
+  prompt, the marker) reproduces the HF model on every photo, so the 4
+  photos where Q8_0 writes other text are Q8_0's rounding. Of them, one
+  changes only line breaks; one writes a time (`13:05`) as the mfg; one
+  writes `22-01-18` where HF wrote `2022-01-18`, so the expiry the parser
+  can read becomes none; one writes `24/12/21` for `24-12-21` (none either
+  way). Scored (49 photos with an answer): expiry right / wrong / none, HF
+  37 / 2 / 10, Q8_0 36 / 2 / 11; mfg claimed where none is beside a prod
+  mark on 34 (HF) and 32 (Q8_0) photos: the untrained model fences every
+  answer in a code block and mostly copies the expiry into `mfg`.
+  Seconds a photo on 24 CPUs, the node shared: HF in float32 5.3 (mean),
+  Q8_0 7.0 (official and ours alike), bf16 6.7; each server ready in 1 to
+  7 s.
 
 **On the laptop** (`score_vlm.py one`, run `20261123-220300`): real-val's
 `img_00938.jpg` through our Q8_0 pair on Metal (all layers, 4 threads):
@@ -2262,9 +2277,7 @@ tokens in 0.6 s); the server's resident memory at most **2.37 GiB** by
 **Untrained, on validation** (job `74165`, `--dependency=afterok:74163`,
 `short`, 24 CPUs, 32 GB, 3 h): our Q8_0 on every real-val and store-val
 photo, field by field and by tag; store answers in an owner-only folder
-under `$CHECKPOINT_DIR/m3/vlm/`. **Result pending.** If the comparison
-shows ours and the HF model disagreeing, these numbers wait until that is
-explained.
+under `$CHECKPOINT_DIR/m3/vlm/`. Started 22:28. **Result pending.**
 
 Found on the way, each fixed in its own commit:
 
