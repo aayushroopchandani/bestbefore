@@ -743,3 +743,98 @@ def score_answer(truth: Answer | None, said: dict) -> dict:
         read, want = to_expiry(said.get(f)), getattr(truth, f)
         out[f] = scoring.score(want, read) if want is not None else ("claimed" if read is not None else "null")
     return out
+
+
+# --- Scoring as GGUF through llama.cpp (decision 16) ---------------------------------------------
+
+# The same chat as prompt_text, with llama.cpp's media marker where Qwen's
+# template puts <|vision_start|><|image_pad|><|vision_end|>: mtmd writes
+# those two markers round the image's embeddings itself.
+MEDIA = "<__media__>"
+LLAMA_PROMPT = f"<|im_start|>user\n{MEDIA}{PROMPT}<|im_end|>\n<|im_start|>assistant\n"
+MAX_NEW_TOKENS = 64
+LLAMA_BIN = Path.home() / "opt" / "llama.cpp" / "build" / "bin"
+
+
+class LlamaServer:
+    """llama-server on 127.0.0.1 only, with one language model GGUF and
+    its projector, answering one image at a time through /completion:
+    greedy (temperature 0), each token's probability a plain softmax of
+    its logits (n_probs, post_sampling_probs off), images read at their
+    own size (they are at a model size, and the token limits are the
+    model's own: llama.cpp resizes nothing). Use as a context manager."""
+
+    def __init__(self, model: Path, mmproj: Path, threads: int, log: Path, binary: Path | None = None,
+                 gpu_layers: int = 0, ctx: int = 4096):
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            self.port = s.getsockname()[1]
+        self.cmd = [str((binary or LLAMA_BIN) / "llama-server"), "--host", "127.0.0.1", "--port", str(self.port),
+                    "-m", str(model), "--mmproj", str(mmproj), "-t", str(threads), "-tb", str(threads),
+                    "-c", str(ctx), "-np", "1", "-ngl", str(gpu_layers), "--no-webui",
+                    "--image-min-tokens", str(MIN_PIXELS // FACTOR ** 2),
+                    "--image-max-tokens", str(MAX_PIXELS // FACTOR ** 2)]
+        self.log, self.proc = log, None
+
+    def __enter__(self) -> LlamaServer:
+        import subprocess
+        import time
+        import urllib.request
+        self._log = open(self.log, "w")
+        self.proc = subprocess.Popen(self.cmd, stdout=self._log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        t0 = time.time()
+        while True:
+            if self.proc.poll() is not None:
+                raise RuntimeError(f"llama-server stopped (exit {self.proc.returncode}): see {self.log}")
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=5) as r:
+                    if r.status == 200:
+                        break
+            except OSError:
+                pass
+            if time.time() - t0 > 600:
+                raise RuntimeError(f"llama-server not ready in 10 minutes: see {self.log}")
+            time.sleep(0.5)
+        self.load_seconds = round(time.time() - t0, 1)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.proc.terminate()
+        try:
+            self.proc.wait(30)
+        except Exception:           # noqa: BLE001 (it is killed instead)
+            self.proc.kill()
+        self._log.close()
+
+    def ask(self, jpeg: bytes, max_new_tokens: int = MAX_NEW_TOKENS) -> dict:
+        """One image's answer, as answer_with gives the HF model's, with
+        llama.cpp's own timings."""
+        import base64
+        import time
+        import urllib.request
+        body = {"prompt": {"prompt_string": LLAMA_PROMPT, "multimodal_data": [base64.b64encode(jpeg).decode()]},
+                "n_predict": max_new_tokens, "temperature": 0, "top_k": 1, "repeat_penalty": 1.0, "seed": 0,
+                "n_probs": 1, "post_sampling_probs": False, "cache_prompt": False}
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/completion", json.dumps(body).encode(),
+                                     {"Content-Type": "application/json"})
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            out = json.loads(r.read())
+        return llama_reply(out, time.perf_counter() - t0)
+
+
+def llama_reply(out: dict, seconds: float) -> dict:
+    """/completion's reply as answer_with's: the text, each token with its
+    probability (logprob without post_sampling_probs, prob with it), the
+    turn's end left out, the parsed answer, and llama.cpp's timings."""
+    tokens = [(p["token"], math.exp(p["logprob"]) if "logprob" in p else p["prob"])
+              for p in out.get("completion_probabilities", [])]
+    tokens = [(t, p) for t, p in tokens if t != "<|im_end|>"]
+    text = out["content"]
+    parsed = parse_answer(text)
+    timings = out.get("timings", {})
+    return {"text": text, "tokens": tokens, "answer": parsed.answer.as_dict(), "problems": list(parsed.problems),
+            "confidence": value_confidence(tokens), "prompt_tokens": timings.get("prompt_n"),
+            "seconds": round(seconds, 3),
+            "timings": {k: timings.get(k) for k in ("prompt_n", "prompt_ms", "predicted_n", "predicted_ms")}}

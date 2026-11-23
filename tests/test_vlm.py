@@ -443,3 +443,54 @@ def test_kinds_are_read_from_the_records_heads(tmp_path):
         for kind in ("store", "gen", "negative-mfg"):
             w.add(jpeg, vlm.Answer(None, None), kind, "x")
     assert vlm.kinds(shards.open_pile(tmp_path / "s")) == ["store", "gen", "negative-mfg"]
+
+
+# --- The GGUF path's pieces ----------------------------------------------------------------------
+
+def test_llama_cpp_gets_the_same_chat_with_its_media_marker(processor):
+    hf = vlm.prompt_text(processor)
+    assert hf.replace("<|vision_start|><|image_pad|><|vision_end|>", vlm.MEDIA) == vlm.LLAMA_PROMPT
+
+
+def test_llama_server_listens_on_localhost_with_the_models_token_limits(tmp_path):
+    server = vlm.LlamaServer(tmp_path / "m.gguf", tmp_path / "p.gguf", threads=24, log=tmp_path / "log")
+    cmd = server.cmd
+    assert cmd[cmd.index("--host") + 1] == "127.0.0.1"
+    assert cmd[cmd.index("-t") + 1] == cmd[cmd.index("-tb") + 1] == "24"
+    assert cmd[cmd.index("--image-min-tokens") + 1] == "64"
+    assert cmd[cmd.index("--image-max-tokens") + 1] == "1875"
+
+
+def test_a_llama_reply_reads_as_an_hf_answer():
+    probs = [{"token": t, "logprob": float(np.log(p))} for t, p in
+             [('{"', 0.9), ("expiry", 0.99), ('":', 1.0), (' "', 0.98), ("2", 0.97), ("0", 0.96), ("2", 0.95),
+              ("7", 0.5), ("-", 0.99), ("0", 0.9), ("3", 0.8), ('",', 0.99), (' "', 0.99), ("mfg", 0.9),
+              ('":', 0.99), (" null", 0.7), ("}", 0.99), ("<|im_end|>", 0.99)]]
+    out = {"content": '{"expiry": "2027-03", "mfg": null}', "completion_probabilities": probs,
+           "timings": {"prompt_n": 812, "prompt_ms": 2000.0, "predicted_n": 18, "predicted_ms": 600.0}}
+    reply = vlm.llama_reply(out, 2.7)
+    assert reply["answer"] == {"expiry": "2027-03", "mfg": None} and reply["problems"] == []
+    assert reply["confidence"] == pytest.approx(0.5)
+    assert len(reply["tokens"]) == 17 and reply["prompt_tokens"] == 812
+    post = vlm.llama_reply({"content": "{}", "completion_probabilities": [{"token": "{}", "prob": 0.4}]}, 1)
+    assert post["tokens"] == [("{}", 0.4)]
+
+
+def test_a_png_hands_llama_cpp_the_very_pixels(load_script):
+    score_vlm = load_script("score_vlm")
+    im = _image(3, (640, 480))
+    with Image.open(__import__("io").BytesIO(score_vlm.png(im))) as back:
+        assert back.convert("RGB").tobytes() == im.tobytes()
+
+
+def test_readers_are_compared_photo_by_photo(load_script):
+    score_vlm = load_script("score_vlm")
+    a = [{"text": '{"expiry": "2027-03", "mfg": null}', "answer": {"expiry": "2027-03", "mfg": None},
+          "confidence": 0.9, "tokens": [("x", 0.9), ("y", 0.8)]},
+         {"text": "no", "answer": {"expiry": None, "mfg": None}, "confidence": None, "tokens": []}]
+    b = [{**a[0], "confidence": 0.85, "tokens": [("x", 0.88), ("y", 0.8)]},
+         {"text": '{"expiry": null}', "answer": {"expiry": None, "mfg": None}, "confidence": None, "tokens": []}]
+    got = score_vlm.agreement(a, b)
+    assert (got["same_text"], got["same_answer"], got["same_expiry"]) == (1, 2, 2)
+    assert got["expiry_confidence_max_diff"] == pytest.approx(0.05) and got["differ"] == [1]
+    assert got["token_prob_max_diff"] == pytest.approx(0.02)

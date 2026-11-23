@@ -59,6 +59,23 @@
 #         4 turns, ExpDate's by the keyword rule, gen-v2 panels, negatives, one
 #         LMDB at the model's sizes in $GENERATED_DIR/m3/vlm-set/; then --check,
 #         the size and the entries open to others (0: it holds store photos).
+#   vlm-gguf
+#         S7: the GGUF path on the untrained model. Qwen3-VL-2B converted by
+#         llama.cpp's own converter (scripts/vlm_gguf.sh: Q8_0 and bf16, the
+#         projector F16) into $CHECKPOINT_DIR/m3/vlm-gguf/untrained/; our files
+#         against the official ones tensor by tensor; then 50 real-val photos
+#         read by the HF model (float32), the official GGUF, ours, and ours in
+#         bf16 (scripts/score_vlm.py compare): answers, agreement, seconds.
+#         llama-server listens on 127.0.0.1 only, with the job's CPUs as threads.
+#   vlm-smoke
+#         S7: the training loop on the CPU (scripts/train_vlm.py --smoke, float32:
+#         a few steps, a held-apart probe loss before and after), its adapter
+#         merged, converted, its files against the untrained ones, and the merged
+#         model against its GGUF on 4 real-val photos: a trained adapter takes
+#         the same path to llama.cpp. Needs the VLM set; owner-only (store photos).
+#   vlm-val
+#         S7: the untrained model as our Q8_0 GGUF on every real-val and
+#         store-val photo (scripts/score_vlm.py val); store answers owner-only.
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #   cd ~/bestbefore && sbatch --cpus-per-task=4 --mem=8G --time=00:30:00 slurm/m3_cpu.sbatch store-crops
@@ -66,6 +83,9 @@
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=02:00:00 slurm/m3_cpu.sbatch smoke-crnn
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=64G --time=02:00:00 slurm/m3_cpu.sbatch ppocr-route
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=01:00:00 slurm/m3_cpu.sbatch vlm-set
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=64G --time=04:00:00 slurm/m3_cpu.sbatch vlm-gguf
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=64G --time=03:00:00 slurm/m3_cpu.sbatch vlm-smoke
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=03:00:00 slurm/m3_cpu.sbatch vlm-val
 #SBATCH --job-name=m3-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -189,8 +209,47 @@ vlm-set)
     open=$(find "$ROOT" -perm /077 | wc -l)
     echo "entries open to others in the set: $open"
     ;;
+vlm-gguf)
+    export OMP_WAIT_POLICY=PASSIVE              # torch and llama.cpp in one job (M2c S1, CLAUDE.md)
+    PRE=$($MAIN -c 'from bestbefore.config import checkpoint_dir; print(checkpoint_dir() / "pretrained")')
+    OUT=$($MAIN -c 'from bestbefore.config import checkpoint_dir; print(checkpoint_dir() / "m3" / "vlm-gguf")')/untrained
+    QWEN=$PRE/Qwen3-VL-2B-Instruct
+    OFFICIAL=$PRE/Qwen3-VL-2B-Instruct-GGUF
+    [ -e "$OUT" ] || PYTHON=$MAIN scripts/vlm_gguf.sh "$QWEN" "$OUT" q8_0 bf16
+    $MAIN scripts/score_vlm.py tensors \
+        --pair model="$OUT/model-q8_0.gguf,$OFFICIAL/Qwen3VL-2B-Instruct-Q8_0.gguf" \
+        --pair mmproj="$OUT/mmproj-f16.gguf,$OFFICIAL/mmproj-Qwen3VL-2B-Instruct-F16.gguf"
+    $MAIN scripts/score_vlm.py compare --photos 50 --hf "$QWEN" \
+        --gguf official="$OFFICIAL/Qwen3VL-2B-Instruct-Q8_0.gguf,$OFFICIAL/mmproj-Qwen3VL-2B-Instruct-F16.gguf" \
+        --gguf ours="$OUT/model-q8_0.gguf,$OUT/mmproj-f16.gguf" \
+        --gguf ours-bf16="$OUT/model-bf16.gguf,$OUT/mmproj-f16.gguf"
+    ;;
+vlm-smoke)
+    umask 077                   # the adapter has seen store photos
+    export OMP_WAIT_POLICY=PASSIVE
+    CK=$($MAIN -c 'from bestbefore.config import checkpoint_dir; print(checkpoint_dir())')
+    UNTRAINED=$CK/m3/vlm-gguf/untrained
+    $MAIN scripts/train_vlm.py train --smoke --device cpu --threads $((SLURM_CPUS_PER_TASK - 2)) --workers 2
+    RUN=$(ls -dt "$CK"/m3/vlm/*-m3-vlm-smoke | head -n 1)
+    $MAIN scripts/train_vlm.py merge --adapter "$RUN/adapter" --out "$RUN/merged"
+    PYTHON=$MAIN scripts/vlm_gguf.sh "$RUN/merged" "$RUN/gguf" q8_0
+    PAIRS=(--pair model="$RUN/gguf/model-q8_0.gguf,$UNTRAINED/model-q8_0.gguf")
+    PAIRS+=(--pair mmproj="$RUN/gguf/mmproj-f16.gguf,$UNTRAINED/mmproj-f16.gguf")
+    [ -e "$UNTRAINED/model-q8_0.gguf" ] || PAIRS=()
+    [ ${#PAIRS[@]} -eq 0 ] || $MAIN scripts/score_vlm.py tensors --name m3-vlm-smoke-files "${PAIRS[@]}"
+    $MAIN scripts/score_vlm.py compare --photos 4 --hf "$RUN/merged" --name m3-vlm-smoke-gguf \
+        --gguf smoke="$RUN/gguf/model-q8_0.gguf,$RUN/gguf/mmproj-f16.gguf"
+    open=$(find "$RUN" -perm /077 | wc -l)
+    echo "entries open to others in the smoke's folder: $open"
+    ;;
+vlm-val)
+    umask 077                   # store-val's answers
+    export OMP_WAIT_POLICY=PASSIVE
+    OUT=$($MAIN -c 'from bestbefore.config import checkpoint_dir; print(checkpoint_dir() / "m3" / "vlm-gguf")')/untrained
+    $MAIN scripts/score_vlm.py val --gguf untrained="$OUT/model-q8_0.gguf,$OUT/mmproj-f16.gguf"
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn, ppocr-route, vlm-set"
+    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn, ppocr-route, vlm-set, vlm-gguf, vlm-smoke, vlm-val"
     exit 2
     ;;
 esac

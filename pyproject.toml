@@ -36,7 +36,10 @@ read = ["lmdb==3.0.0", "onnx==1.23.2", "onnxruntime==1.31.1"]
 # M3's VLM, Qwen3-VL-2B with LoRA. The newest releases on 2026-11-12, pinned
 # as the cluster installed them, with every package the train extra brought
 # held at its version (M3 S1).
-vlm = ["transformers==5.22.2", "peft==0.21.2", "accelerate==1.15.0"]
+# sentencepiece (S7): llama.cpp's convert_hf_to_gguf.py imports it on a Qwen
+# model before falling back to its BPE vocabulary; added to the cluster's
+# venv on 2026-11-23 with nothing else moved.
+vlm = ["transformers==5.22.2", "peft==0.21.2", "accelerate==1.15.0", "sentencepiece==0.2.3"]
 # M2b's inference add-ons (S13): weighted boxes fusion, MIT. 1.0.9 is the
 # release that stood from 2022 until two new ones in late 2026; it imports
 # numba when loaded (its NMS variants) and lists pandas. Laptop only, added
