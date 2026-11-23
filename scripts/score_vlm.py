@@ -221,9 +221,11 @@ def compare_cmd(args) -> None:
     if args.hf:
         answers["hf"], info["hf"] = read_hf(args.hf, photos, args.threads)
         runs.update_run(record, info=info)
+        runs.write_json(record / "answers.json", {"photos": [p.key for p in photos], **answers})
     for name, files in arms.items():
         answers[name], info[name] = read_gguf(name, files, photos, args.threads, record)
         runs.update_run(record, info=info)
+        runs.write_json(record / "answers.json", {"photos": [p.key for p in photos], **answers})
     result = {"info": info, "by_reader": {k: summary(v, photos) for k, v in answers.items()},
               "agreement": {f"{x} vs {y}": agreement(answers[x], answers[y]) for x, y in combinations(answers, 2)}}
     runs.write_json(record / "answers.json", {"photos": [p.key for p in photos], **answers})

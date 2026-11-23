@@ -749,7 +749,9 @@ def score_answer(truth: Answer | None, said: dict) -> dict:
 
 # The same chat as prompt_text, with llama.cpp's media marker where Qwen's
 # template puts <|vision_start|><|image_pad|><|vision_end|>: mtmd writes
-# those two markers round the image's embeddings itself.
+# those two markers round the image's embeddings itself. MEDIA stands in for
+# the marker: llama-server (b12017) draws a random one each start, so a
+# prompt can't smuggle one in, and publishes it at /props (S7).
 MEDIA = "<__media__>"
 LLAMA_PROMPT = f"<|im_start|>user\n{MEDIA}{PROMPT}<|im_end|>\n<|im_start|>assistant\n"
 MAX_NEW_TOKENS = 64
@@ -797,6 +799,8 @@ class LlamaServer:
                 raise RuntimeError(f"llama-server not ready in 10 minutes: see {self.log}")
             time.sleep(0.5)
         self.load_seconds = round(time.time() - t0, 1)
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/props", timeout=30) as r:
+            self.marker = json.loads(r.read()).get("media_marker") or MEDIA
         return self
 
     def __exit__(self, *exc) -> None:
@@ -808,12 +812,13 @@ class LlamaServer:
         self._log.close()
 
     def ask(self, jpeg: bytes, max_new_tokens: int = MAX_NEW_TOKENS) -> dict:
-        """One image's answer, as answer_with gives the HF model's, with
-        llama.cpp's own timings."""
+        """One image's answer (its PNG or JPEG bytes), as answer_with gives
+        the HF model's, with llama.cpp's own timings."""
         import base64
         import time
         import urllib.request
-        body = {"prompt": {"prompt_string": LLAMA_PROMPT, "multimodal_data": [base64.b64encode(jpeg).decode()]},
+        prompt = LLAMA_PROMPT.replace(MEDIA, self.marker)
+        body = {"prompt": {"prompt_string": prompt, "multimodal_data": [base64.b64encode(jpeg).decode()]},
                 "n_predict": max_new_tokens, "temperature": 0, "top_k": 1, "repeat_penalty": 1.0, "seed": 0,
                 "n_probs": 1, "post_sampling_probs": False, "cache_prompt": False}
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/completion", json.dumps(body).encode(),
