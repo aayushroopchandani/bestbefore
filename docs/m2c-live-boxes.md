@@ -3,8 +3,9 @@
 Planned 2026-11-22, after a discussion with the owner the same day (a live
 camera page before M3 resumes; the detector run on a throttled, gated
 stream, never on a frame shrunk below 1,280 px; a React app built like
-Scanify's frontend, so it can move into Scanify later). Status:
-**planned**, no code yet. Next: S1. M3 waits at S6 meanwhile
+Scanify's frontend, so it can move into Scanify later). Status: **S1's
+laptop part done** (2026-11-22, [its record](#s1-the-model-files-and-their-parity--laptop-then-a-cpu-job--submits-1-cpu-job));
+its CPU job waits for campus. Next: S2. M3 waits at S6 meanwhile
 (`docs/m3-date-reader.md`); its two GPU jobs stay held and keep their
 place in the queue. The learnings guide (`learnings/m2c.md`) is written
 separately, later, as for M2 and M3.
@@ -571,6 +572,179 @@ read.
 `feat: m2c model export, float32 float16 and int8`,
 `feat: m2c parity of the exported detector, and its cpu job`,
 `docs: m2c plan, S1's export`
+
+**Record (2026-11-22, laptop part).** Done at home; the cluster couldn't
+be reached, so `slurm/m2c_cpu.sbatch parity` is written, checked
+(`bash -n`, a 2-photo dry run of its steps on the laptop) and not
+submitted. Its campus steps are in its header.
+
+Departures:
+
+- **float16 through ONNX Runtime's `OnnxModel` wrapper**
+  (`onnxruntime.transformers.onnx_model`), not `float16`'s converter
+  alone. Alone, with the head's decoding kept float32, the converter made
+  an invalid model: two Cast nodes named
+  `/model.23/Reshape_6_output_0_cast_to_fp32_node`. It casts every kept
+  node's output back to float16 and the next kept node's input to float32
+  again, so the decoding's tensors still passed through float16 between
+  its nodes (box coordinates near 1,280 px in 1 px steps), and a tensor
+  two kept nodes read got two Casts of one name. The wrapper runs the same
+  converter (`keep_io_types`, types by symbolic shape inference), then
+  removes Cast chains and Casts to the type they already hold. Both float16
+  files are made this way. `live.float16_problems` checks the result: no
+  repeated name, no decoding node reading or writing float16, and only
+  Casts gone. Six went: the decoding's own Casts of `Range`'s integers to
+  float32 were merged with the converter's into one Cast each, the same
+  computation under the converter's name (listed in the manifest).
+- **Batch is dynamic too**: Ultralytics names `batch`, `height` and
+  `width` whenever `dynamic=True` (the table above said batch 1). The app
+  pins all three per session (`freeDimensionOverrides`).
+- **The calibrator reads one photo at a time** (ONNX Runtime's
+  `CalibStridedMinMax` at 1, which strides any method despite its name).
+  ONNX Runtime 1.31.1's Percentile calibrator has no
+  `max_intermediate_outputs` (only MinMax has): it keeps every photo's
+  every tensor until the last, and it stacks them with `np.asarray`, which
+  fails on tight photos of different shapes. For MinMax the result is the
+  same as all at once; for Percentile the histogram's bins are set by the
+  first photo and widened by later ones, so the photos' order (the seed's)
+  is part of the result.
+- **The laptop's 8-photo int8 files live in `$CHECKPOINT_DIR/m2c/smoke/`**,
+  with their own manifest, so they can't be taken for the job's
+  200-photo files.
+- **The threshold is M2b's record, unrounded**: 0.16406640 from the run's
+  `suite-m2b.json`, as M2b scored store set v2 (0.1641 rounded).
+  `live.threshold` reads it.
+- **PyTorch predicts from M2b's own `last.pt`**, read only, its hash
+  checked by `m2b.last_pt`. The copy in `$CHECKPOINT_DIR/m2c/` is the
+  export's, since Ultralytics writes the `.onnx` beside the `.pt`. Same
+  file, same hash.
+- **Records** go to a run folder, `results/runs/m2c/<time>-<name>/`
+  (`run.json`, a `parity-<set>-<variant>.json` per set and variant,
+  `rules.json`). v1-val's records go there too, not to `data/store/runs/`
+  where `sets.runs_root` puts store runs: they hold boxes as numbers,
+  photos by set and index, as the plan says.
+- **Tests in three files**, so each commit adds whole files:
+  `test_live_export.py` (the export, float16, int8, the manifest, the
+  calibration photos, ONNX Runtime's threads), `test_live_parity.py`
+  (`rect` reaching Ultralytics, the padding check, the rules read off a
+  run, the job's steps) and `test_live_rules.py` (R0, R1 and R2's accuracy
+  half; the layout names this file, S1's list didn't). The rules are in
+  `live.py` already, as the layout says.
+- **One package more**: the dry run of `onnxslim==0.1.99` and
+  `onnxruntime==1.31.1` (everything else held, onnxruntime taken out of
+  the constraints) also brought `colorama==0.4.6`, onnxslim's dependency.
+  The freeze changed by exactly those three lines; `pip check` is clean.
+
+What was found:
+
+- **The weights**: `last.pt`'s SHA-256 is `m2b.py`'s (`c839af8a…`), and so
+  is its copy's. M2b's run folder is unchanged.
+- **The export** (Ultralytics 8.4.177, torch 2.11, onnx 1.23.2, onnxslim
+  0.1.99): opset **18**, Ultralytics' pick for torch 2.4 and later (its
+  comment: ONNX Runtime's CUDA build has no Resize-19 or ReduceMax-20
+  kernel, and its static int8 refuses opset 21 and up). IR version 8; 419 nodes;
+  10.80 MB (Ultralytics prints MiB); `images [batch, 3, height, width]`
+  to `output0 [batch, 8, anchors]`; metadata `names`, `stride` 32,
+  `imgsz` [1280, 1280]. 2 s, 0.67 GB at peak. Ultralytics warns
+  "no one-to-one head; using one-to-many outputs" (YOLO11 has none:
+  normal) and, when passed `int8=False`, that `int8` is deprecated (now
+  not passed). torch warns its TorchScript exporter (`dynamo=False`,
+  Ultralytics' choice) is legacy.
+- **The export isn't byte-reproducible.** Three exports of the same
+  weights made 11.38, 10.92 and 10.80 MB files with identical nodes and
+  weights, differing only in their shape annotations (`value_info`: 2,768,
+  1,730 and 1,378 entries). The manifest pins the one kept
+  (`det-fp32.onnx`, `5c755123…`).
+- **The Detect head is module 23**, read from the node names. Its 172
+  nodes: 60 in the box and class convolutions (`cv2`, `cv3`: 24 Conv, each
+  SiLU a Sigmoid and a Mul) and **112 decoding**: anchors built from the
+  input's shape (with height and width dynamic, they are computed in the
+  graph: Shape, Gather, Range, Cast, Expand), the DFL (Softmax and its
+  fixed Conv), the boxes scaled by stride (Sub, Add, Div, Mul), one
+  Sigmoid for the classes and the Concat that writes `output0`. The list is
+  in the manifest; `live.decode_problems` checks it against the graph
+  (everything downstream of the convolutions is in it).
+- **Ultralytics' own ONNX int8 takes another route**
+  (`utils/export/onnx.py`): it quantises Conv, Gemm and MatMul only and
+  excludes every other node. Ours follows the plan: everything but the
+  decoding, so the backbone's and neck's Add, Mul, Concat and Resize are
+  quantised too. R2 judges it.
+- **float16**: `det-fp16.onnx` 5.61 MB, 421 nodes (the input's and
+  output's Casts; `Range`, on the converter's default block list, is
+  integer and needs none); `det-fp16-head32.onnx` 5.66 MB, 429 nodes, 16
+  Casts. Both load in ONNX Runtime with float32 inputs and outputs and the
+  float32 file's metadata. Their accuracy is S2's, in the browser.
+- **int8, the laptop's smoke**: 8 photos (3 store, 5 ExpDate, list
+  `c1c4fc21…`), the start of the job's 200 (a smaller draw is the
+  start of the full one), letterboxed tight to 1,280 × 736 and 1,280 × 960;
+  376 tensors calibrated. MinMax 4.2 s, Percentile 24.8 s (3.1 s a photo,
+  its histograms), 4 threads; 1,210 nodes and 3.4 MB each; 1.47 GB peak
+  resident, 2.09 GB footprint. **Swap grew from 1.58 to 2.22 GB during
+  it** (macOS grew the swap file from 2 to 3 GB), so heavy work paused.
+  Nothing after it grew swap; the full calibration is the job's. ONNX
+  Runtime warns "consider pre-processing before quantization". Not run:
+  its optimiser renames nodes, and nodes are excluded by name; the export
+  already fused BatchNorm and onnxslim folded constants.
+- **Percentile's range is symmetric**, [−t, t]: its histogram is of
+  absolute values, ONNX Runtime's default. With uint8 activations that
+  gives half the levels to negatives that SiLU hardly reaches (−0.28 at
+  least). It may cost Percentile against MinMax; R2 reads it.
+- **An untrained YOLO11n breaks the Percentile calibrator**: numpy can't
+  cut 2,048 float32 bins over a range of 1e-6. Ultralytics initialises the
+  head so an untrained net's class sigmoids sit at 0.5 and its DFL logits
+  at 2.0. The tests add seeded noise to the tiny model's weights. The bins
+  are made from the first photo only, and the job's draw starts with the
+  smoke's first photo, which passed.
+- **Ultralytics' ONNX session** runs `intra_op_num_threads` 0 (every
+  core) unless set, and torch drops to 7 threads at the first prediction
+  (CLAUDE.md). `live.ort_threads` sets every ONNX Runtime session made
+  inside it, Ultralytics' and the calibrator's; the parity run sets
+  torch's after the warm-up, and checks both.
+- **R0 passes on v1-val** (run `20261122-192848-m2c-parity-laptop-v1val`,
+  34 photos, 4 threads): PyTorch square and ONNX float32 square find the
+  same 60 of 63 dates and 29 of 29 expiries, with AP@0.5 for dates 0.9596
+  both (the difference 0.000000) and confidences at most 2.6e-6 apart.
+  0.9596 is M2b S13's laptop AP. At 0.1641 the laptop keeps 77 boxes (17
+  false, precision 0.779); M2b's suite on the cluster (16 photos a call)
+  kept 76 (precision 0.790): one box near the threshold differs between
+  the two runs. That is why R0 compares on one machine.
+- **R1, an early look on v1-val only (not its reading)**: tight padding
+  gives AP 0.9409 (0.0187 under square's, over R1's 0.01), 59 dates (one
+  fewer, allowed) and **28 of 29 expiries**: one expiry falls from 0.458
+  to 0.075, far from the threshold. So on v1-val tight fails R1 twice.
+  R1 needs every set, so the job's reading will very likely keep square
+  padding; it is read on the job's records, as decided. Tight inputs were
+  1,280 × 736 (19 photos), 1,280 × 960 (12) and 960 × 1,280 (3). Of the 62
+  dates both paddings box, confidence moved by a median of −0.003, 9 by
+  more than 0.1 (at most −0.54 and +0.20).
+- **Speed on the laptop's CPU** (Apple M2, 4 threads, one photo a call,
+  the photo already decoded; median over v1-val): PyTorch 166 ms, ONNX
+  float32 square 134 ms, tight 76 ms (43% less). In the 2-photo dry run,
+  int8 took about 70 ms square, half of float32 (too few photos to be a
+  measure).
+- **The dry run of the job's steps** (`check`, then 7 variants × 5 sets
+  × 2 photos with the smoke's int8 files, then `rules`): 70 passes in 14
+  s, 0.80 GB at peak; its folder deleted after, since 2 photos read no
+  rule. Ultralytics read the class names from the int8
+  files' copied metadata. macOS's `find` refuses `-perm /077` (GNU's
+  syntax; the cluster's `find` is GNU, as in `m3_cpu.sbatch`). A v1-val
+  record is about 60 KB, so the job's 35 should come to about 10 MB.
+- **Tests**: 18 in `test_live_export.py` (a tiny YOLO11n exported at
+  64 px through the same functions; skipped where onnxslim is missing), 4
+  in `test_live_parity.py`, 3 in `test_live_rules.py`. Each commit alone
+  in a worktree with absolute `.env` paths: the export commit 18 passed;
+  the parity commit 77 passed (with the detector, `eval_detector`,
+  `score_suite` and ensemble tests, everything that fakes or calls
+  `predict`). None skipped. The full suite wasn't run, to spare the
+  laptop.
+
+Not checked, the job's part: R0 on real-val, real-val-rot, real-val-small
+and real-val-rot180; R1, which needs all five sets; int8's accuracy (R2's
+accuracy half) and the 200-photo calibration's time and memory on a
+compute node (the laptop's 3.1 s a photo for Percentile suggests about 10
+minutes); ONNX Runtime's threads inside a job's cgroup; whether the
+cluster's main venv imports everything the job needs (onnxruntime 1.31.1
+and onnx 1.23.2 came with M3 S1). Not S1's: float16's accuracy (S2).
 
 ### S2. The app: camera, worker, boxes, benches · laptop, then the phone
 
