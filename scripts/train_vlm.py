@@ -301,8 +301,8 @@ def merge(args) -> None:
     model.to(torch.bfloat16).save_pretrained(args.out, safe_serialization=True)
     AutoProcessor.from_pretrained(base_dir()).save_pretrained(args.out)
     for name in ("chat_template.json", "generation_config.json"):     # as the base ships them
-        if (base_dir() / name).exists():
-            shutil.copy(base_dir() / name, args.out / name)
+        if (base_dir() / name).exists():        # copyfile: the umask sets the mode, not the source's 664
+            shutil.copyfile(base_dir() / name, args.out / name)
     print(f"merged {args.adapter} into the base in {time.time() - t0:.0f} s -> {args.out}")
 
 
