@@ -361,7 +361,10 @@ this repo.
   200,000 photos (37 GB) in 310 s, 1.6 ms a photo, 34 ms per worker
   (2026-11-13, M3 S3, job 73958). **LMDB on Lustre** works with one
   writer and `lock=False` (no lock file): 4.5 GB written in 5 minutes,
-  read back by 24 processes in 5 s. Each record fills whole 4 KiB pages,
+  read back by 24 processes in 5 s. **Open it in a loader's workers only:**
+  one the main process has open when a DataLoader forks is refused to
+  every worker ("already open in this process", M3 S7, job 74162); close
+  it first. Each record fills whole 4 KiB pages,
   so 5.2 KB crops take 7 KB (16 KiB pages on the laptop: 60% more). A
   training loader of 16 workers reading LMDB at random (M3 S5, batch
   256, decoding and augmenting) gave 14,094 crops a second on `cn4`,
@@ -483,6 +486,21 @@ this repo.
   computation on `cn1`, though AMX itself runs there (a C test, job
   73949), so it is kept in `build/bin/disabled/` and ggml picks `zen4`
   (AVX-512 VNNI, BF16): Qwen3-VL-2B Q8_0 at 23 tokens a second on 4 CPUs.
+- **Qwen3-VL through llama.cpp** (M3 S7, 2026-11-23): `b12017`'s
+  `convert_hf_to_gguf.py` runs in the main venv (transformers 5.22.2,
+  though its requirements pin 4.57.6) once `sentencepiece` is in it: on a
+  Qwen model it imports it before falling back to BPE. Our conversion of
+  Qwen3-VL-2B is byte-identical to the official GGUF in all 310 + 316
+  tensors (Q8_0 written in 174 s on `cn1`, bf16 in 16 s, the projector in
+  5 s). **llama-server draws a random media marker each start**: read it
+  from `/props` (`media_marker`) or pin `LLAMA_MEDIA_MARKER`; a prompt
+  with `<__media__>` gets HTTP 400. On 24 CPUs of `cn1`: the HF model in
+  float32 reads a real-val photo in 3 to 9 s, llama.cpp's Q8_0 in about 5
+  to 11 s; a LoRA step in float32 trains at 64 tokens a second (22
+  threads). The laptop runs llama.cpp's own `b12017` release
+  (`~/opt/llama.cpp-b12017/`): on Metal, 9.8 s a photo warm, 2.4 GiB
+  resident. **`shutil.copy` carries a file's mode past the umask** (664
+  into an owner-only folder, M3 S7): use `copyfile` there.
 - **GPU driver:** 560.35.05 on both GPU nodes (`nvidia-smi` in M1's job on
   `cn6`, 2026-10-15, and M2's on `cn5`, 2026-10-24; the 570.86 first
   written here was seen on neither). Install PyTorch from the `cu128`
