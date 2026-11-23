@@ -187,6 +187,16 @@ Plan each milestone as a sliced doc in `docs/` before writing its code.
   dates are barely tilted (none of v1-train's 169 past about 8°), so their
   box size is their print height. Size generated tilted text by its digits,
   and compare sizes with the store over untilted dates (M2b S8).
+- **PP-OCRv6 small reads what PaddleX hands it, padding included** (M3
+  S6). Its attention has no mask, so a crop's read depends on how far it
+  is padded: read it in BGR, in batches at least 320 px wide and of one
+  padded width, squeezed only past 3,200 px (`ppocr.spec()`). M3's own
+  layout (RGB, padded to the crop, squeezed past 480) matched PaddleOCR on
+  60% of real-val reads, mixed-width batches 94%, PaddleX's own processing
+  through the ONNX file 100%. M3 keeps reading a crop's own frames only:
+  it drops a spurious last character PaddleOCR reads in the padding.
+  A frame is 8 px, half the CRNN's, so stacked or wrapped text can be too
+  long for a crop's own frames (2.5% of training crops).
 
 ---
 
@@ -452,9 +462,13 @@ this repo.
   constraints.txt ...` (`--dry-run --report r.json` first shows what would
   come); M3 S1 added 28 packages that way and changed none. The whole test
   suite (737 tests) takes 3 to 5 minutes on the login node, niced (955 in
-  3 minutes, M3 S4; 1,173 in 6 min 21 s, M3 S6). An `ssh` link can drop mid-run and take the run
-  with it (`Broken pipe`, M3 S4): start anything longer than a minute
-  under `nohup`, its output to an owner-only file.
+  3 minutes, M3 S4; 1,173 in 6 min 21 s, M3 S6). An `ssh` link can drop
+  mid-run and take the run with it (`Broken pipe`, M3 S4): start anything
+  longer than a minute under `nohup`, its output to an owner-only file.
+  **`ssh bbhpc '... nohup CMD > file 2>&1 < /dev/null &'` still waits for
+  CMD**: it printed at once but returned only when the suite ended, 6
+  minutes later (M3 S6; after `module load`, why wasn't looked into). The
+  run itself was fine; wait for such a call in the background.
 - **Building code** on the login node: it is shared, so a few threads
   (`-j 4`), niced. The default compiler is OpenHPC's gcc 12.3.0 (module
   `gnu12`, loaded), with the system's binutils 2.30 (RHEL 8.8), which

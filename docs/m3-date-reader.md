@@ -2037,7 +2037,10 @@ on the login node at `ad2da0b`, niced: 1,155 passed, 17 skipped, **1
 failed** in 6 min 21 s: our export and PyTorch 1.05e-4 apart on a 1,680 px
 input, over the test's 1e-4 (under it on the laptop; the same test's read
 parity held). The tolerance is now 1e-3, as the official file's test; at
-`c482135` that file's 20 tests pass on the login node.
+`c482135` that file's 20 tests pass on the login node. The suite was
+started over ssh under `nohup`, its output redirected and in the
+background, yet the ssh call returned only when the suite ended
+(CLAUDE.md).
 
 **Not checked:** bf16 for PP-OCRv6 (the GPU runs will be the first);
 the fine-tune past 200 steps, and its speed and memory on the H100; the
