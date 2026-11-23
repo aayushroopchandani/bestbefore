@@ -250,6 +250,10 @@ this repo.
   same id and runs its script again from the top (`JobRequeue=1`).
   `squeue --me` lists only our own jobs. While 2 of our jobs run, a waiting
   one shows reason `QOSMaxJobsPerUserLimit` (seen 2026-10-23).
+  **`tee /dev/stderr` truncates the job's log**: a job's stderr is its log
+  file, and on Linux opening `/dev/stderr` opens that file afresh, which
+  `tee` truncates (job 74149 lost its first lines; reproduced on `mn1`).
+  Tee into a `mktemp` file instead (M2c S1).
   **A `git pull` on the cluster reaches a running job's next task**: a
   chain starts each task as a new process, so M2b's job B, pulled under
   for M3, ran its tasks at three commits (M2b S11). Pull only what can't
@@ -274,8 +278,17 @@ this repo.
   unset, and its first prediction on a CPU sets torch to `min(8, CPUs −
   1)` threads, whatever `OMP_NUM_THREADS` says: 7 on the laptop, and by
   that rule 8 in a job on a 48-CPU node however many CPUs it asked for
-  (not measured in a job). Read `torch.get_num_threads()` after the first
-  prediction, not before.
+  (8 measured in a 24-CPU job on `cn1`, M2c S1). Read
+  `torch.get_num_threads()` after the first prediction, not before.
+  Ultralytics' ONNX backend sets no ONNX Runtime threads, nor does ONNX
+  Runtime's int8 calibrator: `live.ort_threads` sets every session made
+  inside it (M2c S1). **Beside ONNX Runtime, torch's OpenMP must not
+  spin**: Ultralytics pre- and post-processes an ONNX model's photos with
+  torch, and with libgomp's default wait policy (torch's wheel bundles
+  libgomp) those steps took 100 to 260 ms around a 52 ms inference on 24
+  CPUs of `cn1`, a 328 to 491 ms call; with `OMP_WAIT_POLICY=PASSIVE` or
+  torch at 1 thread, 72 ms (M2c S1, jobs 74150 to 74152; not denormal
+  floats: ONNX Runtime's flush-to-zero changed nothing).
 - **Don't train in bf16 on the CPU nodes** (M3 S5): the CRNN's bf16
   training gave NaN 3 times in 3 on `cn1` (jobs 73967, 73969, 73970, at
   steps under 50, 202 and 34), though a one-convolution bf16 check
