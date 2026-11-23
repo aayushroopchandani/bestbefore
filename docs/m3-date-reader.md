@@ -18,7 +18,10 @@ eye on job `73966`'s sheets, the CRNN smoke passed in float32, job
 phone, time-boxed to three sessions); its GPU jobs stay held. **Resumed
 2026-11-23, alternating with M2c** (M2c's S1 done; its Decision 1):
 campus days, when the cluster is reachable, go to M3, home days to M2c's
-laptop and phone slices. Next: S6. M2b is done (2026-11-21): the M2b detector is
+laptop and phone slices. S6 done 2026-11-23 (PP-OCRv6's route is PyTorch,
+all three conditions held, job `74157`; its ONNX path reads S2's crops as
+PaddleOCR did on 96.6%, PaddleX's own processing on 100%: M3's rules kept
+by the owner). Next: S7. M2b is done (2026-11-21): the M2b detector is
 `n1280-ft-s0` at `threshold_store` 0.1641; every slice here that needs
 one of M2b's outputs says so. The learnings
 guide (`learnings/m3.md`) is written separately, later, as for M2.
@@ -616,7 +619,9 @@ def life_strip(due: Box, image) -> Box:
   right to the batch's widest (a multiple of 8, at most 480 px; wider is
   squeezed), normalised to `(x/255 − 0.5)/0.5`, as PP-OCR does. One
   function, `reader/onnx_run.py`'s, for training's evaluation, ONNX
-  scoring and the phone later.
+  scoring and the phone later. A reader's `Spec` sets its classes and
+  layout: M3's (the CRNN's) as here, PP-OCRv6's as PaddleX lays it out
+  (S6).
 - **Batches by aspect:** crops sorted into width buckets, so a batch pads
   little (RapidOCR sorts its batches for the same reason).
 - **Decoding:** greedy CTC, `reader/ctc.py`, written against tests
@@ -655,7 +660,11 @@ persistent workers. Seeds 0, 1, 2.
 - **Off the shelf:** `PP-OCRv6_small_rec`'s ONNX file through our
   pre- and post-processing and its dictionary, checked against
   `paddleocr`'s own reads of the same crops (S2's) on real-val: at least
-  99.5% identical, or we have the processing wrong.
+  99.5% identical, or we have the processing wrong. **S6: 96.6%**, and
+  100% with PaddleX's own processing; the gap is M3's own-frames and 8 px
+  rules, kept by the owner (S6's record). Its layout (`ppocr.spec()`):
+  BGR, batches at least 320 px wide and of one padded width, squeezed only
+  past 3,200 px.
 - **Fine-tuning route (S6 decides, by a check, not a preference):**
   - **PyTorch**, if PP-OCRv6's recogniser loads in `transformers` (≥ 5.8)
     as a module whose CTC logits take gradients, reads real-val as the ONNX
@@ -900,7 +909,8 @@ src/bestbefore/
     metrics.py        cer, exact text, date-level scores
     crnn.py           the CRNN
     train.py          one training loop for CTC readers (CRNN; PP-OCRv6 on the PyTorch route)
-    ppocr.py          PP-OCRv6: dictionary, loading, export, the route check
+    ppocr.py          PP-OCRv6: dictionary, its spec, loading, the route check (S6;
+                      scripts/ppocr_route.py runs it, tests/test_reader_ppocr.py)
     onnx_run.py       any CTC reader as ONNX: the one pre- and post-processing, batching by width
     parse.py          M3's parser on dates.py, roles inside a read, shelf life
     roles.py          beside(), choose_expiry(), the strip
@@ -1883,6 +1893,162 @@ expdate-real by eye beyond its bands (it loses nothing at 3.0).
 `feat: pp-ocrv6 small, its onnx path and the fine-tune route`,
 `docs: m3 plan, S6's route`
 
+**Done 2026-11-23. The route is PyTorch: all three conditions hold**
+(job `74157`, `results/runs/m3-decisions.json`'s `ppocr_route`, at
+`ad2da0b`). The ONNX path reads S2's crops as PaddleOCR did on 96.6% of
+reads, under the plan's 99.5%: **a departure the owner kept** (below).
+Departures besides: a third commit, `test: pp-ocrv6 export tolerance fits
+x86 arithmetic` (`c482135`); `scripts/ppocr_route.py` and
+`tests/test_reader_ppocr.py`, which the layout doesn't name; one diagnosis
+job, `74158`, outside the repo (`~/bestbefore-data/env/m3-s6/diag/`), as
+S1's and S5's.
+
+Before the code:
+
+- **The state:** the laptop clean at `6ae4799`, pushed. The cluster's
+  checkout at `33a306a` (pulled for M2c S1 at 16:41), clean; at 18:03
+  `squeue --me` showed only M3's `73946` and `73947`, held, nothing
+  running, so it was pulled to `6ae4799`. Three submit slots free; `short`
+  had 2 idle nodes. The status lines this session was to commit first
+  were already in `6ae4799`.
+- **The laptop's venv** got transformers 5.22.2 (the cluster's, the `vlm`
+  extra's pin) by the constraints method: 20 packages added at the
+  cluster's versions, nothing else moved, `pip check` clean. peft and
+  accelerate weren't added (nothing here needs them). The PP-OCRv6 ONNX
+  and safetensors folders were copied from the cluster; their SHA-256s
+  match `docs/datasets.md`.
+- **transformers' module** (`PPOCRV6SmallRecForTextRecognition`, 5,275,238
+  parameters): backbone, pooling, an SVTR neck of two attention blocks
+  with **no attention mask**, a linear head to 18,710 classes (the blank,
+  18,708 characters, the space), a frame every 8 px. Its forward ends in a
+  softmax, so `ppocr.PPOCRv6` calls it part by part to get the linear's
+  logits for CTC; their softmax equals the library's exactly. On noise at
+  widths 64 to 800 px it reads as the official ONNX file to within 9.3e-5.
+  Eager attention (transformers refuses sdpa for the backbone when asked
+  by name; its default sdpa differs from eager by about 1e-6).
+- **The laptop's first look** (40 real-val crops, 240 of S2's reads, the
+  official ONNX file): M3's own layout matched 157, BGR with padding to at
+  least 320 px 226, and PaddleX's exact preprocessing 236, its 4
+  differences all upside-down reads of 0.69 to 0.78. Upright, BGR padded
+  to at least 320 and squeezed only past 3,200 px matched 120 of 120.
+
+What PP-OCRv6 needs, now `ppocr.spec()` (an `onnx_run.Spec` beside M3's,
+whose own rules are unchanged; the CRNN's tests pass as they were):
+
+- **BGR** (its config's `DecodeImage img_mode: BGR`; S2 handed PaddleOCR
+  BGR crops), every batch padded to **at least 320 px** (its training
+  width, as PaddleX pads), squeezed only past **3,200 px** (PaddleX's cap,
+  not M3's 480), its dictionary and case. A text's characters outside the
+  dictionary are dropped, as PaddleOCR's label encoder does.
+- **Batches of one padded width only.** With no mask, the attention spans
+  the padding, so a crop padded to a wider neighbour reads otherwise: on 4
+  real-val crops in one batch, 9 of 24 reads matched PaddleOCR's, one a
+  call 22. On the full set mixed batches matched 1,055 of 1,122, one
+  width a batch the same 1,084 as one a call. Training's batches still pad
+  to their widest; the width buckets keep that small.
+- **A trap, found on the laptop:** a forward pass in training mode moves
+  BatchNorm's running statistics. The gradient check first ran on the
+  model itself, which then no longer read as the ONNX file (0.83 apart);
+  it now works on a copy, and a test checks the weights are unchanged.
+
+The check (`m3_cpu.sbatch ppocr-route`, job `74157`: `short`, `cn1`, 24
+CPUs, 64 GB, `OMP_WAIT_POLICY=PASSIVE`; started at once, 18:28:51 to
+18:39:00, TotalCPU 2 h 0 min, MaxRSS 28.2 GB by `sacct`'s sample). Every
+ONNX Runtime session at 24 threads, torch at 24 for the reads, 22 for the
+smoke:
+
+- **S2's real-val crops**, its own PNG files, every padding and turn S2
+  read with PaddleOCR's recogniser alone: 1,122 reads (187 crops, 3 pads,
+  2 turns). The official ONNX file through our processing:
+
+  | Layout | All | Upright | Turned |
+  |---|---:|---:|---:|
+  | M3's own (RGB, padded to the crop, squeezed past 480) | 676 | 527 | 149 |
+  | BGR | 668 | 520 | 148 |
+  | BGR, at least 320 | 1,077 | 553 | 524 |
+  | **PP-OCRv6's spec** (one a call, or one width a batch) | **1,084 (96.6%)** | **557** | **527** |
+  | the same in mixed batches | 1,055 | 550 | 505 |
+
+  After decision 14's choice between the two turns, 551 of 561 crop and
+  padding pairs chose the same text (98.2%).
+- **The diagnosis** (`74158`, `cn1`, 8 CPUs, 18:32:44 to 18:34:41):
+  PaddleOCR run again on the same crops reproduced S2's 1,122 reads
+  exactly, in 17 s. Through the official ONNX file:
+
+  | Processing | Same as S2 | Upright | Upright reads exactly right (of 561) |
+  |---|---:|---:|---:|
+  | ours, a crop's own frames (as scored) | 1,084 | 557 | 490 |
+  | ours, every frame | 1,095 | 560 | 487 |
+  | **PaddleX's own, every frame** | **1,122** | **561** | 488 (S2's) |
+  | PaddleX's own, a crop's own frames | 1,111 | 558 | 491 |
+
+  So **the ONNX file, its dictionary, BGR and the 320 px padding are
+  right**, and ONNX Runtime adds nothing on x86. The gap is two of M3's
+  shared rules. Reading only a crop's own frames (S5's rule) changes 11
+  reads: on 3 upright ones PaddleOCR reads a spurious last character in
+  the padding (`2021.03.151` for `2021.03.15`), so own frames read 3 more
+  exactly right. Widths rounded up to 8 px change 27, 26 of them upside
+  down and one upright made wrong (`2022.01:29`). The laptop's 4
+  differences under PaddleX's processing were its arm64 arithmetic.
+- **The owner's decision (2026-11-23): keep M3's rules for PP-OCRv6**, the
+  parity's purpose met by the 100% above. Baseline C so reads a little
+  better than PaddleOCR itself, and the fine-tune is trained and read the
+  same way, so C against it is what training adds.
+- **Condition 1 holds:** on 64 real-val crops (pad 0, upright, their
+  ExpDate text) the CTC loss is 3.632; all 178 tensors get a finite
+  gradient, none all zero, norm 72.3.
+- **Condition 2 holds:** transformers' module read the 1,122 reads exactly
+  as the ONNX file did (1.0).
+- Times a read: the ONNX file 3.65 ms one a call, 1.65 ms in batches of one
+  width; the module in PyTorch 4.13 ms in batches.
+
+The smoke (`train_reader.py --reader ppocrv6 --smoke`, the same job; the
+recipe, `m3.PPOCR_RECIPE`: lr 5e-5, 3% warmup, cosine, batch 128; AdamW's
+weight decay the loop's 1e-4, as the plan sets none for PP-OCRv6;
+clipping at 5; float32, bf16 having given NaN on these CPUs in S5; 2
+loader workers):
+
+- **Condition 3 holds:** the CTC loss on 2,000 crops of the `all` mix
+  (plain views, drawn apart from training) fell from **0.740 to 0.465**
+  in 200 steps. The training loss, a mean over 20 steps: 1.971 at first,
+  0.588 at the end.
+- Real-val exact text 0.834 at step 50, 0.845, **0.888** (CER 0.031) at
+  150, 0.882 at 200; synth-val-v2 0.695 to 0.741. The kept checkpoint,
+  step 150 (pooled 0.751).
+- **The export's parity 1.0** (374 of 374 real-val reads, both turns),
+  2.53 ms a read in ONNX Runtime on 22 threads.
+- 67 crops a second (79 training alone), waiting for the loader 15% of
+  the time (38% in the first 20 steps); 4 evaluations 74 s; the run 503 s.
+  The widest batch 1,368 px. Drawn as weighted: expdate-real 2,585
+  (10.1%), expdate-synth 5,099 (19.9%), gen 17,784 (69.5%), store 132.
+- **649 of 25,600 crops (2.5%) were too long for their own frames** and
+  dropped from the loss, against the CRNN smoke's 0.24%: PP-OCRv6 has half
+  its frames. On the laptop's gen sample, 57 of 1,701 (3.4%), all stacked
+  or wrapped text (a 10-character date at an aspect of about 1.5, a price
+  line over two rows: 28 dates, 13 codes, 16 class-less); none would be
+  dropped over every padded frame, the CRNN drops 3; real-val has none.
+- **The route** (`ppocr_route.py decide`, `m3.ppocr_route`): PyTorch, the
+  check and the smoke at one commit; also copied into the laptop's
+  decisions file. Their records were fetched to the laptop's
+  `results/runs/`.
+
+Tests: the laptop's reader tests, 126 passed (2 min 12 s). The whole suite
+on the login node at `ad2da0b`, niced: 1,155 passed, 17 skipped, **1
+failed** in 6 min 21 s: our export and PyTorch 1.05e-4 apart on a 1,680 px
+input, over the test's 1e-4 (under it on the laptop; the same test's read
+parity held). The tolerance is now 1e-3, as the official file's test; at
+`c482135` that file's 20 tests pass on the login node.
+
+**Not checked:** bf16 for PP-OCRv6 (the GPU runs will be the first);
+the fine-tune past 200 steps, and its speed and memory on the H100; the
+Paddle route (`~/venvs/paddle-gpu` not built: not needed); PP-OCRv6 on
+store crops through this path (S10); real-val's exact text off the shelf
+in the loop's own evaluation (its first is at step 50); whether the
+stacked crops should be trained over every padded frame (Later); the
+milliseconds a crop on the laptop (S10); the whole suite at `c482135`
+(its one change is that tolerance); why PaddleOCR's recogniser alone took
+15 ms a crop in the diagnosis against S2's 87 to 102 ms (CLAUDE.md).
+
 ### S7. The VLM: data, training loop, GGUF path · laptop, then CPU checks
 
 - `reader/vlm.py`, `scripts/make_vlm_set.py` (a CPU job:
@@ -2113,6 +2279,10 @@ results/           m3_reader.md (committed; runs/ is not)
 - **The VLM on detector crops** (detector-assisted), and **Qwen3-VL-4B or
   8B**, if 2B shows promise.
 - **PP-OCRv6 tiny and medium**, a size sweep for M5.
+- **PP-OCRv6 trained over every padded frame**, as PaddleOCR trains it: S6's
+  smoke dropped 2.5% of its crops from the loss, stacked or wrapped text too
+  long for its own frames (a frame every 8 px), all of which fit over the
+  320 px padding. Decoding would still read a crop's own frames only.
 - **The store share swept** (0.5% fixed now), and gen50k against gen-v2 for
   reading.
 - **Date-Synth and Components**, if the CRNN lacks variety and the leak can
