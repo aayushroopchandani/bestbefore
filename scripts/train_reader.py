@@ -1,8 +1,10 @@
-"""M3: train a CTC reader (docs/m3-date-reader.md, "CRNN + CTC", S5), or
-time its loader.
+"""M3: train a CTC reader (docs/m3-date-reader.md, "CRNN + CTC", S5;
+"PP-OCRv6 small", S6), or time its loader.
 
     python scripts/train_reader.py --reader crnn --arm all --seed 0                 # a run (the chain's, a GPU)
     python scripts/train_reader.py --reader crnn --arm all --seed 0 --smoke --device cpu --threads 22
+    python scripts/train_reader.py --reader ppocrv6 --arm all --seed 0              # the fine-tune (S6's PyTorch route)
+    python scripts/train_reader.py --reader ppocrv6 --smoke --device cpu --threads 22 --no-amp
     python scripts/train_reader.py --loader-only --arm all --workers 16 --batches 300
 
 A run trains on its arm's mix (reader/data.py), scores m3.EVALS checkpoints
@@ -14,9 +16,13 @@ hashes, PARSE_SHA256, VISIBLE_MIN, crops a second, every eval: counts only,
 never a crop, photo or design name. Its checkpoints and ONNX file go to
 $CHECKPOINT_DIR/m3/<time>-<name>/.
 
---smoke is S5's CPU smoke: 2,000 steps at batch 64, 2 loader workers, on
-`all`; it passes when the loss falls (the last tenth of the steps under half
-the first tenth's) and the ONNX parity holds.
+--smoke is a CPU smoke on `all`, 2 loader workers. The CRNN's (S5): 2,000
+steps at batch 64; it passes when the loss falls (the last tenth of the
+steps under half the first tenth's) and the ONNX parity holds. PP-OCRv6's
+(S6): m3.ROUTE_STEPS steps of its recipe (batch 128, lr 5e-5), 4 evals;
+it passes when the CTC loss on m3.PROBE_CROPS crops of the mix is lower
+after the steps than before (the route's third condition) and the parity
+holds. A pretrained model's training loss needn't halve in 200 steps.
 
 --loader-only times the training stream alone, as the GPU job will run it
 (--workers loader workers, no model), after a warm-up, and LMDB's random
@@ -38,7 +44,9 @@ from bestbefore import m3, runs
 from bestbefore.config import checkpoint_dir, generated_dir
 from bestbefore.reader import data, piles, shards, train
 
-SMOKE = {"budget": 128_000, "batch": 64, "workers": 2, "log_every": 50}     # 2,000 steps
+SMOKE = {"crnn": {"budget": 128_000, "batch": 64, "workers": 2, "log_every": 50},        # 2,000 steps
+         "ppocrv6": {"budget": m3.ROUTE_STEPS * m3.PPOCR_RECIPE["batch"], "workers": 2, "log_every": 20,
+                     "evals": 4, "probe": m3.PROBE_CROPS}}
 WARMUP_BATCHES = 10
 
 
@@ -110,7 +118,7 @@ def loss_fell(history: list[dict]) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--reader", default="crnn")
+    parser.add_argument("--reader", default="crnn", choices=train.READERS)
     parser.add_argument("--arm", default="all", choices=tuple(m3.ARMS))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--smoke", action="store_true", help="S5's CPU smoke: 2,000 steps at batch 64")
@@ -129,10 +137,10 @@ def main() -> None:
         sys.exit("m3.VISIBLE_MIN isn't set: the cut-off is chosen by eye on the visibility sheets first (S5)")
     root = args.root or default_root()
     pad, recipe = recipe_pad()
-    cfg = train.Config(reader=args.reader, arm=args.arm, seed=args.seed, device=args.device, pad=pad,
-                       visible_min=m3.VISIBLE_MIN, amp=not args.no_amp, threads=args.threads)
+    cfg = train.Config.for_reader(args.reader, arm=args.arm, seed=args.seed, device=args.device, pad=pad,
+                                  visible_min=m3.VISIBLE_MIN, amp=not args.no_amp, threads=args.threads)
     if args.smoke:
-        for k, v in SMOKE.items():
+        for k, v in SMOKE[cfg.reader].items():
             setattr(cfg, k, v)
     for k in ("budget", "batch", "workers"):
         if getattr(args, k) is not None:
@@ -177,7 +185,11 @@ def main() -> None:
           f"({exported['onnx_ms_per_read']} ms a read in ONNX Runtime, {threads} threads)", flush=True)
     ok = exported["passed"]
     if args.smoke:
-        fell = loss_fell(summary["history"])
+        if cfg.reader == "ppocrv6":
+            probe = summary["probe_loss"]
+            fell = probe["after"] < probe["before"]
+        else:
+            fell = loss_fell(summary["history"])
         ok = ok and fell
         runs.update_run(run_dir, smoke={"loss_fell": fell, "parity_passed": exported["passed"], "passed": ok})
         print(f"smoke: loss fell {fell}, parity passed {exported['passed']}: {'PASSED' if ok else 'FAILED'}",

@@ -1,6 +1,6 @@
 """M3's settings and decision rules (docs/m3-date-reader.md, "Decision
 rules"). Each rule is written here before the run it judges. So far: S2's
-crop experiment, R1. R2 to R6 come with S9's chain.
+crop experiment, R1; S6's route for PP-OCRv6. R2 to R6 come with S9's chain.
 """
 from __future__ import annotations
 
@@ -129,3 +129,28 @@ CHECKPOINT_SUITES = ("real-val", "synth-val-v2")        # decision 17: pooled ex
 # It drops gen 1,168 of 676,218 (0.17%), expdate-synth 28 of 16,652 (0.17%),
 # expdate-real none. None would refuse to train.
 VISIBLE_MIN: float | None = 3.0
+
+
+# --- S6, PP-OCRv6's fine-tuning route --------------------------------------------------
+
+# The fine-tune (docs/m3-date-reader.md, "PP-OCRv6 small"): from the
+# pretrained weights, the whole network, lr a tenth of its config's 5e-4,
+# cosine with 3% warmup, batch 128, 2 million crops, the `all` mix.
+PPOCR_RECIPE = {"budget": BUDGET["ppocrv6"], "batch": 128, "lr": 5e-5, "warmup": 0.03}
+ROUTE_STEPS = 200              # the third condition: this many steps of M3's loop...
+PROBE_CROPS = 2_000            # ...lower the CTC loss on this many crops of the mix
+ROUTE_PARITY = 0.995           # the second: transformers reads real-val as the ONNX file does
+
+
+def ppocr_route(loads: bool, parity: float, probe_before: float | None, probe_after: float | None) -> dict:
+    """S6, decided by a check, not a preference. PyTorch if all three hold:
+    PP-OCRv6's recogniser loads in transformers as a module whose CTC
+    logits take gradients (`loads`); it reads real-val as the official
+    ONNX file does on at least ROUTE_PARITY of the reads; ROUTE_STEPS
+    steps of M3's training loop lower its CTC loss on PROBE_CROPS crops.
+    Otherwise Paddle (~/venvs/paddle-gpu, PaddleOCR's own trainer)."""
+    trains = probe_before is not None and probe_after is not None and probe_after < probe_before
+    conditions = {"loads_with_gradients": bool(loads), "reads_as_onnx": parity >= ROUTE_PARITY,
+                  "loop_lowers_loss": trains}
+    return {"route": "pytorch" if all(conditions.values()) else "paddle", "conditions": conditions,
+            "parity": parity, "parity_min": ROUTE_PARITY, "probe_loss": {"before": probe_before, "after": probe_after}}

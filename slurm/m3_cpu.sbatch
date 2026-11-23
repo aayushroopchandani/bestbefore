@@ -43,11 +43,23 @@
 #         `smoke-crnn fp32` trains in float32 throughout. A step whose loss or
 #         gradients aren't finite stops the smoke with a report in its run.json
 #         and the batch and weights in its checkpoint folder (owner-only).
+#   ppocr-route
+#         S6: PP-OCRv6's ONNX path and its fine-tuning route. First
+#         scripts/ppocr_route.py check: the official ONNX file against S2's
+#         PaddleOCR reads of real-val (S2's own crops, every padding and turn,
+#         never its store crops), transformers' module against the ONNX file,
+#         its CTC gradients. Then the PyTorch route's CPU smoke: 200 steps of
+#         the fine-tune's recipe in float32, the CTC loss on 2,000 crops of the
+#         mix before and after, the export's parity. Then the route, by
+#         m3.ppocr_route, into m3-decisions.json. Torch runs beside ONNX
+#         Runtime here, so OpenMP's idle threads sleep (OMP_WAIT_POLICY=PASSIVE:
+#         spinning ones slowed M2c S1's CPU passes several times).
 #
 #   cd ~/bestbefore && sbatch slurm/m3_cpu.sbatch crop-experiment
 #   cd ~/bestbefore && sbatch --cpus-per-task=4 --mem=8G --time=00:30:00 slurm/m3_cpu.sbatch store-crops
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=16G --time=00:30:00 slurm/m3_cpu.sbatch visibility
 #   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=32G --time=02:00:00 slurm/m3_cpu.sbatch smoke-crnn
+#   cd ~/bestbefore && sbatch --cpus-per-task=24 --mem=64G --time=02:00:00 slurm/m3_cpu.sbatch ppocr-route
 #SBATCH --job-name=m3-cpu
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=24
@@ -151,8 +163,19 @@ print('a bf16 convolution runs on this cpu:', y.dtype)"; then
     $MAIN scripts/train_reader.py --loader-only --arm all --workers 16 --batch 256 --batches 300
     $MAIN scripts/train_reader.py --reader crnn --arm all --seed 0 --smoke --device cpu --threads "$THREADS" $AMP
     ;;
+ppocr-route)
+    umask 077                   # the smoke reads the store pile; its checkpoint has seen store crops
+    export OMP_WAIT_POLICY=PASSIVE              # torch beside ONNX Runtime (M2c S1, CLAUDE.md)
+    THREADS=$((SLURM_CPUS_PER_TASK - 2))        # 2 loader workers beside the model
+    $MAIN scripts/ppocr_route.py check --threads "$SLURM_CPUS_PER_TASK"
+    # bf16 training on these CPUs gave NaN (S5), so the smoke is float32. A failed
+    # smoke is evidence too: the route is still decided from its record.
+    $MAIN scripts/train_reader.py --reader ppocrv6 --arm all --seed 0 --smoke --device cpu --threads "$THREADS" \
+        --no-amp || echo "the PP-OCRv6 smoke failed: its run.json says why"
+    $MAIN scripts/ppocr_route.py decide
+    ;;
 *)
-    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn"
+    echo "unknown task '${1:-}': one of env, crop-experiment, crops-smoke, crops, store-crops, visibility, smoke-crnn, ppocr-route"
     exit 2
     ;;
 esac

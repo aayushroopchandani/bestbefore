@@ -18,6 +18,15 @@ Crops are read in batches of similar width (width_batches), so a batch
 pads little. Decision 14's orientation step reads a crop at two quarter
 turns and keeps the read that holds a date (read_oriented).
 
+A reader's Spec says what its network takes and gives: its classes, blank
+first, and how its batch is laid out. M3_SPEC is M3's own (the CRNN's):
+M3's 48 classes, RGB, squeezed past MAX_WIDTH, padded to the batch's
+widest. PP-OCRv6 brings its own (reader/ppocr.py, S6): its dictionary,
+BGR, every batch at least 320 px wide, as PaddleX lays out its batches,
+and read in batches of one padded width only (its attention spans the
+padding, so a crop padded to a wider neighbour reads otherwise). The
+steps above are the same for both.
+
 The export writes any CTC module (images [N, 3, 48, W] -> logits [N, T, C])
 as an ONNX file that gives probabilities, its batch and width dynamic.
 """
@@ -26,12 +35,14 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from . import crops, parse
+from . import charset, crops, parse
 from .ctc import Read, greedy_decode
 
 HEIGHT = 48
@@ -42,21 +53,59 @@ OPSET = 17
 PARITY_MIN = 0.995      # the share of reads an exported file must give as its framework did (decision 16)
 
 
-def resized_width(width: int, height: int) -> int:
+@dataclass(frozen=True)
+class Spec:
+    """What a CTC network takes and gives: its classes (`classes[0]` the
+    blank) and its batch's layout. Widths are multiples of WIDTH_STEP."""
+    classes: tuple[str, ...] = charset.CLASSES
+    max_width: int = MAX_WIDTH      # a crop wider than this once HEIGHT px high is squeezed to it
+    min_batch: int = 0              # every batch padded at least this wide
+    bgr: bool = False               # the network was trained on BGR images: the channels are swapped
+    same_width: bool = False        # reading: a batch holds crops of one padded width only
+
+    @cached_property
+    def _index(self) -> dict[str, int]:
+        return {c: k for k, c in enumerate(self.classes) if k}
+
+    def encode(self, text: str) -> list[int]:
+        """A text as the classes a CTC loss trains on, never a blank. M3's
+        classes fold it (charset.encode: upper case, '?' for the rest);
+        another reader's keep its case, with runs of white space as one
+        space, and drop a character they lack, as PaddleOCR's own label
+        encoder does."""
+        if self.classes == charset.CLASSES:
+            return charset.encode(text)
+        index = self._index
+        return [index[c] for c in " ".join(text.split()) if c in index]
+
+
+M3_SPEC = Spec()
+
+
+def resized_width(width: int, height: int, max_width: int = MAX_WIDTH) -> int:
     """A crop's width once HEIGHT px high, its aspect kept, within
-    MIN_WIDTH..MAX_WIDTH (rounded up, as PP-OCR does)."""
-    return min(MAX_WIDTH, max(MIN_WIDTH, math.ceil(HEIGHT * width / height)))
+    MIN_WIDTH..max_width (rounded up, as PP-OCR does)."""
+    return min(max_width, max(MIN_WIDTH, math.ceil(HEIGHT * width / height)))
 
 
-def preprocess(images: Sequence[np.ndarray]) -> tuple[np.ndarray, list[int]]:
+def padded_width(widths: Sequence[int], spec: Spec = M3_SPEC) -> int:
+    """A batch's width: its widest crop rounded up to WIDTH_STEP, within
+    spec.min_batch..spec.max_width."""
+    return max(spec.min_batch, min(spec.max_width, math.ceil(max(widths) / WIDTH_STEP) * WIDTH_STEP))
+
+
+def preprocess(images: Sequence[np.ndarray], spec: Spec = M3_SPEC) -> tuple[np.ndarray, list[int]]:
     """RGB uint8 crops [H, W, 3] -> a batch [N, 3, HEIGHT, W] in float32,
-    and each crop's own width in it (before the padding)."""
-    widths = [resized_width(im.shape[1], im.shape[0]) for im in images]
-    padded = min(MAX_WIDTH, math.ceil(max(widths) / WIDTH_STEP) * WIDTH_STEP)
-    batch = np.zeros((len(images), 3, HEIGHT, padded), np.float32)
+    and each crop's own width in it (before the padding). Resizing and
+    normalising treat each channel alike, so a BGR network's batch is
+    the same batch with its channels swapped."""
+    widths = [resized_width(im.shape[1], im.shape[0], spec.max_width) for im in images]
+    batch = np.zeros((len(images), 3, HEIGHT, padded_width(widths, spec)), np.float32)
     for i, (im, w) in enumerate(zip(images, widths)):
         resized = cv2.resize(im, (w, HEIGHT), interpolation=cv2.INTER_LINEAR)
         batch[i, :, :, :w] = (resized.transpose(2, 0, 1).astype(np.float32) / 255.0 - 0.5) / 0.5
+    if spec.bgr:
+        batch = np.ascontiguousarray(batch[:, ::-1])
     return batch, widths
 
 
@@ -66,27 +115,36 @@ def own_frames(frames: int, widths: Sequence[int], padded: int) -> list[int]:
     return [min(frames, math.ceil(frames * w / padded)) for w in widths]
 
 
-def postprocess(probs: np.ndarray, widths: Sequence[int], padded: int) -> list[Read]:
+def postprocess(probs: np.ndarray, widths: Sequence[int], padded: int, spec: Spec = M3_SPEC) -> list[Read]:
     """[N, frames, classes] probabilities -> one Read a crop, from its own frames."""
-    return [greedy_decode(p, n) for p, n in zip(probs, own_frames(probs.shape[1], widths, padded))]
+    return [greedy_decode(p, n, spec.classes) for p, n in zip(probs, own_frames(probs.shape[1], widths, padded))]
 
 
-def width_batches(sizes: Sequence[tuple[int, int]], batch: int) -> list[list[int]]:
+def width_batches(sizes: Sequence[tuple[int, int]], batch: int, spec: Spec = M3_SPEC) -> list[list[int]]:
     """Indices of crops of `sizes` (width, height), sorted by their resized
-    width and cut into batches: a batch pads little."""
-    order = sorted(range(len(sizes)), key=lambda i: resized_width(*sizes[i]))
-    return [order[i:i + batch] for i in range(0, len(order), batch)]
+    width and cut into batches: a batch pads little. With
+    spec.same_width, a batch holds crops of one padded width only, so no
+    crop is padded past its own width (or spec.min_batch) and each read
+    depends on its crop alone."""
+    widths = [resized_width(*size, spec.max_width) for size in sizes]
+    order = sorted(range(len(sizes)), key=lambda i: widths[i])
+    if not spec.same_width:
+        return [order[i:i + batch] for i in range(0, len(order), batch)]
+    groups: dict[int, list[int]] = {}
+    for i in order:
+        groups.setdefault(padded_width([widths[i]], spec), []).append(i)
+    return [g[j:j + batch] for g in groups.values() for j in range(0, len(g), batch)]
 
 
 Probs = Callable[[np.ndarray], np.ndarray]     # a batch -> probabilities [N, frames, classes]
 
 
-def read(probs_of: Probs, images: Sequence[np.ndarray], batch: int = 64) -> list[Read]:
+def read(probs_of: Probs, images: Sequence[np.ndarray], batch: int = 64, spec: Spec = M3_SPEC) -> list[Read]:
     """Every crop read, in batches of similar width, in the order given."""
     out: list[Read | None] = [None] * len(images)
-    for idx in width_batches([(im.shape[1], im.shape[0]) for im in images], batch):
-        x, widths = preprocess([images[i] for i in idx])
-        for i, r in zip(idx, postprocess(probs_of(x), widths, x.shape[3])):
+    for idx in width_batches([(im.shape[1], im.shape[0]) for im in images], batch, spec):
+        x, widths = preprocess([images[i] for i in idx], spec)
+        for i, r in zip(idx, postprocess(probs_of(x), widths, x.shape[3], spec)):
             out[i] = r
     return out
 
@@ -99,7 +157,8 @@ def choose(reads: Sequence[Read]) -> int:
     return max(range(len(reads)), key=lambda i: (bool(parse.read_dates(reads[i].text)), reads[i].confidence))
 
 
-def read_oriented(probs_of: Probs, images: Sequence[np.ndarray], batch: int = 64) -> list[tuple[Read, int]]:
+def read_oriented(probs_of: Probs, images: Sequence[np.ndarray], batch: int = 64,
+                  spec: Spec = M3_SPEC) -> list[tuple[Read, int]]:
     """Each crop read at its two quarter turns (crops.turns: a wide crop at
     0 and 2, a tall one at 1 and 3, anticlockwise), all in one pass; per
     crop the chosen read and the turn it was read at."""
@@ -108,7 +167,7 @@ def read_oriented(probs_of: Probs, images: Sequence[np.ndarray], batch: int = 64
         for q in crops.turns(im.shape[0] > im.shape[1]):
             turned.append(np.ascontiguousarray(np.rot90(im, q)))
             owner.append(q)
-    reads = read(probs_of, turned, batch)
+    reads = read(probs_of, turned, batch, spec)
     out = []
     for k in range(len(images)):
         pair = reads[2 * k:2 * k + 2]

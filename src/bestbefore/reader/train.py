@@ -1,5 +1,8 @@
 """One training loop for CTC readers (docs/m3-date-reader.md, "CRNN + CTC",
-decisions 16 and 17): the CRNN now, PP-OCRv6 if S6 proves the PyTorch route.
+decisions 16 and 17): the CRNN, and PP-OCRv6 small on S6's PyTorch route
+(from its pretrained weights, m3.PPOCR_RECIPE). Only the model, its classes
+and its batch layout (its onnx_run.Spec) differ: one loader, one
+augmentation, one loss.
 
 CTC's loss: for one crop, the frames' probabilities (log-softmax) and the
 target text; it sums the probability of every way of laying the text out
@@ -13,7 +16,10 @@ is infinite, and zero_infinity drops it (counted as `infeasible`).
 A run: AdamW, warmup then cosine, gradient clipping; scored m3.EVALS times
 on m3.CHECKPOINT_SUITES (pooled exact text, through the orientation step),
 keeping the best checkpoint; then that checkpoint exported to ONNX and
-read against PyTorch on real-val (onnx_run.PARITY_MIN).
+read against PyTorch on real-val (onnx_run.PARITY_MIN). With `probe`, the
+mean CTC loss on that many crops of the mix (plain views, drawn apart from
+the training stream) is measured before the first step and after the
+last: S6's third route condition.
 """
 from __future__ import annotations
 
@@ -27,7 +33,11 @@ import numpy as np
 import torch
 
 from .. import m3
-from . import crnn, data, metrics, onnx_run
+from . import crnn, data, metrics, onnx_run, ppocr
+
+READERS = ("crnn", "ppocrv6")
+PROBE_BATCH = 100
+PROBE_SEED = 1000           # added to the run's seed: the probe's draws are not the training stream's
 
 
 @dataclass
@@ -51,18 +61,36 @@ class Config:
     suites: tuple[str, ...] = m3.CHECKPOINT_SUITES
     eval_batch: int = 128
     log_every: int = 50
-    channels: tuple[int, int, int, int] = crnn.CHANNELS     # smaller only in tests
+    channels: tuple[int, int, int, int] = crnn.CHANNELS     # the CRNN's; smaller only in tests
     hidden: int = crnn.HIDDEN
+    probe: int = 0                          # crops whose loss is measured before and after (S6)
 
     @property
     def steps(self) -> int:
         return self.budget // self.batch
 
+    @classmethod
+    def for_reader(cls, reader: str, **fields) -> Config:
+        """A reader's defaults: the CRNN's are the fields' own; PP-OCRv6's
+        fine-tune takes m3.PPOCR_RECIPE. `fields` override either."""
+        if reader not in READERS:
+            raise ValueError(f"no reader {reader!r}: one of {READERS}")
+        recipe = m3.PPOCR_RECIPE if reader == "ppocrv6" else {}
+        return cls(reader=reader, **{**recipe, **fields})
+
 
 def build(cfg: Config) -> torch.nn.Module:
-    if cfg.reader != "crnn":
-        raise ValueError(f"no reader {cfg.reader!r} yet (PP-OCRv6's comes with S6)")
-    return crnn.CRNN(channels=cfg.channels, hidden=cfg.hidden)
+    """The reader's network: a fresh CRNN, or PP-OCRv6 from its pretrained weights."""
+    if cfg.reader == "crnn":
+        return crnn.CRNN(channels=cfg.channels, hidden=cfg.hidden)
+    if cfg.reader == "ppocrv6":
+        return ppocr.load_torch()
+    raise ValueError(f"no reader {cfg.reader!r}: one of {READERS}")
+
+
+def reader_spec(reader: str) -> onnx_run.Spec:
+    """What the reader's network takes and gives (onnx_run.Spec)."""
+    return ppocr.spec() if reader == "ppocrv6" else onnx_run.M3_SPEC
 
 
 def lr_factor(step: int, steps: int, warmup: float) -> float:
@@ -172,13 +200,14 @@ def diagnose(model: torch.nn.Module, batch: dict, device: str, step: int, loss: 
             "infinite_losses": sum(math.isinf(c["loss"]) for c in crops)}
 
 
-def evaluate(model: torch.nn.Module, suites: dict[str, tuple[list, list[str]]], device: str, batch: int) -> dict:
+def evaluate(model: torch.nn.Module, suites: dict[str, tuple[list, list[str]]], device: str, batch: int,
+             spec: onnx_run.Spec = onnx_run.M3_SPEC) -> dict:
     """Exact text and mean character error rate per suite, read as scoring
     reads (fp32, the orientation step); `pooled`: exact over all crops."""
     reader = onnx_run.TorchReader(model, device)
     out, right, total = {}, 0, 0
     for name, (views, texts) in suites.items():
-        reads = onnx_run.read_oriented(reader, views, batch)
+        reads = onnx_run.read_oriented(reader, views, batch, spec)
         exact = [metrics.exact(r.text, t) for (r, _), t in zip(reads, texts)]
         out[name] = {"exact": sum(exact) / len(exact), "cer": float(np.mean([metrics.cer(r.text, t)
                                                                               for (r, _), t in zip(reads, texts)])),
@@ -186,6 +215,37 @@ def evaluate(model: torch.nn.Module, suites: dict[str, tuple[list, list[str]]], 
         right, total = right + sum(exact), total + len(exact)
     out["pooled"] = right / total
     return out
+
+
+def probe_batches(root: Path, mix: data.Mix, cfg: Config, spec: onnx_run.Spec) -> list[dict]:
+    """cfg.probe crops (rounded up to PROBE_BATCH) of the mix, plain views,
+    in batches of similar width, from a seed apart from the training
+    stream's."""
+    n = math.ceil(cfg.probe / PROBE_BATCH)
+    stream = data.Stream(root, mix, PROBE_BATCH, cfg.pad, cfg.seed + PROBE_SEED, augment=None, pool=n, spec=spec)
+    it = iter(stream)
+    try:
+        return [next(it) for _ in range(n)]
+    finally:
+        it.close()          # its LMDB files closed
+
+
+def probe_loss(model: torch.nn.Module, batches: list[dict], device: str) -> float:
+    """The mean CTC loss over the probe's crops (each crop's loss over its
+    text's length, as training's), in eval mode and float32."""
+    loss_fn = torch.nn.CTCLoss(blank=0, reduction="mean", zero_infinity=True)
+    was = model.training
+    model.eval()
+    total = crops = 0
+    try:
+        with torch.no_grad():
+            for b in batches:
+                loss, _ = ctc_loss(model, b, device, loss_fn)
+                total += float(loss) * len(b["lengths"])
+                crops += len(b["lengths"])
+    finally:
+        model.train(was)
+    return total / crops
 
 
 @dataclass
@@ -199,6 +259,7 @@ class Log:
     train_seconds: float = 0.0          # forward, backward, step
     wait_seconds: float = 0.0           # waiting for the loader
     eval_seconds: float = 0.0
+    widest: int = 0                     # the widest batch, px
 
 
 def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
@@ -208,9 +269,10 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
     if cfg.threads:
         torch.set_num_threads(cfg.threads)
     device = cfg.device if cfg.device != "cuda" or torch.cuda.is_available() else "cpu"
+    spec = reader_spec(cfg.reader)
     mix = data.Mix.for_arm(root, cfg.arm, cfg.visible_min)
     suites = {name: data.suite(root, name, cfg.pad) for name in cfg.suites}
-    stream = data.Stream(root, mix, cfg.batch, cfg.pad, cfg.seed)
+    stream = data.Stream(root, mix, cfg.batch, cfg.pad, cfg.seed, spec=spec)
     loader = torch.utils.data.DataLoader(
         stream, batch_size=None, num_workers=cfg.workers, pin_memory=device == "cuda",
         persistent_workers=cfg.workers > 0, prefetch_factor=4 if cfg.workers else None,
@@ -226,6 +288,12 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
     say(f"{cfg.reader} on {cfg.arm}: {cfg.steps} steps of {cfg.batch}, {crnn.parameters(model):,} parameters, "
         f"device {device}, amp {cfg.amp}, {cfg.workers} workers, {torch.get_num_threads()} threads; "
         f"draws {mix.describe()}")
+    probe, probed = (probe_batches(root, mix, cfg, spec), {}) if cfg.probe else (None, None)
+    if probe:
+        t = time.perf_counter()
+        probed = {"crops": sum(len(b["lengths"]) for b in probe), "before": probe_loss(model, probe, device)}
+        say(f"probe: CTC loss {probed['before']:.4f} on {probed['crops']} crops before training "
+            f"({time.perf_counter() - t:.0f} s)")
     batches = iter(loader)
     model.train()
     try:
@@ -247,6 +315,7 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
             log.wait_seconds += t1 - t0
             log.train_seconds += t2 - t1
             log.crops += len(batch["lengths"])
+            log.widest = max(log.widest, int(batch["x"].shape[3]))
             log.infeasible += infeasible
             log.drawn.update(mix.names[p] for p in batch["piles"].tolist())
             window.append(value)
@@ -260,7 +329,7 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
                 window = []
             if (step + 1) % every == 0 or step + 1 == cfg.steps:
                 t3 = time.perf_counter()
-                scores = evaluate(model, suites, device, cfg.eval_batch)
+                scores = evaluate(model, suites, device, cfg.eval_batch, spec)
                 log.eval_seconds += time.perf_counter() - t3
                 scores["step"] = step + 1
                 log.evals.append(scores)
@@ -271,6 +340,9 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
                     save(model, cfg, step + 1, scores, checkpoints / "best.pt")
                 model.train()
         save(model, cfg, cfg.steps, log.evals[-1], checkpoints / "last.pt")
+        if probe:
+            probed["after"] = probe_loss(model, probe, device)
+            say(f"probe: CTC loss {probed['after']:.4f} after {cfg.steps} steps (before {probed['before']:.4f})")
     finally:
         # the loader's last references (persistent workers keep its iterator): its workers
         # end, or its in-process stream closes its LMDB files (LMDB refuses a file already
@@ -284,7 +356,9 @@ def run(cfg: Config, root: Path, checkpoints: Path, say=print) -> dict:
             "wait_seconds": round(log.wait_seconds, 1),
             "drawn": {n: log.drawn[n] for n in mix.names}, "mix": mix.describe(),
             "history": log.history, "evals": log.evals, "best": {"step": best["step"], "pooled": best["pooled"]},
-            "parameters": crnn.parameters(model), "device": device}
+            "parameters": crnn.parameters(model), "device": device, "widest_batch": log.widest,
+            "probe_loss": probed, "spec": {"classes": len(spec.classes), "max_width": spec.max_width,
+                                           "min_batch": spec.min_batch, "bgr": spec.bgr}}
 
 
 def save(model: torch.nn.Module, cfg: Config, step: int, scores: dict, path: Path) -> None:
@@ -304,12 +378,13 @@ def export_checked(checkpoint: Path, root: Path, threads: int, suite_name: str =
     against PyTorch on a suite, both turns of every crop: parity is the
     share of reads with the same text (decision 16: at least PARITY_MIN)."""
     model, saved = load(checkpoint)
+    spec = reader_spec(saved["config"]["reader"])
     path = onnx_run.export(model, checkpoint.with_name("reader.onnx"))
     views, _ = data.suite(root, suite_name, saved["config"]["pad"])
     turned = [np.ascontiguousarray(np.rot90(v, q)) for v in views for q in (0, 2)]
-    torch_reads = onnx_run.read(onnx_run.TorchReader(model), turned)
+    torch_reads = onnx_run.read(onnx_run.TorchReader(model), turned, spec=spec)
     t0 = time.perf_counter()
-    onnx_reads = onnx_run.read(onnx_run.OnnxReader(path, threads), turned)
+    onnx_reads = onnx_run.read(onnx_run.OnnxReader(path, threads), turned, spec=spec)
     seconds = time.perf_counter() - t0
     parity = onnx_run.parity(torch_reads, onnx_reads)
     return {"onnx": str(path), "suite": suite_name, "reads": len(turned), "parity": parity,

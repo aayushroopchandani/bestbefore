@@ -12,7 +12,8 @@ The stream, in each loader worker, forever:
   bucket   POOL batches' worth of views sorted by width, cut into batches,
            handed out in random order: a batch pads little
   batch    onnx_run.preprocess (the one preprocessing), the texts as
-           charset classes
+           the reader's classes (its onnx_run.Spec: M3's charset for the
+           CRNN, PP-OCRv6's dictionary for it, S6)
 
 Seeded per run and per worker. Suites are read with plain_view: the same
 cut, no jitter, no augmentation.
@@ -40,7 +41,7 @@ import numpy as np
 import torch
 
 from .. import m3
-from . import charset, crops, onnx_run, piles, shards
+from . import crops, onnx_run, piles, shards
 
 # --- The visibility measure -----------------------------------------------------------
 
@@ -266,20 +267,22 @@ def augmented_view(rgb: np.ndarray, box, pad: float, rng: np.random.Generator, a
     return np.ascontiguousarray(view)
 
 
-def padded_share(views: list[np.ndarray], batches: list[list[int]]) -> float:
+def padded_share(views: list[np.ndarray], batches: list[list[int]], spec: onnx_run.Spec = onnx_run.M3_SPEC) -> float:
     """The share of a batch's pixels that are padding, over all batches."""
     total = pad = 0
     for b in batches:
-        widths = [onnx_run.resized_width(views[i].shape[1], views[i].shape[0]) for i in b]
-        padded = min(onnx_run.MAX_WIDTH, math.ceil(max(widths) / onnx_run.WIDTH_STEP) * onnx_run.WIDTH_STEP)
+        widths = [onnx_run.resized_width(views[i].shape[1], views[i].shape[0], spec.max_width) for i in b]
+        padded = onnx_run.padded_width(widths, spec)
         total += padded * len(b)
         pad += sum(padded - w for w in widths)
     return pad / total
 
 
-def width_buckets(views: list[np.ndarray], batch: int, rng: np.random.Generator) -> list[list[int]]:
+def width_buckets(views: list[np.ndarray], batch: int, rng: np.random.Generator,
+                  max_width: int = onnx_run.MAX_WIDTH) -> list[list[int]]:
     """Views sorted by width, cut into batches, the batches in random order."""
-    order = sorted(range(len(views)), key=lambda i: onnx_run.resized_width(views[i].shape[1], views[i].shape[0]))
+    order = sorted(range(len(views)),
+                   key=lambda i: onnx_run.resized_width(views[i].shape[1], views[i].shape[0], max_width))
     batches = [order[i:i + batch] for i in range(0, len(order), batch)]
     return [batches[k] for k in rng.permutation(len(batches))]
 
@@ -290,12 +293,13 @@ POOL = 16               # batches' worth of views a worker sorts by width at a t
 
 
 def collate(views: list[np.ndarray], texts: list[str], piles_drawn: list[int],
-            records: list[int] | None = None) -> dict[str, torch.Tensor]:
-    """A batch: the images, each crop's own width, the texts as classes
-    (concatenated) with their lengths, and each crop's pile (its number in
-    the mix) and record number, so a bad step can name its crops."""
-    x, widths = onnx_run.preprocess(views)
-    encoded = [charset.encode(t) for t in texts]
+            records: list[int] | None = None, spec: onnx_run.Spec = onnx_run.M3_SPEC) -> dict[str, torch.Tensor]:
+    """A batch: the images, each crop's own width, the texts as the
+    reader's classes (concatenated) with their lengths, and each crop's
+    pile (its number in the mix) and record number, so a bad step can name
+    its crops."""
+    x, widths = onnx_run.preprocess(views, spec)
+    encoded = [spec.encode(t) for t in texts]
     return {"x": torch.from_numpy(x), "widths": torch.tensor(widths),
             "targets": torch.tensor([k for e in encoded for k in e], dtype=torch.long),
             "lengths": torch.tensor([len(e) for e in encoded]), "piles": torch.tensor(piles_drawn),
@@ -308,9 +312,9 @@ class Stream(torch.utils.data.IterableDataset):
     shared across a fork) and its own generator, seeded by (seed, worker)."""
 
     def __init__(self, root: Path, mix: Mix, batch: int, pad: float, seed: int,
-                 augment: Augment | None = Augment(), pool: int = POOL):
+                 augment: Augment | None = Augment(), pool: int = POOL, spec: onnx_run.Spec = onnx_run.M3_SPEC):
         self.root, self.mix, self.batch, self.pad, self.seed = root, mix, batch, pad, seed
-        self.augment, self.pool = augment, pool
+        self.augment, self.pool, self.spec = augment, pool, spec
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         info = torch.utils.data.get_worker_info()
@@ -320,9 +324,9 @@ class Stream(torch.utils.data.IterableDataset):
             while True:
                 drawn = [self._sample(rng, envs) for _ in range(self.batch * self.pool)]
                 views = [d[0] for d in drawn]
-                for b in width_buckets(views, self.batch, rng):
+                for b in width_buckets(views, self.batch, rng, self.spec.max_width):
                     yield collate([views[i] for i in b], [drawn[i][1] for i in b], [drawn[i][2] for i in b],
-                                  [drawn[i][3] for i in b])
+                                  [drawn[i][3] for i in b], self.spec)
         finally:
             for env in envs.values():
                 env.close()

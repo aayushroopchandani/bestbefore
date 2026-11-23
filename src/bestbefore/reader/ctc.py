@@ -11,6 +11,9 @@ while "0 0" is "0".
 
 One confidence a read (decision 15): its least sure character, since one
 wrong digit is the danger; the mean beside it.
+
+The classes are M3's own (charset.CLASSES, the CRNN's) unless a reader
+brings its own table, blank first: PP-OCRv6's 18,710 (reader/ppocr.py, S6).
 """
 from __future__ import annotations
 
@@ -23,8 +26,9 @@ from .charset import BLANK, CLASSES
 
 @dataclass(frozen=True)
 class Read:
-    """One crop's read: its text (folded: the classes are upper case) and,
-    for each character, the highest probability over the frames it spans."""
+    """One crop's read: its text, in its reader's classes (M3's are upper
+    case; PP-OCRv6 keeps its own case), and for each character the highest
+    probability over the frames it spans."""
     text: str
     probs: tuple[float, ...]
 
@@ -38,10 +42,12 @@ class Read:
         return float(np.mean(self.probs)) if self.probs else 0.0
 
 
-def greedy_decode(probs: np.ndarray, length: int | None = None) -> Read:
+def greedy_decode(probs: np.ndarray, length: int | None = None,
+                  classes: tuple[str, ...] = CLASSES) -> Read:
     """`probs`: [frames, classes], each frame's probabilities (a softmax).
     Only the first `length` frames are read (a crop's own frames, when a
-    batch padded it on the right)."""
+    batch padded it on the right). `classes[k]` is class k's character,
+    classes[BLANK] the blank."""
     probs = probs[:length]
     best = probs.argmax(axis=1)                       # each frame's best class
     p = probs[np.arange(len(best)), best]             # and its probability
@@ -51,7 +57,7 @@ def greedy_decode(probs: np.ndarray, length: int | None = None) -> Read:
     for k, pk in zip(best.tolist(), p.tolist()):
         if k != BLANK:
             if k != previous:                         # a new character starts here
-                chars.append(CLASSES[k])
+                chars.append(classes[k])
                 char_probs.append(pk)
             else:                                     # the same character, one more frame
                 char_probs[-1] = max(char_probs[-1], pk)
