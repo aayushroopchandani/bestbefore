@@ -7,7 +7,13 @@ Scanify's frontend, so it can move into Scanify later). Status: **S1
 done** (the laptop 2026-11-22, the cluster's job 2026-11-23,
 [its records](#s1-the-model-files-and-their-parity--laptop-then-a-cpu-job--submits-1-cpu-job)):
 R0 passes, R1 fails (the app pads square), and R2's accuracy half keeps
-float32 on WebAssembly. Next: S2, on home days. **Since 2026-11-23 M2c
+float32 on WebAssembly. **S2 done** (2026-11-24,
+[its record](#s2-the-app-camera-worker-boxes-benches--laptop-then-the-phone)):
+the app matches Ultralytics in the laptop's Chrome and on an Android
+phone (WebGPU float32, 4 to 5 detections a second live); on an iPhone
+WebGPU crashes the tab and WebAssembly runs about 1 a second. The target
+phone is now Android, the owner's OnePlus 13 for now (Decision 15). Next:
+S3, on home days. **Since 2026-11-23 M2c
 and M3 alternate** (Decision 1): campus days, when the cluster is
 reachable, go to M3's cluster slices (from S6, `docs/m3-date-reader.md`),
 home days to M2c's laptop and phone slices; M3's two GPU jobs stay held
@@ -258,7 +264,8 @@ web/
   src/live/       React hooks and the overlay
     useCamera.ts, useStillness.ts, useDetections.ts (scheduling, rest),
     tracker.ts, LiveBoxes.tsx
-  src/pages/      Live, Bench, Motion: the demo's own screens (Tailwind)
+  src/pages/      Live, Bench (its runs in benchRun.ts), Motion: the demo's own screens (Tailwind)
+  src/api.ts      the key and the API's calls
   src/records.ts  run records, posted to the API
 ```
 
@@ -501,6 +508,17 @@ Each with its reason. **(new)** marks a choice not written down before;
     tests written first, then walks the owner through them line by line.
     The tracker's IoU match is offered as the owner's exercise, not
     pushed.
+15. **(new, 2026-11-24, S2; changes Decision 13's "the owner's phone")
+    Android with Chrome decides**, because the store staff mostly use
+    Android (the owner). R2's speed half, R3 and R4 are read on **the
+    owner's OnePlus 13** (S2's record): no staff phone can be borrowed now,
+    and the owner chose to go on with it. It is a 2025 flagship, so its
+    numbers are the best case; a staff-like phone's test is in
+    [Later](#later), run if the app meets trouble on the staff's phones.
+    The owner's iPhone is a second reading, never a rule's. On an iPhone
+    every browser runs on WebKit, Safari's engine, so Chrome there is
+    Safari's engine in Chrome's frame; Android's Chrome is another engine
+    (Blink) with another WebGPU (Dawn on Vulkan).
 
 ---
 
@@ -523,7 +541,8 @@ slurm/
   m2c_cpu.sbatch    task `parity`: int8 calibration, then scoring
 web/                the React app (above); web/public/ort/ copied from node_modules
 tests/
-  test_live_export.py, test_live_api.py, test_live_rules.py, test_score_live.py
+  test_live_export.py, test_live_parity.py, test_live_rules.py, test_live_api.py,
+  test_live_fixtures.py, test_score_live.py
 web/src/**/*.test.ts   Vitest
 experiments/
   m2c-export/       does the exported model see what PyTorch sees? (R0 to R2)
@@ -895,6 +914,265 @@ a resize matching `INTER_LINEAR` in the worker, recorded.
 `feat: m2c web app, the detector in a worker`, `feat: m2c bench mode`,
 `docs: m2c plan, S2's app on the phone`
 
+**Record (2026-11-24, laptop and two phones).** A home day. The state was
+checked first: `main` clean at `43eee59`, no `web/` yet, and
+`export_live.py check` passed for the three float files.
+
+Departures:
+
+- **The parity bench pads square, its session pinned at 1 × 3 × 1,280 ×
+  1,280.** The Bench text above (each photo letterboxed to its own shape,
+  a session without a pinned shape) was written for tight padding; R1
+  kept square, so every photo and every camera frame reaches the model at
+  one shape, and the parity and speed benches share it. The reference is
+  the job's `parity-<set>-fp32-square.json`.
+- **`score_live.py` and `tests/test_score_live.py` came in S2, not S5**:
+  S2's check can't be read without them. It rescores the job's reference
+  from its own per-photo boxes on the same photos, by the same code; on
+  whole sets that gives the job's AP to 1e-6 (its boxes are kept to 5
+  decimals), and a record of the first N photos is compared on those N.
+- **Vite 8.2.6, not Scanify's 8.2.2** (the owner's choice, 2026-11-24):
+  `npm audit` flagged 8.2.0 to 8.2.3 (GHSA-rq7h-c2jc-7f22, files outside
+  `server.fs.allow` served when project paths match system paths;
+  GHSA-vfpm-58rq-9qcg, the first 4 bytes of files outside `server.fs`
+  through `?vite-wasm-instance`; GHSA-9jrq-w75r-8gcw; and three in
+  `launch-editor`), and the plan puts the dev server on the Wi-Fi. 8.2.6
+  (2026-11-09) is the 8.2 line's patch outside that range; `npm audit`
+  then finds 0. Scanify's frontend is still on 8.2.2 with the same dev
+  server on the Wi-Fi: Scanify's to fix. Four more exact pins, from
+  Scanify's lockfile, which the plan didn't list: `@tailwindcss/vite`
+  4.3.3, `@types/react` 19.2.18, `@types/react-dom` 19.2.7, `@types/node`
+  24.13.3.
+- **Two pixel checks in the parity bench**, so a box that moves can be
+  blamed on the resize or the runtime: every photo's decoded pixels
+  against PIL's (the API sends the SHA-256 of `load_upright`'s RGB), and
+  the first 5 photos' model input against Ultralytics' `LetterBox`, value
+  by value (`/api/bench/<set>/<i>/input`, raw RGB).
+- **Store photos go to the laptop's browser only, even with
+  `--with-store`.** Vite's proxy adds the browser's address
+  (`X-Forwarded-For`, its `xfwd`), and the API serves a store set only
+  when the last hop is a loopback address. Checked: from the laptop's own
+  Wi-Fi address v1-val is refused (403), even with a forged
+  `X-Forwarded-For: 127.0.0.1` (the proxy appends the real one), and the
+  config lists real-val only. The phone's session ran the API without
+  `--with-store`, so v1-val wasn't loaded at all.
+- **What the phone work needed, beyond the plan**: an `error` record kind
+  (a failure on the phone is otherwise seen by no one); `HEAD`; a bench
+  queue in the URL (`queue=kind:set:variant:backend[:threads],...`, with
+  `limit=`, `checks=` and `rest=` seconds before each speed bench,
+  Decision 13), `run=1` taken out of the address once it starts; a screen
+  wake lock while benches run; bench photos fetched past the browser's
+  cache, so the API's log is the bench's progress when a tab dies; and a
+  **Save numbers** button on Live that posts a `live` record (the camera's
+  name and settings, the last 50 detections' stage times, the rate), until
+  S3's live records. The app's build commit is baked in (Vite `define`)
+  and every record carries it.
+- **Commits regrouped**: `App.tsx` routes Live and Bench, so the bench page
+  can't come in a commit after the web app's without a half-written
+  `App.tsx`. The web app's commit holds both pages, and `score_live.py`
+  gets its own (`feat: m2c parity benches scored against the job's
+  records`). Plus `tests/test_live_fixtures.py`: the committed fixtures
+  must equal what Ultralytics makes now, so an upgrade that changes its
+  letterbox or NMS fails a test.
+
+The app, as built:
+
+- `web/` from Vite's React and TypeScript template (`create-vite` 8.2.0,
+  which still writes Vite 7 and ESLint; its layout kept, oxlint in
+  ESLint's place as Scanify does). Three tsconfigs: the worker gets the
+  WebWorker type library, the page the DOM's. The template's
+  `erasableSyntaxOnly` refuses TypeScript's constructor shorthand.
+- **ONNX Runtime Web 1.31.1's `onnxruntime-web/webgpu` import isn't the
+  JSEP build any more**: its bundle loads `ort-wasm-simd-threaded.
+  asyncify.wasm` (28.7 MB, the native WebGPU provider). The JSEP build the
+  plan measured (`jsep.wasm`, 29.5 MB, 28.2 MiB) is what the default
+  `onnxruntime-web` import loads; the app uses it, for WebGPU and
+  WebAssembly alike. `npm run prepare` copies its `.mjs` and `.wasm` into
+  `public/ort/`; with `env.wasm.wasmPaths` set, the bundle imports that
+  `.mjs` instead of its embedded loader, and the runtime's thread workers
+  start from it, not from the app's worker. Vite still emits a second copy
+  of the `.wasm` into `dist/assets/` (the bundle names it with
+  `new URL(…, import.meta.url)`); it is never fetched, only 29.5 MB of
+  disk.
+- **Bundles**: the worker's chunk 416 kB (ONNX Runtime's JavaScript), the
+  page's 207 kB. A first build put ONNX Runtime in the page's chunk too
+  (615 kB), because the pages imported a name helper from `session.ts`.
+- **Served**: `vite preview` over HTTPS on port 5180, every response with
+  COOP `same-origin` and COEP `require-corp` (the worker's script
+  included), `.wasm` as `application/wasm`, `.mjs` as `text/javascript`
+  (checked with `curl`). Every page was cross-origin isolated, in the
+  worker too. The dev server wasn't used for any measure.
+- **Tests**: Vitest 85 (letterbox 51 on 15 frame shapes tight and square,
+  NMS 12, the screen mapping 5, the rest), pytest 17 (`test_live_api.py`
+  11, `test_score_live.py` 4, `test_live_fixtures.py` 2). Four deliberate
+  breakages each failed a test: conf compared in float64, no 30,000 cut,
+  IoU at 0.7 removing a box, `Math.round` for the pads.
+
+What Ultralytics' functions taught the TypeScript (Decision 14):
+
+- **Python's `round` takes halves to the even integer** (`round(500.5)` is
+  500; `Math.round` gives 501): a 1,001 × 2,560 frame scales to 500.5 px.
+  And `Math.round(-0.1)` is JavaScript's `-0`, where Python gives 0.
+- **Torch compares a score with `conf` in float32**: a score of exactly
+  0.3 isn't over a conf of 0.3, which a float64 comparison gets wrong.
+  **torchvision's IoU** is float32 step by step, compared with the
+  threshold as a double; predict imports torchvision, so Ultralytics uses
+  its NMS. On equal scores the earlier anchor is kept.
+- **`non_max_suppression` takes any output whose last axis is 6 for an
+  end-to-end model** (`[1, 300, 6]`) and only filters it: a made-up output
+  of 6 anchors gave nothing. The model's 33,600 never meet it.
+- **The 30,000-candidate cut** decides the result only when the boxes
+  past it would survive NMS; the fixture piles 30,000 high scores in one
+  place and spreads 3,600 low ones, so 4 boxes are kept with the cut and
+  300 without.
+- **A perfect detector's AP is 0.995**, not 1: the AP integrates its 101
+  recall points by trapezoids down to a last point of precision 0
+  (Ultralytics' way, `detection_eval.average_precision`).
+- Python's `http.server` turns a leading `//` into `/` itself.
+
+What was found, the laptop's Chrome (Chrome 158, arm, 8 cores, 8 GB;
+WebGPU on Apple `metal-3` with `shader-f16`; ONNX Runtime 1.31.1, 4
+WebAssembly threads):
+
+- **S2's check passes.** WebGPU float32 on real-val: AP 0.9949, 187 of 187
+  dates, as Ultralytics' ONNX float32 finds them (lost 0, gained 0). The
+  plan's fallback, a resize matching `INTER_LINEAR`, isn't needed.
+- **v1-val**, WebGPU (34 photos, store photos in the laptop's browser
+  only): float32 AP 0.9589 against Ultralytics' 0.9601, 59 dates against
+  60 and **28 expiries of 29**. The lost one sat on the threshold:
+  Ultralytics 0.1643, the app 0.1589, against 0.1641. float16 0.9589, 60
+  dates, 29 expiries; fp16-head32 0.9602, 60, 29.
+- **R2's accuracy half passes for float16 in this browser** on v1-val
+  (60 dates against float32's 59, AP 0.0001 apart) and on real-val (AP
+  equal, 187 each); fp16-head32 too. Its speed half fails here (below).
+- **Decoding is PIL's**: every photo's decoded pixels had PIL's SHA-256
+  (34 of 34, 165 of 165), with `colorSpaceConversion: "none"`.
+- **The resize is close to OpenCV's, not equal**: on v1-val's first 5
+  (1,600 → 1,280) the inputs differ by at most 1 grey level (23 to 40% of
+  values differ); on real-val's first 5 (947 to 1,399 px, scaled 0.92 to
+  1.35) by at most 15 to 20, a mean of 0.30 to 0.54. Box by box at IoU
+  0.9, the confidences moved by a median of 0.0005 on real-val (95th
+  percentile 0.045, at most 0.14; 55 of 468 pairs over 0.02) and 0.0033
+  on v1-val (at most 0.073): more than the guess of "within about 0.02".
+- **Every configuration gave identical boxes when repeated** (4 to 6 runs
+  each, a 3-photo smoke).
+- **Placement** (ONNX Runtime's verbose log while the session builds):
+  float32 puts all 260 nodes (after its fusions) on WebGPU, WebAssembly
+  all 236 on the CPU. **float16 sends 10 `Split` nodes to the CPU**, with
+  21 `MemcpyFromHost` and 10 `MemcpyToHost` around them (fp16-head32: 288
+  and 10). The same on the Android phone. JSEP doesn't take these
+  float16 Splits; ORT also fused each SiLU into `QuickGelu` (77).
+- **Speed** (parity benches, median ms a detection, model run in
+  brackets; letterbox and float conversion about 5 ms each): WebGPU
+  float32 89 (77), float16 120 to 136 (104 to 125), fp16-head32 114 to 127.
+  **float16 is 35 to 60% slower than float32 here**, from the Split
+  copies. WebAssembly float32 474 (449), on 3 photos. Session built in
+  0.2 to 0.6 s, the first warm-up 0.1 to 1.7 s (shaders compiled once per
+  browser, then cached).
+
+What was found, the phones (the same built app, served over the Wi-Fi):
+
+- **Android: a OnePlus 13** (the owner; model code CPH2691 by Chrome's
+  client hints), a 2025 flagship, so the best case (Decision 15), Chrome 157,
+  Android 17 by `platformVersion` (the user agent says "Android 10; K",
+  frozen), 8 cores, 8 GB by `deviceMemory` (which stops at 8); WebGPU on
+  Qualcomm `adreno-7xx` with `shader-f16`; 4 WebAssembly threads. The
+  camera: "camera 3, facing back", 1920 × 1080 at 30 fps as asked,
+  frames 1,080 × 1,920 upright, `focusMode` continuous in its settings but
+  only `manual` in its capabilities, so the app's request wasn't made; 4
+  cameras listed.
+- **On Android the app matches Ultralytics on every backend and
+  precision**: real-val 187 of 187, AP 0.9949, decoding PIL's on 165 of
+  165. **float32 is reproducible across devices**: the model's input is
+  the same value for value as the laptop's (Chrome resizes alike on both),
+  and its boxes equal the laptop's to 5 decimals on 132 of 165 photos, the
+  rest 0.00001 apart; WebGPU against WebAssembly on the phone the same.
+  float16's boxes differ between the Apple and Adreno GPUs.
+- **Android, live** (Save numbers, 35 to 50 detections each): WebGPU
+  float32 216 to 224 ms a detection (model 147 to 148), **4.3 to 4.6
+  detections a second**; WebAssembly 687 ms (617), 1.2 a second. The video
+  frame to an `ImageBitmap` took 1 to 4 ms. Boxes on packs at home, a
+  little behind the picture (the owner).
+- **Android, parity benches** (median ms a detection, model in brackets;
+  not rested, Decision 13 is for speed): WebGPU float32 221 (163), float16
+  271 (219), fp16-head32 281 (228), WebAssembly float32 658 (625). The
+  letterbox took 19 to 37 ms and the float conversion 12: **preparing
+  the input is 31 to 49 ms**, over the guess of 10 to 30 (O3's case).
+  Session built in 1.7 to 4.3 s (the 29.5 MB runtime fetched and compiled
+  in it, per worker), the first warm-up 0.4 to 0.9 s, the model fetched in
+  0.3 to 0.7 s.
+- **Android, the rested speed benches** (Decision 13: unplugged, other
+  apps closed, 5 minutes' rest before each, all 165 photos at the
+  threshold after 5 warm-ups; median ms a detection, model in brackets):
+  WebGPU float32 **228 (165)**, steady over the bench (the model's median
+  165, 166 and 164 ms in its thirds; 152 to 177 from the 10th to the 90th
+  percentile); WebGPU float16 **284 (235)**; WebAssembly float32, 4
+  threads, **868 (817)**. As first readings, ahead of S4's: R3 would pick
+  WebGPU (3.8 times faster), and R2's speed half fails float16 (25%
+  slower, not 10% faster) while JSEP runs its Splits on the CPU. The
+  rested WebAssembly bench ran 30% slower than the unrested parity bench
+  an hour before (817 against 625 ms a run) and built its session in 9.1
+  s against 1.7; why wasn't looked into (the phone's power state is the
+  first suspect).
+- **iPhone 11 Pro Max** (the owner's; iOS 26.6.1, Chrome for iOS 158,
+  which runs on WebKit; asked "which phone", the owner first said Android
+  Chrome, and the records said iPhone): 4 cores reported, WebGPU on
+  Apple's GPU with `shader-f16`, cross-origin isolated, 2 WebAssembly
+  threads. Camera "Back Triple Camera", 1920 × 1080 at 30 fps, no focus
+  control offered (WebKit focuses by itself), 7 cameras.
+- **On the iPhone WebGPU crashes the tab** ("Can't open this page", Chrome
+  for iOS's page for a dead WebKit process): live WebGPU float32 ran 668
+  to 710 ms a detection (model 618 to 644), 1.2 to 1.45 a second, then
+  died after a few dozen; a parity bench died after 6 photos, twice; a
+  WebGPU session built straight after a WebAssembly bench died within 3
+  s, twice; started fresh, it died after 8 to 9 photos. **WebAssembly is
+  stable**: a 30-photo speed bench twice, 905 and 946 ms a model run
+  (median; 1.1 to 3.1 s for the first few), 920 to 965 ms a detection.
+  The cause is unproven (iOS gives a page no memory numbers). The likely
+  one: JSEP's GPU buffer cache keeps released buffers in size buckets
+  whose caps add up to over 2 GB (25 MiB and 56 MiB, this model's feature
+  maps at 1,280², among them), and each run makes and destroys a
+  read-back buffer; a 4 GB iPhone's page limit is far lower. Its cache
+  modes (`storageBufferCacheMode`) apply to the native WebGPU provider
+  only, not JSEP. S4 takes it up.
+- **Against what we expected**: the app's dates as Ultralytics' (one
+  threshold-edge expiry on v1-val, none on real-val), confidences further
+  apart than guessed. Phone WebGPU float16 was to take 60 to 200 ms: on
+  Android float32 is 147 to 163 ms a run and float16 slower, 219. Phone
+  WebAssembly float32, 600 to 1,500 ms: Android 625, iPhone 905 to 946.
+  Live, 3 to 5 detections a second on WebGPU: Android 4.3 to 4.6 (no rest
+  rule yet), iPhone none that lasts. The laptop's WebGPU (20 to 40 ms
+  expected for float16 at 736 × 1,280) runs float32 at 77 ms at 1,280
+  square; R1 took tight away.
+
+How to run it (until S5's README): in one terminal, from the repo,
+`source .venv/bin/activate && python scripts/live_api.py` (add
+`--with-store` only for v1-val in the laptop's own browser); in another,
+`cd web && npm run build && npx vite preview` (`npm ci` once first on a
+fresh checkout: the lockfile's versions, and `prepare` copies ONNX
+Runtime's files into `public/ort/`). The API prints a `laptop:` and a
+`phone:` link, a new key each start; open them in Chrome, accept the
+self-signed certificate once, and allow the camera. Ports 5180 and 8765
+are fixed: one copy at a time. Benches start from the link too, e.g.
+`#k=<key>&page=bench&queue=speed:real-val:fp32:webgpu&rest=300&run=1`.
+
+Facts that belong elsewhere too (S5, with the owner's OK): the phone and
+browser facts above, ONNX Runtime Web's import change, JSEP's float16
+Split and its buffer cache, and the iPhone's WebKit, in CLAUDE.md's
+lessons; the laptop's facts (Chrome 158 with WebGPU and `shader-f16`; the
+desktop app's browser pane refuses a self-signed certificate, so laptop
+benches run in Chrome) in its laptop notes; Vite's advisories in
+Scanify's own notes.
+
+Not checked: the iPhone's crash cause, its
+parity on any backend, and Safari itself (the same WebKit as Chrome for
+iOS, so expected alike); v1-val on WebAssembly (the laptop ran it on 3
+photos of real-val only); tight padding in a browser (fixtures only: R1
+chose square); the dev server's headers (only `vite preview` was
+checked); heat and battery; **a staff-like Android phone** (Decision 15:
+every Android number here is a flagship's, the best case; in Later). The full test suite wasn't run; each commit's tests were, in
+a worktree.
+
 ### S3. The frame loop · laptop, then the phone
 
 **Goal:** the loop under [How the app reads the camera](#how-the-app-reads-the-camera),
@@ -923,6 +1201,15 @@ runs on every other frame (recorded).
 
 **Goal:** R2's speed half, R3 and R4 applied; the app's defaults set.
 
+- **First, S2's two WebGPU problems.** (1) The iPhone's tab dies after a
+  few WebGPU runs: try O4's graph capture (the same buffers every run),
+  then the native WebGPU runtime (`onnxruntime-web/webgpu`, whose
+  `storageBufferCacheMode` can be `simple` or `disabled`), with Safari's
+  Web Inspector over a cable for the memory; Safari itself once. (2)
+  float16 is slower than float32 because JSEP runs its 10 `Split` nodes on
+  the CPU: a float16 file keeping Split in float32, or the native
+  runtime, before R2's speed half is read. The Android phone decides
+  (Decision 15).
 - The phone's speed benches: float32 and float16 on WebGPU, float32 and
   int8 on WebAssembly, W1's threads; R2 and R3. (S1's job: int8 and
   int8-pct fail R2's accuracy half, so WebAssembly runs float32 and
@@ -1016,6 +1303,16 @@ a `summarise.py`), and the README's section.
 
 ## Later
 
+- **A staff-like Android phone** (the owner's call, 2026-11-24: none can
+  be borrowed now; tested if the app meets trouble on the staff's phones).
+  The OnePlus 13 every Android number came from is a 2025 flagship. On a
+  phone like the staff's (one of the store's, or a budget Android with
+  about 4 GB of RAM) the same built app: Live with Save numbers on each
+  backend, the parity queue and the rested speed queue of S2's record.
+  What may differ: no WebGPU (Chrome blocks GPU drivers it doesn't trust)
+  or no `shader-f16`; several times slower; the tab killed for memory, as
+  on the iPhone; heat sooner. If WebGPU is missing, WebAssembly's speed
+  alone decides whether live boxes are usable there.
 - **M2c in Scanify**: its capture screen gets live boxes from
   `web/src/detector/`, sharing the camera stream with its barcode reader,
   the model served by its backend. Running a model trained on the
@@ -1023,8 +1320,30 @@ a `summarise.py`), and the README's section.
   with the retailer.
 - **A public demo**: with the retailer's OK, or with M2's detector, trained
   on public data only (weaker on store packs).
-- **Reading the dates on the phone**: M3's reader as ONNX on the boxes
-  ("scan and read"), and which date is the expiry (M3 S8's roles).
+- **Scan and read** (the owner's idea, 2026-11-24, for Scanify): read the
+  date live, like a barcode scanner, with no shutter. The detector finds
+  the box on the phone; the box is cut from the full camera frame (sharp,
+  not the 1,280 input); M3's reader reads the crop; the date is parsed and
+  accepted only when several frames in a row agree (say 3 of 5), then the
+  staff confirm. Frames agreeing guard against a wrong read, which is
+  worse than none. Scanify already runs a live barcode loop
+  (`useBarcodeScanner`), so barcode and date could come from one aim. The
+  reader on the phone (M3's CRNN, 4.55M parameters, or PP-OCRv6 small, both
+  ONNX) or on the server from the crop alone, a few KB, not a frame. It
+  needs M2c's live detector and M3's reader first, and asks M3 for a
+  reader small enough for this (not the 2B VLM, live). Changing Scanify's
+  flow is the owner's call with the retailer. Which date is the expiry:
+  M3 S8's roles.
+- **The clicked photo on Scanify's server** (the owner's question,
+  2026-11-24): the detector and M3's reader on the full photo, once per
+  pack, where Scanify already sends it; the live preview stays on the
+  phone. Live boxes from a server were weighed and not chosen: 1,280 px
+  frames as JPEG are about 100 to 300 KB, so 2 a second is about 2 to 5
+  Mbit/s of upload a phone (ten phones, 20 to 50 Mbit/s from a store);
+  0.2 to 0.5 s behind the picture, as on-device WebAssembly is; nothing
+  without the network; a machine always on. Compute isn't the cost: 54 ms
+  a frame on 24 CPUs (M2b S13). It would also drop CLAUDE.md's goal 2,
+  the checker in the phone's browser.
 - **M4's checker** in the same loop: the reason M2c exists.
 - **Boxes that follow the camera** between detections, by the shift
   between the gate's copies.
