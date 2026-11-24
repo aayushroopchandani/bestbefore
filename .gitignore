@@ -39,3 +39,9 @@ venv/
 
 # Local tool config (machine-specific paths)
 .claude/launch.json
+
+# M2c's web app: installed packages, the build, and ONNX Runtime Web's
+# runtime copied from node_modules by `npm run prepare`
+web/node_modules/
+web/dist/
+web/public/ort/
