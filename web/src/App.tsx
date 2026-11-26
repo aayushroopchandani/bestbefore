@@ -1,5 +1,5 @@
 /**
- * The live-boxes demo (docs/m2c-live-boxes.md): Live and Bench. The page is
+ * The live-boxes demo (docs/m2c-live-boxes.md): Live, Bench and Motion. The page is
  * served by Vite (web/), its API by scripts/live_api.py on the laptop.
  */
 import { useEffect, useState } from "react";
@@ -7,11 +7,13 @@ import type { ApiConfig } from "./api";
 import { apiConfig, hashParams, key } from "./api";
 import { Bench } from "./pages/Bench";
 import { Live } from "./pages/Live";
+import { Motion } from "./pages/Motion";
 
-type Page = "live" | "bench";
+type Page = "live" | "bench" | "motion";
+const PAGES: Page[] = ["live", "bench", "motion"];
 
 export function App() {
-  const [page, setPage] = useState<Page>(hashParams().get("page") === "bench" ? "bench" : "live");
+  const [page, setPage] = useState<Page>(() => PAGES.find((p) => p === hashParams().get("page")) ?? "live");
   const [config, setConfig] = useState<ApiConfig | null>(null);
   const [error, setError] = useState("");
 
@@ -30,10 +32,13 @@ export function App() {
         <span className="mr-2 font-semibold">BestBefore live</span>
         {tab("live", "Live")}
         {tab("bench", "Bench")}
+        {tab("motion", "Motion")}
       </nav>
       {!key() && <p className="text-amber-300">No key: open the link the laptop's API printed (it ends in #k=…).</p>}
       {error && <p className="text-red-400">{error}</p>}
-      {config && (page === "live" ? <Live config={config} /> : <Bench config={config} />)}
+      {config && page === "live" && <Live config={config} />}
+      {config && page === "bench" && <Bench config={config} />}
+      {config && page === "motion" && <Motion />}
     </main>
   );
 }

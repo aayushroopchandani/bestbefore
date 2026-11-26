@@ -15,6 +15,7 @@
     manifest            each file's SHA-256, size, opset and node count
     ort_threads         ONNX Runtime's thread count for every session made inside
     r0, r1, r2_accuracy the decision rules S1's records are read by
+    rule_g, gate        the stillness gate's threshold T, from a Motion record (S3)
 
 The model files live in $CHECKPOINT_DIR/m2c/ (never in git: `*.onnx` is
 ignored). Nothing here is random but the calibration photos' draw (SEED).
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
 import re
 from collections import defaultdict
@@ -73,6 +75,13 @@ SETS = ("v1-val", "real-val", "real-val-rot", "real-val-small", "real-val-rot180
 R0_AP = 0.002                   # ONNX float32 square against PyTorch: AP within this
 R1_AP, R1_FEWER = 0.01, 1       # tight against square: AP no more than this under, at most 1 date fewer
 R2_AP, R2_FEWER = 0.01, 1       # a lower precision against float32, the same way
+G_STILL, G_MOVING = 95, 5       # G: T between these percentiles of the still and moving values
+# The Motion record rule G reads (S3), under results/runs/m2c/; None until it
+# is made. The gate runs on every GATE_EVERY-th frame: 1 if it costs under
+# 2 ms a frame on the phone (S3's check), else 2. S3: the OnePlus 13's record
+# with the GPU copy, 11.8 ms a frame, so every other frame: T 4.42.
+GATE_MOTION: str | None = "20261125-142850-m2c-app/motion-003.json"
+GATE_EVERY = 2
 
 _MODULE = re.compile(r"/model\.(\d+)/")
 # Ultralytics' Detect keeps its box and class convolutions in two lists named
@@ -538,6 +547,37 @@ def r2_accuracy(fp32: Mapping, lower: Mapping) -> dict:
     R2_AP under float32's, at most R2_FEWER date fewer (its speed half is
     the phone's, S4)."""
     return _no_worse(fp32, lower, R2_AP, R2_FEWER)
+
+
+def rule_g(still: Sequence[float], moving: Sequence[float]) -> dict:
+    """Rule G: the stillness gate's threshold T, the geometric mean of the
+    95th percentile of the still values and the 5th of the moving ones, if
+    the first is below the second; otherwise the gate is off (T None)."""
+    still_p95 = float(np.percentile(still, G_STILL))
+    moving_p5 = float(np.percentile(moving, G_MOVING))
+    on = still_p95 < moving_p5
+    return {"on": on, "t": float(np.sqrt(still_p95 * moving_p5)) if on else None,
+            "still_p95": still_p95, "moving_p5": moving_p5, "still": len(still), "moving": len(moving)}
+
+
+def gate(record: Path | None = None, every: int | None = None) -> dict | None:
+    """Rule G read off a Motion record (GATE_MOTION unless given) at the
+    gate's cadence: the motion values against the frame `every` frames
+    back, as the app posts them (value1, value2). None until a record is
+    pinned. A pinned record is named as pinned: the config goes to the
+    phone, and the laptop's own folders stay out of it."""
+    name = None if record is None else str(record)
+    if record is None:
+        if GATE_MOTION is None:
+            return None
+        record, name = runs.RUNS_DIR / "m2c" / GATE_MOTION, GATE_MOTION
+    every = GATE_EVERY if every is None else every
+    frames = json.loads(Path(record).read_text())["frames"]
+    values = {"still": [], "moving": []}
+    for phase, v in zip(frames["phase"], frames[f"value{every}"]):
+        if phase in values and v is not None:
+            values[phase].append(v)
+    return {**rule_g(values["still"], values["moving"]), "every": every, "record": name}
 
 
 def environment() -> dict:

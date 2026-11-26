@@ -5,7 +5,7 @@
  */
 import { apiJson } from "./api";
 
-export type RecordKind = "bench-parity" | "bench-speed" | "live" | "motion" | "error";
+export type RecordKind = "bench-parity" | "bench-speed" | "live" | "motion" | "gate-bench" | "error";
 
 export function postRecord(kind: RecordKind, body: object): Promise<{ file: string; run: string }> {
   return apiJson(`/api/records/${kind}`, {

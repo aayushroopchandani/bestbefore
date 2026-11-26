@@ -8,15 +8,17 @@ requests carrying the key it prints at start (header X-Live-Key). The page
 gets the key from the URL's fragment (https://<laptop>:5180/#k=<key>), which
 is never sent in a request line, so it isn't in any log.
 
-    GET  /api/config                    threshold, classes, the sets served, the model files
+    GET  /api/config                    threshold, classes, the sets served, the model files,
+                                        the stillness gate's T (rule G on the pinned Motion record)
     GET  /api/models/<variant>/<sha256> a model file, cached by its hash
     GET  /api/bench/<set>               the set's photos, by index and size only
     GET  /api/bench/<set>/<i>           photo i as stored (JPEG); X-Decoded-Sha256 is the
                                         SHA-256 of its pixels as PIL decodes them (RGB)
     GET  /api/bench/<set>/<i>/input     Ultralytics' LetterBox of photo i, 1,280 square: raw
                                         RGB bytes, for the bench's pixel check
-    POST /api/records/<kind>            a run record (bench-parity, bench-speed, live, motion, or
-                                        error: what failed, since nothing else of the phone's is seen),
+    POST /api/records/<kind>            a run record (bench-parity, bench-speed, live, motion,
+                                        gate-bench, or error: what failed, since nothing else of
+                                        the phone's is seen),
                                         written with the API's git commit, the models' hashes and
                                         the time into this start's run folder
 
@@ -52,7 +54,7 @@ WEB_PORT = 5180
 KEY_HEADER = "X-Live-Key"
 PUBLIC_SETS = ("real-val",)          # ExpDate's: may go to the phone
 STORE_SETS = ("v1-val",)             # the retailer's: the laptop's browser only, with --with-store
-RECORD_KINDS = ("bench-parity", "bench-speed", "live", "motion", "error")   # error: what failed on the phone
+RECORD_KINDS = ("bench-parity", "bench-speed", "live", "motion", "gate-bench", "error")   # error: what failed on the phone
 MAX_BODY = 64 * 1024 * 1024          # a parity record of 165 photos is a few MB
 IMGSZ = 1280
 
@@ -264,12 +266,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def write_record(api: Api, kind: str, body: dict) -> str:
-    """The record into the run folder, named by kind, then the set, variant
-    and backend it gives (when they are plain names), then a sequence number;
+    """The record into the run folder, named by kind, then the set, label
+    (a live record's scan or soak), variant and backend it gives (when they
+    are plain names), then a sequence number;
     with the API's git commit, the models' hashes and the time added."""
     from bestbefore import runs
 
-    labels = [str(body.get(k)) for k in ("set", "variant", "backend")
+    labels = [str(body.get(k)) for k in ("set", "label", "variant", "backend")
               if isinstance(body.get(k), str) and _LABEL.fullmatch(body[k])]
     name = "-".join([kind, *labels, f"{api.next_seq():03d}"]) + ".json"
     record = {**body, "kind": kind, "received": datetime.now().isoformat(timespec="seconds"),
@@ -300,7 +303,9 @@ def make_api(with_store: bool, run_name: str = "m2c-app") -> Api:
                   "bytes": manifest["files"][v]["bytes"]} for v in variants}
     served = PUBLIC_SETS + (STORE_SETS if with_store else ())
     photo_sets = {name: [Photo(s.width, s.height, Path(s.image)) for s in sets.load_set(name)] for name in served}
-    config = {"threshold": live.threshold(), "classes": list(CLASSES), "imgsz": live.IMGSZ}
+    # gate: rule G on the pinned Motion record (S3), None until one is pinned
+    config = {"threshold": live.threshold(), "classes": list(CLASSES), "imgsz": live.IMGSZ,
+              "gate": live.gate()}
     run_dir = runs.start_run(run_name, {**config, "with_store": with_store, "sets": list(served),
                                         "manifest": manifest}, root=runs.RUNS_DIR / "m2c")
     return Api(key=secrets.token_urlsafe(24), models=models, sets=photo_sets,
@@ -328,6 +333,10 @@ def main() -> None:
     server = make_server(api, args.port)
     print(f"API on http://{HOST}:{args.port}, run folder {api.run_dir}", flush=True)
     print(f"sets: {', '.join(api.sets)}; models: {', '.join(api.models)}", flush=True)
+    gate = api.config["gate"]
+    print("gate: none pinned (live.GATE_MOTION): record Motion first" if gate is None else
+          f"gate: T {gate['t']:.3f} by rule G, every {gate['every']} frame(s), from {gate['record']}" if gate["on"] else
+          f"gate: off (rule G: still and moving overlap) from {gate['record']}", flush=True)
     print(f"laptop: https://localhost:{WEB_PORT}/#k={api.key}", flush=True)
     if (ip := lan_address()) and not args.with_store:
         print(f"phone:  https://{ip}:{WEB_PORT}/#k={api.key}", flush=True)

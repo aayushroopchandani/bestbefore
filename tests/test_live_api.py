@@ -172,6 +172,21 @@ def test_a_record_is_written_with_the_commit_the_models_and_the_time(serve):
     assert status == 201 and json.loads(data)["file"] == "live-webgpu-002.json"
     assert sorted(p.name for p in api.run_dir.iterdir()) == ["bench-parity-real-val-fp32-webgpu-001.json",
                                                              "live-webgpu-002.json"]
+    # A live record's label (scan, soak) names it too (S3).
+    scan = {"label": "scan", "variant": "fp32", "backend": "webgpu"}
+    status, _, data = request("POST", "/api/records/live", body=json.dumps(scan).encode())
+    assert status == 201 and json.loads(data)["file"] == "live-scan-fp32-webgpu-003.json"
+    # The gate bench (S3) posts a kind of its own.
+    status, _, data = request("POST", "/api/records/gate-bench", body=b"{}")
+    assert status == 201 and json.loads(data)["file"] == "gate-bench-004.json"
+
+
+def test_the_config_serves_the_gate_as_given(serve):
+    api, _, request = serve(False)
+    gate = {"on": True, "t": 2.5, "every": 1, "still_p95": 1.0, "moving_p5": 6.25, "record": "x/motion-001.json"}
+    api.config["gate"] = gate
+    status, _, data = request("GET", "/api/config")
+    assert status == 200 and json.loads(data)["gate"] == gate
 
 
 def test_a_record_must_be_a_json_object(serve):

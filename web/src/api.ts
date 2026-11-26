@@ -66,8 +66,21 @@ export interface ModelFile {
   url: string;
 }
 
+/** The stillness gate's T, by rule G on a Motion record (live.gate); off when still and moving overlapped. */
+export interface GateConfig {
+  on: boolean;
+  t: number | null;
+  every: number; // the gate runs on every Nth frame
+  still_p95: number;
+  moving_p5: number;
+  still: number;
+  moving: number;
+  record: string;
+}
+
 export interface ApiConfig {
   threshold: number; // M2b's threshold_store, unrounded
+  gate: GateConfig | null; // null until a Motion record is pinned
   classes: string[];
   imgsz: number;
   sets: string[]; // the sets this browser may bench
