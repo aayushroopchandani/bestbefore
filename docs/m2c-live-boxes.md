@@ -12,8 +12,13 @@ float32 on WebAssembly. **S2 done** (2026-11-24,
 the app matches Ultralytics in the laptop's Chrome and on an Android
 phone (WebGPU float32, 4 to 5 detections a second live); on an iPhone
 WebGPU crashes the tab and WebAssembly runs about 1 a second. The target
-phone is now Android, the owner's OnePlus 13 for now (Decision 15). Next:
-S3, on home days. **Since 2026-11-23 M2c
+phone is now Android, the owner's OnePlus 13 for now (Decision 15).
+**S3 done** (2026-11-26,
+[its record](#s3-the-frame-loop--laptop-then-the-phone)): on the Android
+phone the loop runs 4 detections a second while still, shows boxes 0.47 s
+after the hand stops, and rests at 1 a second on a still pack (Decision
+16); the gate's copy is drawn on the GPU and read every other frame
+(Decision 17), T 4.42. Next: S4, on home days. **Since 2026-11-23 M2c
 and M3 alternate** (Decision 1): campus days, when the cluster is
 reachable, go to M3's cluster slices (from S6, `docs/m3-date-reader.md`),
 home days to M2c's laptop and phone slices; M3's two GPU jobs stay held
@@ -163,11 +168,13 @@ overlay canvas over the video (requestAnimationFrame)
   Below the threshold `T` for 150 ms is *still*, and a detection starts
   only when still. Moving: boxes dim. Moving for 400 ms: boxes cleared,
   since they no longer sit on the picture. `T` comes from the owner's own
-  frames by rule G, before any live measure.
+  frames by rule G, before any live measure. (S3: the copy is drawn on a
+  canvas on the GPU and read every other frame on the phone, Decision 17.)
 - **Rest when nothing changes.** At least 200 ms between detection starts
-  (5 a second at most), and after 3 detections in a row with the same
-  boxes while still, one a second until the picture moves. A phone held on
-  one pack does no more work than it needs: less heat, less battery.
+  (5 a second at most), and after 3 detections in a row while still, one a
+  second until the picture moves. A phone held on one pack does no more
+  work than it needs: less heat, less battery. (S3, Decision 16: first
+  "3 with the same boxes", which the boxes' flicker never let happen.)
 - **The tracker.** Each new box is matched to a shown box of its class by
   IoU (greedy, highest first, at least 0.3). A matched box moves 60% of
   the way to the new one, which smooths jitter; an unmatched new box
@@ -261,10 +268,13 @@ web/
     postprocess.ts    best class, the threshold, NMS
     session.ts        backend, precision, pinned shape, warm-up
     detector.worker.ts, client.ts (the main thread's typed handle), types.ts
-  src/live/       React hooks and the overlay
-    useCamera.ts, useStillness.ts, useDetections.ts (scheduling, rest),
-    tracker.ts, LiveBoxes.tsx
-  src/pages/      Live, Bench (its runs in benchRun.ts), Motion: the demo's own screens (Tailwind)
+  src/live/       the loop without React: stillness.ts (the gate), scheduler.ts
+                    (scheduling, rest, FrameLoop), tracker.ts, liveRecord.ts, stats.ts,
+                    gateBench.ts, copiers.ts (S3's gate bench)
+                  its hooks and the overlay: useCamera.ts, useStillness.ts,
+                    useDetections.ts, usePage.ts, LiveBoxes.tsx
+  src/pages/      Live, Bench (its runs in benchRun.ts), Motion (with GateBench.tsx): the
+                    demo's own screens (Tailwind)
   src/api.ts      the key and the API's calls
   src/records.ts  run records, posted to the API
 ```
@@ -336,8 +346,9 @@ Every record holds its config, the git commit and the models' hashes
 | `parity-<set>-<variant>.json` | the CPU job (S1), the laptop's v1-val smoke | per photo, every box at conf ≥ 0.001; per set, AP@0.5 for dates (`detection_eval.average_precision`), dates found at IoU 0.5 at 0.1641, expiries found (v1-val), false boxes a photo; ms a pass |
 | `bench-parity-*.json` | the app (S2, S4) | device (browser, CPU threads, memory, GPU adapter), backend, precision, threads, flags; model file and hash; runtime version; per photo its boxes at conf ≥ 0.001 |
 | `bench-speed-*.json` | the app (S2, S4) | the same device and config, the pinned shape; per run each stage's ms; the first (cold) run, the session build and the model download apart |
-| `live-*.json` | the app (S3) | camera settings; per detection each stage's ms; frames seen, gated, dropped; detections a second while still; still-to-boxes times; a median a minute |
-| `motion-*.json` | the app (S3) | the gate's values, still and moving |
+| `live-*.json` | the app (S3) | camera settings, the gate's config and the loop's constants; every frame the gate read (value, cost, decision, motion), the frames skipped and missed; per detection each stage's ms; detections a second while still, awake and resting; still-to-boxes times; a median a minute |
+| `motion-*.json` | the app (S3) | the gate's values, still and moving, against the frame before and the one before that; its cost a frame |
+| `gate-bench-*.json` | the app's Motion page (S3) | ways of making the gate's copy: each read's ms held and ms until ready, its motion value, the frames each saw or missed; a summary per copy |
 
 `scripts/score_live.py` scores parity benches with M2b's own code
 (`detection_eval`) against the job's ONNX float32 records for the same
@@ -519,6 +530,18 @@ Each with its reason. **(new)** marks a choice not written down before;
     every browser runs on WebKit, Safari's engine, so Chrome there is
     Safari's engine in Chrome's frame; Android's Chrome is another engine
     (Blink) with another WebGPU (Dawn on Vulkan).
+16. **(new, 2026-11-26, S3; changes the rest under [The frame loop](#the-frame-loop))
+    Rest follows the gate**: after 3 detections in a row with no frame
+    over T, one a second until a frame over T. The plan asked for 3 with
+    the same boxes; on a still pack the boxes flicker (the count changed
+    between 76% of detections in S3's first soak), so that rested 5 s in
+    300. Whether a detection's boxes matched the one before is still
+    recorded. The owner's choice.
+17. **(new, 2026-11-25, S3) The gate's copy is drawn on a canvas on the
+    GPU**, after a gate bench on the phone, which the owner chose to run
+    before pinning T: 11.5 ms a frame, against 64 ms on a canvas kept on
+    the CPU (95% of the page's main thread). Still over S3's 2 ms, so the
+    gate reads every other frame.
 
 ---
 
@@ -1197,6 +1220,198 @@ runs on every other frame (recorded).
 **Commits:** `feat: m2c stillness gate and detection scheduling`,
 `feat: m2c box tracker and overlay`, `docs: m2c plan, S3's loop`
 
+**Record (2026-11-25 and 26, the laptop and the Android phone).** Two home
+days. The state was checked first: `main` clean at `4f2e435`, up to date
+with `origin/main`; `npm ci` installed, with a warning that Vitest 5.0.3
+asks for Node ^22.12, ^24 or ≥ 26 (the laptop has 25.9.0), and the 85
+tests passed; `export_live.py check` found M2b's weights and the three
+float files as the manifest says; ports 5180 and 8765 were free. The API
+ran without `--with-store` throughout, so no store photo was served.
+
+Departures:
+
+- **Rest follows the gate, not the boxes** (Decision 16, the owner's
+  choice, 2026-11-26). The first soak rested 5 s of 300 (below); now 3
+  detections in a row with no frame over T start the rest, and `alike`
+  is only recorded.
+- **The gate's copy is drawn on a canvas on the GPU** (Decision 17).
+  S3's first gate drew on a canvas kept on the CPU (`willReadFrequently`):
+  on the phone 63 ms a frame, 95% of the page's main thread, 15 reads a
+  second, every other camera frame unread. A **gate bench** was added to
+  the Motion page to find a cheaper copy before T was pinned: four ways,
+  3 s each, two rounds, the phone propped on a pack; a `gate-bench`
+  record, a kind the API gained.
+- **The gate reads every other frame** (`GATE_EVERY = 2`), by S3's own
+  check.
+- **The Motion page's cues say each action in the 3 s before its phase**,
+  which aren't kept: the laptop's first record counted 0.4 s of "moving"
+  before the hand moved, a third of the moving frames under the still
+  p95, and rule G overlapped there (1.68 against 1.60). Each frame keeps
+  its value against the frame before (`value1`) and the one before that
+  (`value2`), so one record gives T for either cadence.
+- **What the loop's records count**, chosen here: a row for each frame the
+  gate read, a count for the frames its cadence skipped, and the frames
+  missed before either (`presentedFrames`); still-to-boxes from the first
+  frame under T before a hold to the end of the first detection started in
+  it that wasn't stale or failed, a hold under way at the record's start
+  left out. `next()` starts a detection when one ends, so `frames.started`
+  counts only the starts on a frame.
+- **A pinned Motion record is named by its run-relative path** in the
+  config, which goes to the phone: the laptop's folders stay out of it.
+- **Commits regrouped**: the scheduler pairs boxes with the tracker's
+  match (`alike`, `FrameLoop`), so "gate and scheduling" can't come before
+  "tracker". The gate, the Motion page and the bench make the first
+  commit; scheduling, the tracker, the overlay and the live records the
+  second.
+
+The loop, as built:
+
+- `stillness.ts`: the 64 px grey copy (luma 0.299, 0.587, 0.114) minus its
+  mean, and the motion value; `StillnessGate`: still after 150 ms under T
+  (compared strictly), moving at one frame over T (boxes dim), boxes
+  cleared 400 ms after the first frame over T since the gate was last
+  still (dips under T shorter than 150 ms don't reset it); each clearing
+  is counted, and a detection started before one is stale. With no T
+  (rule G off) it is always still and never rests.
+- `scheduler.ts`: one detection at a time, frames dropped and never
+  queued, 200 ms between starts, the rest (Decision 16); `FrameLoop` puts
+  the gate, the scheduler and the tracker together, and its `next()`
+  starts the next detection the moment one ends, if the picture is still.
+- `tracker.ts` as planned: greedy IoU ≥ 0.3 within a class, highest first,
+  ties by the shown box's order then the new box's; 60% of the way; kept
+  through one miss; ids never reused.
+- `useStillness.ts` reads each new frame by `requestVideoFrameCallback`
+  (`requestAnimationFrame` without it) and times its own cost from drawing
+  to the value; `useDetections.ts` drives the loop. Hidden, the loop stops;
+  visible again, it starts over (in-flight results stale).
+- `live.py`: `rule_g` and `gate()`, rule G on the pinned record at the
+  gate's cadence, served in the API's config and printed at its start;
+  `GATE_MOTION = "20261125-142850-m2c-app/motion-003.json"`,
+  `GATE_EVERY = 2`: **T 4.42**.
+- Live's **Save numbers** is gone: **Record** posts a `live` record (a scan
+  of 60 s with a cue every 12 s, or a soak of 300 s; `rec=scan|soak` in the
+  link): every frame and detection as columns, the config, the loop's
+  constants and a summary.
+- **Tests**: Vitest 175, S3's 90 each written before its code (Decision
+  14): the gate 23, the scheduler and `FrameLoop` 21, the tracker 19, the
+  live records 14, the gate bench 9, percentiles 4; pytest 20
+  (`test_live_rules.py`, `test_live_api.py`). The late fixes each came
+  with a failing test first: the frames missed before a skipped frame
+  (below), the pinned record's name, the rest (Decision 16).
+
+What was found, the laptop (Chrome 158, its FaceTime camera at 1920 ×
+1080; a smoke only, none of its numbers used): the gate cost 5.3 to 8.6 ms
+a frame; with no gate, Live ran 4.3 detections a second, 108 ms each
+(model 82).
+
+What was found, the phone (the OnePlus 13, CPH2691 by its client hints;
+Chrome 157.0.8103.78 on 2026-11-25, 158.0.8127.42 on 2026-11-26, updated
+overnight; Adreno 7xx; the back camera, 1,080 × 1,920 at 30 fps):
+
+- **The gate bench** (ms the main thread was held a read, median; reads a
+  second; camera frames the page missed): a CPU canvas averaging down
+  (`medium`) 64.4, 14.8, 90 of 179; a CPU canvas sampling (`low`) 63.7,
+  14.7, 89 of 177; **a GPU canvas 11.5** (p90 17.4), 30.0, 4 of 184;
+  `createImageBitmap` asked to shrink 10.6, 29.8, 1 of 180. Sampling cost
+  what averaging did: **the cost is bringing the whole frame to the CPU,
+  not the shrinking.** The GPU canvas held from round 1 to round 2 (12.1,
+  10.8 ms: Chrome didn't move it back to the CPU). The bitmap's 8% less is
+  under R4's 10% and would need a gate that waits on a promise, so the GPU
+  canvas was kept. Still values on the propped phone, all four: medians
+  0.19 to 0.27 grey levels.
+- **The check: the gate costs 11.8 ms a frame (median) in the Motion
+  record and 9.4 to 13.6 in the live records: over 2 ms, so it runs on
+  every other frame.** In the loop it waits behind the model on the GPU:
+  in the scan, with no detection running, 11.9 ms (max 24); with one, a
+  median of 8.0 but 39% of reads over 30 ms, a p90 of 104 and a max of 131,
+  about 126 ms into the detection, when the model runs. With WebAssembly
+  (the model on the CPU) its max was 29 ms.
+- **Rule G** (Motion with the GPU copy, hand-held, 600 still and 598
+  moving frames): every frame, still p95 2.94 against moving p5 2.66,
+  overlapping (off); **every other frame, 4.397 against 4.440: on, T
+  4.42**, a margin of 1%. The overlap comes in short runs, the longest 8
+  frames (266 ms) each way, against the gate's 150 ms to call it still and
+  400 ms to clear. The first phone record (the CPU copy, whose 15 reads a
+  second compared frames 66 ms apart) gave 4.57 against 4.72, T 4.65,
+  close to every other frame's.
+- **The scan** (WebGPU float32, 60 s, five packs): 151 detections, none
+  stale or failed, **4.0 a second while still**; 236 ms a detection
+  (letterbox **67**, tensor 11, model 154, NMS 2; the frame's bitmap 1.4);
+  **holding still to boxes 468 ms** (median of 7 holds, each got boxes);
+  21% of frames gated. Every detection found at least one date box (a
+  count, not a score: live frames carry no labels). The record says 2
+  frames missed: the recorder lost the frames missed before a skipped
+  frame (fixed before the soaks). On both soaks frames seen plus missed
+  come to 30 a second, so the scan missed about 233 of 1,800 (13%).
+- **The soak, resting on matched boxes** (300 s on one pack): 1,152
+  detections, 3.9 a second, resting 5 s; the box count changed between
+  871 of 1,151 consecutive detections (7 to 12 boxes, the keyword marks
+  near 0.1641 flickering), only 68 matched the one before, and 3 in a row
+  happened once; date boxes alone changed count between 35%. A detection
+  took 236 ms in minutes 0 and 1 and **264 from minute 2**: the letterbox
+  67 to 89 ms and the tensor 11 to 15, the model only 154 to 157. The
+  CPU's stages slowed by a third at once and the GPU's barely, as a phone
+  cutting its CPU's speed when warm would (not proven). 1,952 frames
+  missed (22%).
+- **The soak, resting on the gate** (Decision 16): 291 detections,
+  **resting 297 s of 299** at 0.95 a second; 240 to 243 ms a detection in
+  every minute (letterbox 70 to 74); 576 frames missed (6%); the picture
+  moved 3 times, boxes back in a median of 450 ms. How warm the phone felt
+  wasn't reported.
+- **WebAssembly** (float32, 4 threads, 60 s on three packs): it works. 36
+  detections, none failed, 35 with a date box; 1,122 ms a detection
+  (model 1,005, letterbox 94), 1.2 a second while still; 10 stale (the
+  phone moved during a detection); 15 holds, 9 too short for a detection
+  to finish; still to boxes 1.45 s; 3 frames missed. Its model ran slower
+  than S2's live 617 ms and rested 817; why wasn't looked into (a phone
+  warm from two soaks, or the gate's main thread beside four threads).
+- **Against what we expected**: 3 to 5 detections a second on WebGPU: 4.0;
+  about 1 on WebAssembly: 1.2. Still to boxes, "150 ms plus one
+  detection": 468 ms, that plus the wait for one already running. 10 to
+  30% slower by the fifth minute: 12% without a working rest, 1% with
+  one. The gate itself wasn't expected to cost anything.
+
+Found on the way:
+
+- The desktop app stops its preview servers when a session ends, and each
+  start of the API draws a new key: a tab holding the old one gets 401
+  (`no valid X-Live-Key`). A link pasted into the same tab that differs
+  only after the `#` doesn't reload the page, so the old key stays: open
+  each link in a new tab.
+- The laptop's Wi-Fi address changed overnight (`.163` to `.194`); the API
+  prints it only at its start, so it is read again before a link is given.
+- `vite preview` serves a rebuilt `dist/` without a restart.
+- Record numbers count per API start (`motion-003.json` is in two run
+  folders), so a pin names its folder.
+
+How to run it: as S2's, plus the Motion page (`#k=<key>&page=motion`:
+Record motion, Bench the gate) and Live's records (`&rec=scan` or
+`&rec=soak`; `&backend=wasm` for WebAssembly). A new Motion record is
+pinned in `live.GATE_MOTION` (and `GATE_EVERY` by its cost), then the API
+restarted.
+
+Facts that belong elsewhere too (S5, with the owner's OK): in CLAUDE.md's
+lessons, Android Chrome's canvas costs (a canvas kept on the CPU brings
+the whole video frame over, 64 ms for 1,080 × 1,920 on the OnePlus 13; a
+GPU canvas's small read-back takes 11.5 ms but waits behind WebGPU work,
+up to 160 ms), the boxes' flicker that defeats a rest on matched boxes,
+and the rested soak's flat minutes; in the laptop's notes, the preview
+servers stopped by the app, a new key each start, the new-tab rule and the
+changing Wi-Fi address; `vite preview` serving a rebuilt `dist/` in S5's
+README.
+
+Not checked: heat itself (a page reads no temperature, and the owner
+reported none) and battery; the iPhone and float16 in the loop (S4's); a
+staff-like phone (Later); the hidden page on the phone (no record holds a
+`hidden` event); whether the boxes were on the right dates (no labels
+live); T on anyone else's hands; the gate's copy in a worker and the
+letterbox on a GPU canvas (S4, Later); WebAssembly over a soak; T for
+every other frame read from `value2` of a record made at every frame, not
+from the loop's own reads, which drift with its stalls (close, not the
+same). The full test suite wasn't run; each commit's tests were, in a
+worktree with absolute `.env` paths and `npm ci`: the first 121 Vitest
+and 20 pytest, the second 175 and 20, none skipped, each built.
+
 ### S4. The optimisation ladder · laptop, then the phone
 
 **Goal:** R2's speed half, R3 and R4 applied; the app's defaults set.
@@ -1210,6 +1425,11 @@ runs on every other frame (recorded).
   the CPU: a float16 file keeping Split in float32, or the native
   runtime, before R2's speed half is read. The Android phone decides
   (Decision 15).
+- **The letterbox from a camera frame** (S3): 67 ms of the phone's 236 ms
+  detection, against 19 to 37 ms from photos in S2. The worker draws the
+  frame on a canvas kept on the CPU, as S3's first gate did at 64 ms; a
+  canvas on the GPU, as the gate's now (Decision 17), is the first thing
+  to try, ahead of O3.
 - The phone's speed benches: float32 and float16 on WebGPU, float32 and
   int8 on WebAssembly, W1's threads; R2 and R3. (S1's job: int8 and
   int8-pct fail R2's accuracy half, so WebAssembly runs float32 and
@@ -1347,6 +1567,13 @@ a `summarise.py`), and the README's section.
 - **M4's checker** in the same loop: the reason M2c exists.
 - **Boxes that follow the camera** between detections, by the shift
   between the gate's copies.
+- **The gate's copy in its own worker** (S3): its read-back waits behind
+  the model on the GPU (a p90 of 104 ms during a detection) and holds the
+  page meanwhile; in a worker the wait would only delay the gate's value.
+  Then it might read every frame again.
+- **Boxes that flicker**: 7 to 12 boxes on a still pack, the keyword marks
+  near the threshold coming and going (S3's soak). If it distracts on
+  screen, show a mark only once two detections in a row have it.
 - **The gyroscope as the gate** (`DeviceMotionEvent`; an iPhone asks
   permission first).
 - **Torch, zoom, tap to focus.**
