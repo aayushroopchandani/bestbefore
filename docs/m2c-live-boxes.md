@@ -542,6 +542,16 @@ Each with its reason. **(new)** marks a choice not written down before;
     before pinning T: 11.5 ms a frame, against 64 ms on a canvas kept on
     the CPU (95% of the page's main thread). Still over S3's 2 ms, so the
     gate reads every other frame.
+18. **(new, 2026-11-27, S4; changes how R4 reads the letterbox step) The
+    letterbox on a GPU canvas is judged by S2's check against Ultralytics,
+    not by R4's equal boxes**; R4's 10% speed half stands. The GPU canvas
+    resizes differently from the CPU canvas: on the laptop its input was
+    within 1 to 2 grey levels of Ultralytics' `LetterBox`, the CPU canvas's
+    15 to 20, so it is closer to the reference, yet 2 of 20 boxes at 0.1641
+    differed from the CPU canvas's on 5 photos. R4's box half was written
+    for steps that change no number (O3 and O4 gave identical boxes); a
+    step that changes the resize is what S2's check judges (every date the
+    reference finds but at most one, AP within 0.01). The owner's choice.
 
 ---
 
